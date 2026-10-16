@@ -26,31 +26,32 @@ function levels(...patches) {
   return arr
 }
 
-/* ------------------------------------------------------------------ */
-/* 自动风场: 风向 / 强度 / 阵风 / 湍流 / 抖动量                         */
-/* ------------------------------------------------------------------ */
+/**
+ * 自动风场: 风向 / 强度 / 阵风 / 湍流 / 扇动量
+ * 量级约定: strength 是"树梢顺风偏移"的米数量级, 默认档位 (k≈0.3) 只有十几厘米,
+ * 大风档 (k=1) 才到 ~0.3m —— 目的是"树叶动, 树干基本不动"。
+ */
 export function autoWind(seed, intensity = 0.5) {
   const rng = makeRng(seed, 'auto-wind')
   const k = Math.max(0, Math.min(1, intensity))
   const dir = Math.round(rng.range(0, 360))
-  // 主风向附近 ±35° 内做一次"副风向"扰动
-  const gusty = 0.15 + k * 0.75 + rng.range(-0.08, 0.12)
   return {
     enabled: true,
     auto: true,
     intensity: k,
     direction: dir,
-    strength: +(0.06 + k * 0.85 * rng.range(0.75, 1.25)).toFixed(3),
-    speed: +(0.55 + k * 1.5 * rng.range(0.8, 1.2)).toFixed(3),
-    frequency: +(0.7 + k * 1.8 * rng.range(0.8, 1.25)).toFixed(3),
-    gust: +Math.max(0, Math.min(1, gusty)).toFixed(3),
-    gustSpeed: +(0.08 + k * 0.45 * rng.range(0.7, 1.3)).toFixed(3),
-    turbulence: +(0.08 + k * 0.72 * rng.range(0.75, 1.25)).toFixed(3),
-    spatialScale: +(0.12 + k * 0.55 * rng.range(0.8, 1.2)).toFixed(3),
-    flexFalloff: +(1.9 - k * 0.85).toFixed(3),
-    barkSway: +(0.45 + k * 0.85).toFixed(3),
-    leafFlutter: +(0.35 + k * 2.0 * rng.range(0.85, 1.2)).toFixed(3),
-    leafTwist: +(0.2 + k * 1.4 * rng.range(0.8, 1.2)).toFixed(3),
+    strength: +(0.03 + k * 0.3 * rng.range(0.75, 1.25)).toFixed(3),
+    speed: +(0.45 + k * 0.95 * rng.range(0.85, 1.15)).toFixed(3),
+    frequency: +(0.6 + k * 0.9 * rng.range(0.85, 1.15)).toFixed(3),
+    gust: +Math.min(1, 0.15 + k * 0.5 * rng.range(0.85, 1.15)).toFixed(3),
+    gustSpeed: +(0.06 + k * 0.22 * rng.range(0.8, 1.2)).toFixed(3),
+    turbulence: +(0.03 + k * 0.22 * rng.range(0.8, 1.2)).toFixed(3),
+    spatialScale: +(0.1 + k * 0.35 * rng.range(0.85, 1.15)).toFixed(3),
+    bias: +(0.2 + k * 0.25).toFixed(3),
+    flexFalloff: +(1.9 - k * 0.5).toFixed(3),
+    barkSway: +(0.4 + k * 0.5).toFixed(3),
+    leafFlutter: +(0.25 + k * 0.75 * rng.range(0.85, 1.2)).toFixed(3),
+    leafTwist: +(0.15 + k * 0.7 * rng.range(0.85, 1.2)).toFixed(3),
     timeScale: 1.0,
   }
 }

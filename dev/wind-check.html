@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>wind-check: booting</title>
+  </head>
+  <body style="margin: 0; background: #111; color: #ddd; font: 12px monospace">
+    <iframe id="f" src="/" style="width: 1280px; height: 800px; border: 0"></iframe>
+    <pre id="out" style="margin: 0"></pre>
+    <script type="module">
+      const RECV = 'http://127.0.0.1:5274/shot'
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const summary = []
+      const errs = []
+      let win = null, doc = null, state = null, sc = null
+
+      f.addEventListener('load', () => {
+        win = f.contentWindow
+        doc = f.contentDocument
+        state = win.__fastTree
+        sc = win.__fastTreeScene
+        win.addEventListener('error', (e) => errs.push('ONERROR:' + String(e.message).slice(0, 150)))
+        win.addEventListener('unhandledrejection', (e) => errs.push('REJ:' + String(e.reason).slice(0, 150)))
+        const oe = win.console.error
+        win.console.error = function (...a) { errs.push('CERR:' + a.map(String).join(' ').slice(0, 160)); oe.apply(win.console, a) }
+      })
+
+      // 抓一帧, 返回"树冠质量"在屏幕上的质心 (用绿色像素加权)
+      function canopyCentroid() {
+        const canvas = doc.querySelector('canvas')
+        const W = 360, H = 225
+        const c2 = document.createElement('canvas')
+        c2.width = W; c2.height = H
+        const ctx = c2.getContext('2d')
+        ctx.drawImage(canvas, 0, 0, W, H)
+        const d = ctx.getImageData(0, 0, W, H).data
+        let sw = 0, sx = 0, sy = 0
+        for (let y = 0; y < H; y++) {
+          for (let x = 0; x < W; x++) {
+            const i = (y * W + x) * 4
+            const r = d[i], g = d[i + 1], b = d[i + 2]
+            const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            // 只看树冠上半部 (柔度最大, 位移最明显) 的叶片像素
+            const isLeaf = g > r + 10 && g > b + 10 && lum > 55
+            if (isLeaf && y < H * 0.55) { const w = g; sw += w; sx += w * x; sy += w * y }
+          }
+        }
+        if (sw < 50) return null
+        return [sx / sw, sy / sw]
+      }
+
+      async function track(frames = 90, gapMs = 33) {
+        const pts = []
+        for (let i = 0; i < frames; i++) {
+          const c = canopyCentroid()
+          if (c) pts.push(c)
+          await sleep(gapMs)
+        }
+        if (pts.length < 10) return { error: 'no leaf pixels', n: pts.length }
+        // 主成分分解: 主轴 vs 次轴 (屏幕坐标)
+        const n = pts.length
+        let mx = 0, my = 0
+        for (const p of pts) { mx += p[0]; my += p[1] }
+        mx /= n; my /= n
+        let sxx = 0, syy = 0, sxy = 0
+        for (const p of pts) {
+          const dx = p[0] - mx, dy = p[1] - my
+          sxx += dx * dx; syy += dy * dy; sxy += dx * dy
+        }
+        sxx /= n; syy /= n; sxy /= n
+        const tr = sxx + syy
+        const det = sxx * syy - sxy * sxy
+        const disc = Math.sqrt(Math.max(0, tr * tr / 4 - det))
+        const l1 = tr / 2 + disc, l2 = Math.max(0, tr / 2 - disc)
+        const rmsMajor = Math.sqrt(l1), rmsMinor = Math.sqrt(l2)
+        return {
+          n,
+          rmsMajor: +rmsMajor.toFixed(3),
+          rmsMinor: +rmsMinor.toFixed(3),
+          thinness: +(rmsMinor / Math.max(1e-9, rmsMajor)).toFixed(3),
+        }
+      }
+
+      async function shot(name) {
+        try {
+          await fetch(`${RECV}?name=${name}`, { method: 'POST', body: doc.querySelector('canvas').toDataURL('image/png') })
+        } catch (e) { summary.push('shot ' + name + ' failed') }
+      }
+
+      setTimeout(async () => {
+        try {
+          const w = state.params.wind
+          summary.push(`默认风参数 strength=${w.strength} intensity=${w.intensity} flutter=${w.leafFlutter} twist=${w.leafTwist} turb=${w.turbulence} bias=${w.bias} speed=${w.speed}`)
+
+          // 让风向横穿视线 (默认 45° 几乎正对相机, 屏幕上看不出平移)
+          win.__fastTreeApi.pushUndo()
+          state.params.wind.auto = false
+          state.params.wind.direction = 135
+          // 相机推近树冠, 让叶片位移在屏幕上占据足够像素 (否则低于噪声底)
+          const h = sc.treeHeight || 10
+          sc.controls.target.set(0, h * 0.78, 0)
+          sc.camera.position.set(h * 0.34, h * 0.84, h * 0.44)
+          sc.controls.update()
+          await sleep(1400)
+          summary.push(`uniforms: uWindStrength=${sc.uniforms.uWindStrength.value} uWindFrequency=${sc.uniforms.uWindFrequency.value} uWindBias=${sc.uniforms.uWindBias.value} dir=(135°) camera≈${(sc.camera.position.length()).toFixed(1)}m`)
+
+          // 默认风: 树冠上半部质心轨迹
+          const def = await track(120, 30)
+          summary.push('默认风 树冠轨迹 ' + JSON.stringify(def))
+          await shot('w1-default-wind')
+
+          // 大风 + 高湍流对照: 幅度更大 / 轨迹更圆
+          state.params.wind.strength = 0.7
+          state.params.wind.leafFlutter = 1.6
+          state.params.wind.turbulence = 0.45
+          await sleep(1200)
+          const strong = await track(120, 30)
+          summary.push('大风对照 树冠轨迹 ' + JSON.stringify(strong))
+          summary.push('幅度比 (大风/默认) = ' + (strong.rmsMajor / Math.max(1e-6, def.rmsMajor)).toFixed(2) + 'x')
+          await shot('w2-strong-wind')
+
+          // 还原 (回到自动风场)
+          state.params.wind.strength = 0.12
+          state.params.wind.leafFlutter = 0.6
+          state.params.wind.turbulence = 0.12
+          state.params.wind.auto = true
+          await sleep(1000)
+          summary.push('还原后 strength=' + state.params.wind.strength + ' auto=' + state.params.wind.auto)
+
+          summary.push('errs=' + (errs.length ? errs.slice(0, 3).join(' ;; ') : 'none'))
+          document.title = 'WINDCHECK :: ' + summary.join(' || ').slice(0, 2400)
+        } catch (e) {
+          document.title = 'WINDCHECK-EXCEPTION :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 700)
+        }
+      }, 4500)
+    </script>
+  </body>
+</html>

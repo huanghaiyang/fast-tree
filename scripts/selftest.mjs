@@ -6,6 +6,7 @@ import { buildTree, selectionRanges } from '../src/core/treeBuilder.js'
 import { defaultParams, normalizeParams, MAX_LEVELS } from '../src/core/params.js'
 import { autoGenerate, autoWind, applyPreset, PRESETS } from '../src/core/presets.js'
 import { buildLeafTemplate, LEAF_SHAPE_KEYS } from '../src/core/leaf.js'
+import { motionMetrics } from '../src/core/windModel.js'
 
 let pass = 0
 let fail = 0
@@ -204,20 +205,26 @@ for (let i = 0; i < 20; i++) {
 }
 check('自动生成的三角面规模可控 (< 400k)', worstTri < 400000, `${worstTri} @ ${worstInfo}`)
 
-/* 6. 自动风场 */
-console.log('\n[6] 自动风场')
+/* 6. 自动风场 + 默认风量 */
+console.log('\n[6] 自动风场与风量')
 let windOk = true
 let windMsg = ''
+const autoWindSamples = []
 for (const intensity of [0, 0.25, 0.5, 0.75, 1]) {
   const w = autoWind(4242, intensity)
+  autoWindSamples.push(w)
   const ranges = [
     ['direction', w.direction, 0, 360],
-    ['strength', w.strength, 0, 3],
-    ['speed', w.speed, 0, 4],
+    ['strength', w.strength, 0, 0.6],
+    ['speed', w.speed, 0, 2],
+    ['frequency', w.frequency, 0.2, 3],
     ['gust', w.gust, 0, 1],
-    ['turbulence', w.turbulence, 0, 2],
+    ['gustSpeed', w.gustSpeed, 0.01, 0.6],
+    ['turbulence', w.turbulence, 0, 1],
+    ['bias', w.bias, 0, 1],
     ['flexFalloff', w.flexFalloff, 0.2, 4],
-    ['leafFlutter', w.leafFlutter, 0, 4],
+    ['leafFlutter', w.leafFlutter, 0, 1.5],
+    ['leafTwist', w.leafTwist, 0, 1.5],
   ]
   for (const [k, v, lo, hi] of ranges) {
     if (!(Number.isFinite(v) && v >= lo && v <= hi)) {
@@ -225,12 +232,35 @@ for (const intensity of [0, 0.25, 0.5, 0.75, 1]) {
       windMsg = `${k}=${v} @intensity=${intensity}`
     }
   }
-  if (w.strength > autoWind(4242, intensity + 0.5 >= 1 ? 1 : intensity + 0.5).strength + 1e-9 && intensity < 1) {
-    // 强度随滑杆单调不减 (允许随机扰动, 这里只做粗检查)
-  }
 }
 check('自动风场输出在合法范围', windOk, windMsg)
 check('风向随种子变化', autoWind(1, 0.5).direction !== autoWind(2, 0.5).direction || autoWind(3, 0.5).direction !== autoWind(4, 0.5).direction)
+
+const defWind = defaultParams().wind
+check('默认风力很轻 (树梢位移 <= 0.15m)', defWind.strength <= 0.15, `strength=${defWind.strength}`)
+check('自动风中档 (k=0.3) 也 <= 0.15m', autoWind(999, 0.3).strength <= 0.15, `${autoWind(999, 0.3).strength}`)
+check('大风档 (k=1) 仍 <= 0.4m', autoWindSamples[4].strength <= 0.4, `${autoWindSamples[4].strength}`)
+
+/* 6b. 叶片运动学: 不许绕圈 */
+console.log('\n[6b] 叶片运动学 (物理合理性)')
+const nowMetrics = motionMetrics(defWind, 'current')
+const legacyMetrics = motionMetrics(
+  { strength: 0.35, speed: 1.15, frequency: 1.4, gust: 0.45, gustSpeed: 0.22, turbulence: 0.3, bias: 0, leafFlutter: 1.2, leafTwist: 0.7, direction: 45 },
+  'legacy',
+)
+const lineOnly = motionMetrics({ ...defWind, turbulence: 0 }, 'current', { steps: 900 })
+check('默认: 叶片摆动以顺风往复为主 (垂直分量 < 40%)',
+  nowMetrics.thinness < 0.4, `thinness=${nowMetrics.thinness}`)
+check('默认: 叶片摆动幅度 <= 0.15m (不再是大风)',
+  nowMetrics.spanAlong <= 0.15, `spanAlong=${nowMetrics.spanAlong}`)
+check('对照: 旧公式近乎各向同性 (=看着在绕圈)',
+  legacyMetrics.thinness > 0.7, `legacy thinness=${legacyMetrics.thinness}`)
+check('对照: 旧公式摆幅远大于现在 (>4x)',
+  legacyMetrics.spanAlong > nowMetrics.spanAlong * 4,
+  `${legacyMetrics.spanAlong} vs ${nowMetrics.spanAlong}`)
+check('去掉横向湍流后轨迹退化成一条直线 (结构上不可能绕圈)',
+  lineOnly.thinness === 0 && lineOnly.spanPerp === 0,
+  `thinness=${lineOnly.thinness} spanPerp=${lineOnly.spanPerp}`)
 
 /* 7. LOD 与上限 */
 console.log('\n[7] LOD / 上限')

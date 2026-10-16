@@ -24,10 +24,12 @@ uniform float uTime;
 uniform vec2 uWindDir;
 uniform float uWindStrength;
 uniform float uWindSpeed;
+uniform float uWindFrequency;
 uniform float uGust;
 uniform float uGustSpeed;
 uniform float uTurbulence;
 uniform float uSpatialScale;
+uniform float uWindBias;
 uniform float uFlexFalloff;
 uniform float uSway;
 uniform float uLeafFlutter;
@@ -45,6 +47,13 @@ uniform float uSelRangeCount;
 varying vec2 vTreeUv;
 varying float vTreeWind;
 varying float vTreeSelected;
+
+// 罗德里格旋转: 绕任意轴 (叶片用固定水平轴做铰链式俯仰, 不做绕垂直轴自转)
+vec3 treeRotate(vec3 v, vec3 axis, float angle) {
+  float c = cos(angle);
+  float s = sin(angle);
+  return v * c + cross(axis, v) * s + axis * dot(axis, v) * (1.0 - c);
+}
 `
 
 function vertexBody(customVertex) {
@@ -62,24 +71,32 @@ function vertexBody(customVertex) {
   float flex = pow(clamp(aWind, 0.0, 1.0), uFlexFalloff);
   vTreeWind = flex;
   vec2 windDir = normalize(uWindDir + vec2(1e-5, 1e-6));
+  vec2 windPerp = vec2(-windDir.y, windDir.x);
   float phase = aPhase + dot(treeWorld.xz, windDir) * uSpatialScale + uSeed * 0.017;
   float tw = uTime * uWindSpeed;
-  float wave = sin(tw + phase) * 0.6 + sin(tw * 2.17 + phase * 1.7) * 0.25 + sin(tw * 0.37 + phase * 0.5) * 0.15;
+  float freq = max(0.05, uWindFrequency);
+  // 顺风主波 + 高频次波
+  float wave = sin(tw + phase) * 0.72 + sin(tw * 2.17 * freq + phase * 1.7) * 0.28;
   float gust = mix(1.0, sin(tw * uGustSpeed + phase * 0.21) * 0.5 + 0.5, uGust);
-  vec2 perp = vec2(-windDir.y, windDir.x);
-  float turb = sin(tw * 3.1 + phase * 4.3) * uTurbulence;
-  vec2 sway = windDir * (wave * gust) + perp * turb;
+  // 风只"推"不"拉": 位移恒偏下风向, 所以轨迹是一段来回的线段, 结构上不可能绕圈
+  float along = (wave * 0.5 + 0.5) * gust + uWindBias;
+  float turb = sin(tw * 3.1 * freq + phase * 4.3);
+  vec2 sway = windDir * along + windPerp * turb * uTurbulence;
   float amount = uWindStrength * uSway * flex * uWindEnabled;
   treePos.xz += sway * amount;
   if (uIsLeaf > 0.5) {
-    float f1 = sin(tw * 3.7 + phase * 6.1);
-    float f2 = cos(tw * 2.3 + phase * 3.7);
-    treePos += vec3(perp.x, 0.0, perp.y) * f1 * uLeafFlutter * uWindStrength * 0.22 * uWindEnabled * (0.35 + aWind);
+    // 叶片: 叶柄固定不动, 只做"弯曲 + 铰链式俯仰"
+    //  1) 弯曲方向固定 (下风向 + 重力), 只有幅度随时间变化 -> 不会画圈
+    //  2) 俯仰绕固定的水平轴 (垂直于风向), 小角度来回 -> 物理上就是叶片迎风翻动
     vec3 rel = treePos - aOrigin;
-    float ang = f2 * uLeafTwist * uWindStrength * uWindEnabled;
-    float ca = cos(ang);
-    float sa = sin(ang);
-    rel.xz = vec2(rel.x * ca - rel.z * sa, rel.x * sa + rel.z * ca);
+    float stemDist = length(rel);
+    float flap = sin(tw * 4.1 * freq + phase * 6.3);
+    float surge = sin(tw * 1.35 + phase * 2.1);
+    float leafAmp = uLeafFlutter * uWindStrength * 1.6 * uWindEnabled * (0.35 + aWind);
+    vec3 bendDir = normalize(vec3(windDir.x, -0.55, windDir.y));
+    rel += bendDir * stemDist * leafAmp * (0.55 + 0.30 * flap + 0.15 * surge);
+    float pitch = flap * uLeafTwist * 0.45 * uWindEnabled * (0.35 + uWindStrength * 2.0);
+    rel = treeRotate(rel, vec3(windPerp.x, 0.0, windPerp.y), pitch);
     treePos = aOrigin + rel;
   }
   transformed = treePos;
@@ -163,12 +180,14 @@ export function createSharedUniforms() {
   return {
     uTime: { value: 0 },
     uWindDir: { value: new THREE.Vector2(1, 0) },
-    uWindStrength: { value: 0.35 },
-    uWindSpeed: { value: 1.15 },
-    uGust: { value: 0.45 },
-    uGustSpeed: { value: 0.22 },
-    uTurbulence: { value: 0.3 },
-    uSpatialScale: { value: 0.3 },
+    uWindStrength: { value: 0.12 },
+    uWindSpeed: { value: 0.8 },
+    uWindFrequency: { value: 1.0 },
+    uGust: { value: 0.35 },
+    uGustSpeed: { value: 0.16 },
+    uTurbulence: { value: 0.12 },
+    uSpatialScale: { value: 0.22 },
+    uWindBias: { value: 0.3 },
     uFlexFalloff: { value: 1.5 },
     uWindEnabled: { value: 1 },
     uGrowth: { value: 1 },
@@ -402,10 +421,12 @@ export function updateWindUniforms(uniforms, wind) {
   uniforms.uWindDir.value.set(Math.cos(rad), Math.sin(rad))
   uniforms.uWindStrength.value = wind.strength
   uniforms.uWindSpeed.value = wind.speed
+  uniforms.uWindFrequency.value = Math.max(0.05, wind.frequency === undefined ? 1 : wind.frequency)
   uniforms.uGust.value = wind.gust
   uniforms.uGustSpeed.value = Math.max(0.01, wind.gustSpeed)
   uniforms.uTurbulence.value = wind.turbulence
   uniforms.uSpatialScale.value = wind.spatialScale
+  uniforms.uWindBias.value = wind.bias === undefined ? 0.3 : wind.bias
   uniforms.uFlexFalloff.value = wind.flexFalloff
   uniforms.uWindEnabled.value = wind.enabled ? 1 : 0
 }

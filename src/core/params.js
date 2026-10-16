@@ -195,19 +195,20 @@ export function defaultParams() {
     wind: {
       enabled: true,
       auto: true,
-      intensity: 0.5,      // 用户看到的"风力"总滑杆
+      intensity: 0.3,      // 用户看到的"风力"总滑杆
       direction: 45,       // 风向(度)
-      strength: 0.35,      // 基础位移(米)
-      speed: 1.15,         // 摆动速度
-      frequency: 1.4,      // 空间频率
-      gust: 0.45,          // 阵风强度
-      gustSpeed: 0.22,
-      turbulence: 0.3,     // 湍流
-      spatialScale: 0.3,   // 相位空间尺度
+      strength: 0.12,      // 基础位移(米): 树梢的顺风偏移量级
+      speed: 0.8,          // 摆动速度
+      frequency: 1.0,      // 高频分量密度 (次波/抖动的频率倍率)
+      gust: 0.35,          // 阵风强度
+      gustSpeed: 0.16,
+      turbulence: 0.12,    // 湍流(横向小摆动)
+      spatialScale: 0.22,  // 相位空间尺度
+      bias: 0.3,           // 顺风偏置: 风只推不拉 (0 = 完全对称往复)
       flexFalloff: 1.5,    // 柔度衰减指数
-      barkSway: 0.75,      // 树干/树枝摆幅倍率
-      leafFlutter: 1.2,    // 叶片抖动倍率
-      leafTwist: 0.7,      // 叶片扭转
+      barkSway: 0.6,       // 树干/树枝摆幅倍率
+      leafFlutter: 0.6,    // 叶片扇动倍率
+      leafTwist: 0.5,      // 叶片铰链俯仰角
       timeScale: 1.0,
     },
 
