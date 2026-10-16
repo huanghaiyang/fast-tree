@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><title>fruit-check: booting</title></head>
+  <body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+    <iframe id="f" src="/" style="width:1500px;height:900px;border:0"></iframe>
+    <pre id="out">…</pre>
+    <script type="module">
+      const RECV = 'http://127.0.0.1:5274/shot'
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const lines = []
+      const bar = (l) => { lines.push(l); document.getElementById('out').textContent = lines.join('\n') }
+      let win, doc, state, sc
+      const errs = []
+      f.addEventListener('load', () => {
+        win = f.contentWindow; doc = f.contentDocument; state = win.__fastTree; sc = win.__fastTreeScene
+        win.addEventListener('error', (e) => errs.push('ERR:' + String(e.message).slice(0, 120)))
+      })
+
+      async function shot(name) {
+        const canvas = doc.querySelector('canvas')
+        for (let i = 0; i < 6; i++) { sc.renderer.render(sc.scene, sc.camera); await sleep(120) }
+        await fetch(`${RECV}?name=${name}`, { method: 'POST', body: canvas.toDataURL('image/png') })
+        bar('shot ' + name)
+      }
+
+      setTimeout(async () => {
+        try {
+          for (let i = 0; i < 40 && !sc.barkMesh; i++) await sleep(150)
+          win.__fastTreeApi.applyClassification('oak', 'mature', 'summer')
+          await sleep(200)
+          state.params.leaves.enabled = false      // 只看枝+果
+          win.__fastTreeSceneApi.rebuildNow(true)
+          await sleep(300)
+
+          const st = state.stats
+          bar(`stats.fruit=${st.fruit} 挂果点=${(st.fruitAttach || []).length} barkTri=${st.barkTriangles}`)
+          // 1) 果实几何是否真的进了树皮网格
+          const geo = sc.barkMesh.geometry
+          const nodeAttr = geo.attributes.aNodeId.array
+          const fruitNodes = (sc.nodes || []).filter((n) => n.type === 'fruit')
+          const fruitIds = new Set(fruitNodes.map((n) => n.id))
+          let fruitVerts = 0
+          for (let i = 0; i < nodeAttr.length; i++) if (fruitIds.has(nodeAttr[i])) fruitVerts++
+          bar(`果实节点数=${fruitNodes.length} 果实顶点数=${fruitVerts} (共 ${nodeAttr.length} 顶点)`)
+          const first = fruitNodes.find((n) => n.bbox && n.stats.vertices > 0)
+          if (first) {
+            const bb = first.bbox
+            const size = [bb.max[0] - bb.min[0], bb.max[1] - bb.min[1], bb.max[2] - bb.min[2]]
+            bar(`首个果实节点: ${first.name} 顶点=${first.stats.vertices} 面=${first.stats.triangles} 尺寸=${size.map((x) => x.toFixed(3)).join(' x ')}`)
+            // 2) 把相机对准这个果实簇的包围盒中心
+            const c = [(bb.min[0] + bb.max[0]) / 2, (bb.min[1] + bb.max[1]) / 2, (bb.min[2] + bb.max[2]) / 2]
+            sc.controls.target.set(c[0], c[1], c[2])
+            sc.camera.position.set(c[0] + 0.45, c[1] + 0.15, c[2] + 0.55)
+            sc.camera.lookAt(sc.controls.target)
+            await shot('fruit-closeup')
+            // 3) 统计画面里"果色"(暖棕)像素占比
+            const cv = doc.querySelector('canvas')
+            const t = doc.createElement('canvas'); t.width = 200; t.height = 150
+            const cx = t.getContext('2d'); cx.drawImage(cv, 0, 0, 200, 150)
+            const d = cx.getImageData(0, 0, 200, 150).data
+            let warm = 0, total = 0
+            for (let i = 0; i < d.length; i += 4) {
+              total++
+              const r = d[i], g = d[i + 1], bl = d[i + 2]
+              if (r > g + 10 && g > bl + 5 && r > 60) warm++
+            }
+            bar(`画面中暖色(果实/树皮)像素占比 = ${(100 * warm / total).toFixed(1)}%`)
+          } else bar('!! 没有带几何的果实节点')
+          bar('errs=' + (errs.length ? errs.slice(0, 2).join(' ;; ') : 'none'))
+          document.title = 'FRUITCHECK-OK :: ' + lines.join(' || ').slice(0, 1700)
+        } catch (e) {
+          document.title = 'FRUITCHECK-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 500)
+        }
+      }, 4200)
+    </script>
+  </body>
+</html>

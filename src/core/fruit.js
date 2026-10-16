@@ -125,6 +125,9 @@ export function buildFruitTemplate(o = {}) {
  *          colorTint:THREE.Color, wind:number, phase:number, grow:number, origin:THREE.Vector3, nodeId:number}} o
  */
 export function pushFruitInstance(acc, tpl, o) {
+  // 关键: 三角面索引必须基于"写入前的累加器顶点数"。
+  // 模板会被多处复用 (tpl.offset 会失效), 用 acc.vertexCount 才永远正确。
+  const base = acc.vertexCount
   const scale = o.scale === undefined ? 1 : o.scale
   const sx = typeof scale === 'number' ? scale : scale.x
   const sy = typeof scale === 'number' ? scale : scale.y
@@ -159,7 +162,6 @@ export function pushFruitInstance(acc, tpl, o) {
     )
   }
   for (let i = 0; i < tpl.index.length; i += 3) {
-    acc.tri(tpl.offset + tpl.index[i], tpl.offset + tpl.index[i + 1], tpl.offset + tpl.index[i + 2])
+    acc.tri(base + tpl.index[i], base + tpl.index[i + 1], base + tpl.index[i + 2])
   }
-  tpl.offset += tpl.vertexCount
 }

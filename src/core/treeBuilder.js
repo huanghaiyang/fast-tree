@@ -495,20 +495,10 @@ export function buildTree(params) {
       const tt = 0.35 + 0.65 * ((k + 0.5) / count) + rng.signed() * 0.06
       const fr0 = sampleFrame(frames, Math.min(0.98, Math.max(0.05, tt)))
       if (!fr0) continue
-      if (fruitSlot < 0) {
-        levelFruitCounter[level] = (levelFruitCounter[level] || 0) + 1
-        fruitSlot = addSlot({
-          type: 'fruit',
-          level,
-          group: `fruit-L${level}`,
-          name: `L${level} 果实簇 #${levelFruitCounter[level]}`,
-          parent: parentSlot,
-          meta: { fruit: 0, type: F.type },
-        })
-      }
       for (let j = 0; j < per; j++) {
         // 同簇果实沿**枝长参数**散开 (不是在世界坐标里平移) -> 永远贴在枝条表面上
-        const dT = (rng.range(-F.clusterRadius, F.clusterRadius) * 1.4) / branchLen
+        // 簇内偏移: 换算成枝长参数后**上限 6%** —— 短枝上也不会把同簇果实甩到枝条两端
+        const dT = Math.max(-0.06, Math.min(0.06, (rng.range(-F.clusterRadius, F.clusterRadius) * 1.2) / branchLen))
         const t = Math.min(0.995, Math.max(0.02, tt + dT))
         const fr = sampleFrame(frames, t)
         if (!fr) continue
@@ -525,6 +515,17 @@ export function buildTree(params) {
         const pos = surface.clone().addScaledVector(stemDir, -stemHalf * scaleY * 0.92)
         if (fruitCount >= Math.max(0, Math.round(F.maxCount === undefined ? 420 : F.maxCount))) continue
         if (fruitCount > 0 && !rng.chance(F.chance === undefined ? 0.5 : F.chance)) continue
+        if (fruitSlot < 0) {
+          levelFruitCounter[level] = (levelFruitCounter[level] || 0) + 1
+          fruitSlot = addSlot({
+            type: 'fruit',
+            level,
+            group: `fruit-L${level}`,
+            name: `L${level} 果实簇 #${levelFruitCounter[level]}`,
+            parent: parentSlot,
+            meta: { fruit: 0, type: F.type },
+          })
+        }
         const tint = new THREE.Color(1, 1, 1).multiplyScalar(Math.max(0.2, 1 + rng.signed() * F.colorVariance))
         pushFruitInstance(fruitAcc, fruitTpl, {
           pos,

@@ -671,6 +671,19 @@ check('果实真的挂在枝条上 (挂果点到枝条三角面距离 <= 2cm)', 
   return total > 0 && attached === total && worst <= 0.02
 })())
 
+check('果实节点没有空槽, 每个都带三角面', (() => {
+  const fn = fR.nodes.filter((n) => n.type === 'fruit')
+  const empty = fn.filter((n) => !n.stats.vertices || !n.stats.triangles)
+  console.log('      果实节点 ' + fn.length + ' 个, 空槽 ' + empty.length + ' 个')
+  return fn.length > 0 && empty.length === 0
+})())
+check('果实三角面数与果实数匹配 (索引未错位)', (() => {
+  // 索引写错时三角面会归到别的节点上 -> 果实面数会异常偏小甚至为 0
+  const tris = fR.nodes.filter((n) => n.type === 'fruit').reduce((a, n) => a + n.stats.triangles, 0)
+  const per = tris / Math.max(1, fR.stats.fruit)
+  console.log('      果实总面 ' + tris + ', 每个果实 ' + per.toFixed(1) + ' 面')
+  return per > 100 && per < 400
+})())
 check('果实计入面数且不超预算', fR.stats.barkTriangles > oakR.stats.barkTriangles, `${fR.stats.barkTriangles} vs ${oakR.stats.barkTriangles}`)
 const pineP = composeTree('pine', 'mature', 'summer', 4242)
 check('橡树预置果实 (acorn) 且已开启', composeTree('oak', 'mature', 'summer', 4242).fruit.enabled === true && composeTree('oak', 'mature', 'summer', 4242).fruit.type === 'acorn')
