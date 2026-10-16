@@ -289,6 +289,7 @@ node scripts/shot-receiver.mjs        # 监听 127.0.0.1:5274, 把页面回传�
 - `dev/shader-check.html` —— 对着色器做编译体检，把失败的 shader 日志与出错行上下文写进页面标题
 - `dev/audit-check.html` —— 在浏览器里跑同一套参数审计（覆盖需要 canvas 的 13 项）
 - `dev/gallery-check.html` —— 批量生成"橡树 5 个生长阶段 + 4 个季节 + 其他树种"并逐个截图存档
+- `dev/classify-check.html` —— 点真实的树种/阶段/季节 chips, 验证重建/重新取景/生长进度不被重置
 - `dev/ui-check.html` —— hover 说明浮层 + 风向指示器箭头角度 + 不同风向下的屏幕摆动
 - `dev/node-check.html` —— 驱动节点树：选中/隔离/聚焦/材质节点/详情面板，并用像素统计验证效果
 - `dev/dock-check.html` —— 校验右侧面板布局：默认不展示、8 个标签页、打开后三列网格、组默认折叠、`N` 开关、关闭后高亮保留

@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><title>classify-check: booting</title></head>
+  <body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+    <iframe id="f" src="/" style="width:1500px;height:900px;border:0"></iframe>
+    <pre id="out">…</pre>
+    <script type="module">
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const lines = []
+      const bar = (l) => { lines.push(l); document.getElementById('out').textContent = lines.join('\n') }
+      let win, doc, state, sc
+      const errs = []
+      f.addEventListener('load', () => {
+        win = f.contentWindow; doc = f.contentDocument; state = win.__fastTree; sc = win.__fastTreeScene
+        win.addEventListener('error', (e) => errs.push('ERR:' + String(e.message).slice(0, 120)))
+        const oe = win.console.error
+        win.console.error = function (...a) { errs.push('CERR:' + a.map(String).join(' ').slice(0, 160)); oe.apply(win.console, a) }
+      })
+      const green = () => {
+        const c = doc.querySelector('canvas')
+        const t = document.createElement('canvas'); t.width = 120; t.height = 90
+        const cx = t.getContext('2d'); cx.drawImage(c, 0, 0, 120, 90)
+        const d = cx.getImageData(0, 0, 120, 90).data
+        let g = 0
+        for (let i = 0; i < d.length; i += 4) if (d[i + 1] > d[i] + 8 && d[i + 1] > d[i + 2] + 8) g++
+        return +(g / 10800).toFixed(3)
+      }
+      const chipRow = (rowLabel) => {
+        const rows = [...doc.querySelectorAll('.panel-body .axis, .axis')]
+        const row = rows.find((r) => r.querySelector('label') && r.querySelector('label').textContent.includes(rowLabel))
+        return row ? [...row.querySelectorAll('.chip')] : []
+      }
+      setTimeout(async () => {
+        try {
+          const tabs = [...doc.querySelectorAll('.tab')]
+          const seedTab = tabs.find((t) => t.textContent.includes('种子'))
+          seedTab?.click()
+          await sleep(400)
+          const speciesChips = chipRow('树种')
+          const stageChips = chipRow('生长阶段')
+          const seasonChips = chipRow('季节')
+          bar(`chips: 树种=${speciesChips.length} 阶段=${stageChips.length} 季节=${seasonChips.length}`)
+          bar('初始: ' + (doc.querySelector('.panel-body .tag')?.textContent || '?') + ' 绿=' + green())
+          // 点"橡树"
+          speciesChips.find((c) => c.textContent.includes('橡树'))?.click()
+          await sleep(1200)
+          bar(`点橡树: h=${(state.stats.height || 0).toFixed(1)} 枝=${state.stats.branches} 绿=${green()} 组合名=${doc.body.textContent.match(/橡树 · \S+ · \S+/)?.[0] || '?'}`)
+          bar('  growth=' + state.params.growth.value + ' (不应被重置为 0)')
+          // 点"树苗"
+          stageChips.find((c) => c.textContent.includes('树苗'))?.click()
+          await sleep(1200)
+          bar(`点树苗: h=${(state.stats.height || 0).toFixed(1)} 枝=${state.stats.branches} 叶=${state.stats.leaves} 绿=${green()}`)
+          // 点"古树"
+          stageChips.find((c) => c.textContent.includes('古树'))?.click()
+          await sleep(1500)
+          bar(`点古树: h=${(state.stats.height || 0).toFixed(1)} 枝=${state.stats.branches} 绿=${green()}`)
+          // 点"秋"
+          seasonChips.find((c) => c.textContent.includes('秋'))?.click()
+          await sleep(1200)
+          bar(`点秋: 叶色=${state.params.leaves.color} 叶=${state.stats.leaves} 绿=${green()} (应变红/橙)`)
+          // 点"冬"
+          seasonChips.find((c) => c.textContent.includes('冬'))?.click()
+          await sleep(1200)
+          bar(`点冬: 叶色=${state.params.leaves.color} 叶=${state.stats.leaves} 绿=${green()}`)
+          // 点"夏" + 取景 (旧 bug: 取景会把生长归零)
+          seasonChips.find((c) => c.textContent.includes('夏'))?.click()
+          await sleep(1200)
+          const before = green()
+          win.__fastTreeApi.pushUndo()
+          state.frameVersion++
+          await sleep(500)
+          bar(`取景后: growth=${state.params.growth.value} 绿=${green()} (之前 ${before}; 不应塌缩)`)
+          bar('errs=' + (errs.length ? errs.slice(0, 2).join(' ;; ') : 'none'))
+          document.title = 'CLASSIFY-OK :: ' + lines.join(' || ').slice(0, 1800)
+        } catch (e) {
+          document.title = 'CLASSIFY-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 600)
+        }
+      }, 4200)
+    </script>
+  </body>
+</html>

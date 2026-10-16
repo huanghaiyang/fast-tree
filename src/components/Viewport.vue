@@ -57,6 +57,7 @@ function clearSelection() {
 let scene = null
 let rebuildTimer = 0
 let rebuildQueued = false
+let rebuildFrame = false
 let fpsFrames = 0
 let lastCustomCode = ''
 
@@ -121,12 +122,16 @@ onBeforeUnmount(() => {
 
 function scheduleRebuild(frame) {
   rebuildQueued = true
+  // 只要有一次请求带取景, 这次重建就取景 (状态切换后需要重新框住新尺寸)
+  if (frame) rebuildFrame = true
   if (rebuildTimer) return
   rebuildTimer = setTimeout(() => {
     rebuildTimer = 0
     if (!rebuildQueued) return
     rebuildQueued = false
-    rebuild(frame)
+    const f = rebuildFrame
+    rebuildFrame = false
+    rebuild(f)
   }, 90)
 }
 

@@ -322,6 +322,7 @@ export function doApplyPreset(id) {
   if (state.params.wind.auto) {
     Object.assign(state.params.wind, autoWind(state.params.seed, state.params.wind.intensity))
   }
+  state.rebuildVersion++   // 重建并重新取景
 }
 
 /** 按"树种 + 生长阶段 + 季节"重新生成 (三维预设) */
@@ -333,6 +334,8 @@ export function applyClassification(speciesId, stageId, seasonId) {
   if (state.params.wind.auto) {
     Object.assign(state.params.wind, autoWind(state.params.seed, state.params.wind.intensity))
   }
+  // 大树 -> 树苗这种尺寸剧变要重新取景, 否则新树可能只有几个像素
+  state.rebuildVersion++
   return state.params.classify
 }
 
