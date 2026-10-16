@@ -22,16 +22,21 @@ export const LEAF_OUTLINES = {
     const lobes = 0.82 + 0.18 * Math.cos(t * Math.PI * 6)
     return base * lobes * 0.5
   },
-  /** 橡树叶: 羽状深裂, 5~7 对圆裂片 (参考图 5) —— 裂片深、叶基楔形、叶尖圆钝 */
+  /** 橡树叶: 掌状 5 尖裂叶 (对齐用户提供的叶片卡片: 尖裂片 + 凹缺深 + 明显叶柄) */
   oak: (t) => {
-    // 叶基楔形 -> 叶尖收窄的整体轮廓
-    const base = Math.pow(Math.sin(Math.PI * Math.pow(t, 1.12)), 0.42)
-    // 裂片: 沿叶轴周期性收缩 (sinus 越深裂片越明显)
-    const lobeCount = 6
-    const sinus = 0.62 + 0.38 * Math.abs(Math.cos(t * Math.PI * lobeCount))
-    // 叶基附近裂片较浅, 叶尖附近也收敛
-    const depth = 0.55 + 0.45 * Math.sin(Math.PI * Math.pow(t, 0.85))
-    return base * (1 - (1 - sinus) * depth) * 0.5
+    // 叶柄段 (前 12%) 只有细中脉
+    if (t < 0.12) return 0.012
+    const u = (t - 0.12) / 0.88
+    // 整体轮廓: 中部最宽, 两端收窄 (掌状叶接近心形/卵形)
+    const body = Math.pow(Math.sin(Math.PI * Math.pow(u, 0.82)), 0.5)
+    // 5 个尖裂片: 用"尖齿"函数叠加, 凹缺 (sinus) 很深
+    const teeth = 5
+    const phase = u * teeth
+    const f = Math.abs(Math.sin(Math.PI * (phase + 0.5)))       // 0..1, 裂片中心=0
+    const lobe = 1 - 0.42 * Math.pow(f, 1.6)                    // 凹缺最多收 42%
+    // 基部两片裂片略小, 顶端裂片收尖
+    const tipTaper = u < 0.72 ? 1 : 1 - (u - 0.72) * 1.6
+    return Math.max(0.01, body * lobe * Math.max(0.05, tipTaper)) * 0.5
   },
   /** 枫叶: 掌状 5 裂 */
   palmate: (t) => {
@@ -55,6 +60,54 @@ export const LEAF_OUTLINES = {
 }
 
 export const LEAF_SHAPE_KEYS = Object.keys(LEAF_OUTLINES)
+
+/**
+ * 叶片"卡片"模板 (默认叶形)
+ * ------------------------------------------------------------
+ * 用户的叶片贴图已经按 alpha 裁掉透明边, 所以贴图矩形 = 叶片轮廓。
+ * 用它做几何: 一个 (cols × rows) 的网格矩形, UV 直接铺满贴图,
+ * 叶形完全由贴图 alpha 决定 (alphaTest 裁掉透明区) —— 这才是"照片级叶片"的正确做法。
+ * @param {{aspect:number, segments:number, curl:number, fold:number, petiole:number}} o
+ *        aspect = 裁剪后 宽/高; 长度归一为 1, 宽度 = aspect (再由 leaves.width 缩放)
+ */
+export function buildLeafCardTemplate(o = {}) {
+  const aspect = Math.max(0.15, Math.min(3, o.aspect || 1))
+  const cols = Math.max(1, Math.round(o.cols || 1))
+  const rows = Math.max(2, Math.min(4, Math.round(o.rows || 3)))
+  const curl = o.curl === undefined ? 0.1 : o.curl
+  const fold = o.fold === undefined ? 0.12 : o.fold
+  const halfW = 0.5 * aspect
+
+  const positions = []
+  const normals = []
+  const uvs = []
+  const index = []
+  for (let i = 0; i <= rows; i++) {
+    const t = i / rows
+    for (let j = 0; j <= cols; j++) {
+      const u = j / cols
+      const x = (u - 0.5) * 2 * halfW
+      const y = t
+      // 轻微弓弯/折叠: 让卡片不是纯平面 (受光更自然)
+      const z = curl * Math.sin(Math.PI * t) + fold * Math.abs(u - 0.5) * 2 * halfW
+      positions.push(x, y, z)
+      normals.push(0, 0, 1)
+      uvs.push(u, t)
+    }
+  }
+  const stride = cols + 1
+  for (let i = 0; i < rows; i++) {
+    for (let j = 0; j < cols; j++) {
+      const a = i * stride + j
+      const b = a + 1
+      const c = a + stride
+      const d = c + 1
+      index.push(a, b, d)
+      index.push(a, d, c)
+    }
+  }
+  return { positions, normals, uvs, index, vertexCount: positions.length / 3 }
+}
 
 /**
  * 单位叶片模板 (无索引 -> 由 pushLeafInstance 直接写入三角面)

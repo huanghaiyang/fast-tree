@@ -5,6 +5,7 @@ import { reactive, computed } from 'vue'
 import { defaultParams, cloneParams, normalizeParams, mergeParams } from '../core/params.js'
 import { autoGenerate, autoWind, applyPreset, randomSeed, presetById, archetypeName } from '../core/presets.js'
 import { SPECIES, GROWTH_STAGES, SEASONS } from '../core/species.js'
+import { LEAF_CARDS, LEAF_CARD_BY_ID, leafCardsFor, leafCardRows, LEAF_CARD_BATCHES } from '../core/leafCards.generated.js'
 import { selectionRanges } from '../core/treeBuilder.js'
 
 export const state = reactive({
@@ -340,6 +341,32 @@ export function applyClassification(speciesId, stageId, seasonId) {
 }
 
 /** 随机换一组组合 (树种/阶段/季节都随机) */
+/** 应用一张内置叶片卡片 (贴图 + 卡片几何 + 宽高比) */
+export function applyLeafCard(cardId, opts = {}) {
+  const card = LEAF_CARD_BY_ID.get(cardId)
+  if (!card) return null
+  pushUndo()
+  const p = state.params
+  p.leaves.cardMode = true
+  p.leaves.cardAspect = card.aspect
+  p.leafMat.texture = card.url
+  p.leafMat.textureHasAlpha = true
+  // 卡片是照片级贴图: 默认直接用贴图原色 (顶点色是季节调色板, 乘上去会把橙色叶子染绿)
+  p.leafMat.vertexColorMix = 0
+  if (opts.alphaTest !== undefined) p.leafMat.alphaTest = opts.alphaTest
+  p.leafMat.alphaTest = Math.max(0.2, Math.min(0.5, p.leafMat.alphaTest || 0.35))
+  state.cardId = card.id
+  state.rebuildVersion++
+  return card
+}
+
+/** 随机换一张内置叶片卡片 (可指定批次/叶形) */
+export function randomLeafCard(batch, row) {
+  const pool = LEAF_CARDS.filter((c) => (!batch || c.batch === batch) && (!row || c.row === row))
+  if (!pool.length) return null
+  return applyLeafCard(pool[Math.floor(Math.random() * pool.length)].id)
+}
+
 export function randomClassification() {
   const species = SPECIES[Math.floor(Math.random() * SPECIES.length)].id
   const stage = GROWTH_STAGES[Math.floor(Math.random() * GROWTH_STAGES.length)].id
@@ -408,7 +435,7 @@ if (typeof window !== 'undefined' && import.meta.env && import.meta.env.DEV) {
   window.__fastTree = state
   window.__fastTreeApi = {
     pushUndo, doAutoGenerate, doApplyPreset, setSeed, randomizeSeed,
-    applyClassification, randomClassification,
+    applyClassification, randomClassification, applyLeafCard, randomLeafCard,
   }
 }
 

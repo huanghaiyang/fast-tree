@@ -36,6 +36,38 @@
     <TextureRow label="自定义法线贴图" v-model="lm.normalTexture" />
   </Section>
 
+  <Section title="内置叶片卡片" hint="Leaf Cards" :default-collapsed="true">
+    <ToggleRow label="贴图卡片模式" v-model="lv.cardMode"
+      hint="叶形轮廓直接用贴图 alpha (照片级); 关闭则用程序化叶形轮廓" />
+    <div class="inline">
+      <span class="muted">批次</span>
+      <button v-for="bt in batches" :key="bt" class="chip" :class="{ active: batch === bt }"
+        @click="batch = bt; row = leafCardRows(bt)[0]; col = 1">{{ bt === 'batch1' ? '① 秋色系' : '② 绿色系' }} · {{ LEAF_CARD_BATCHES[bt] ? Object.values(LEAF_CARD_BATCHES[bt]).reduce((a, b) => a + b, 0) : 0 }}</button>
+    </div>
+    <div class="inline">
+      <span class="muted">叶形</span>
+      <button v-for="r in leafCardRows(batch)" :key="r" class="chip" :class="{ active: row === r }"
+        @click="row = r; col = 1">#{{ r }}</button>
+    </div>
+    <div class="inline">
+      <span class="muted">颜色变体</span>
+      <button v-for="cd in cardsOfShape" :key="cd.id" class="chip dot"
+        :class="{ active: lm.texture === cd.url }" :style="{ background: 'transparent' }"
+        @click="use(cd)" :title="cd.id + ' (' + cd.w + '×' + cd.h + ')'">
+        <img :src="cd.url" alt="" />
+      </button>
+    </div>
+    <div class="inline">
+      <button class="btn small primary" @click="use(current)">应用这张叶子</button>
+      <button class="btn small" @click="rand">🎲 随机叶片</button>
+      <span class="tag" :class="{ on: lv.cardMode }">{{ lv.cardMode ? '卡片模式' : '程序化叶形' }}</span>
+    </div>
+    <p class="muted" style="margin: 0">
+      内置 {{ total }} 张已按 alpha 裁边的叶片卡片 (来自你的 leaves_v2_batch1/2)；
+      点缩略图即刻换上：叶形与贴图完全一致，并自动把"顶点色混合"设为 0（免得季节调色板把照片颜色染偏）。
+    </p>
+  </Section>
+
   <Section title="自定义 GLSL" hint="Custom Shader" :default-collapsed="true">
     <ToggleRow label="启用自己的 GLSL 片段" v-model="c.enabled" />
     <div class="row-head"><label>顶点片段 (在 begin_vertex + 风场之后执行)</label></div>
@@ -60,13 +92,42 @@ import ToggleRow from '../ui/ToggleRow.vue'
 import ColorRow from '../ui/ColorRow.vue'
 import SelectRow from '../ui/SelectRow.vue'
 import TextureRow from '../ui/TextureRow.vue'
-import { state } from '../../store/treeStore.js'
-import { computed } from 'vue'
+import { state, applyLeafCard, randomLeafCard } from '../../store/treeStore.js'
+import { LEAF_CARDS, LEAF_CARD_BATCHES, leafCardsFor, leafCardRows } from '../../core/leafCards.generated.js'
+import { computed, ref } from 'vue'
 
 const b = state.params.bark
 const lm = state.params.leafMat
+const lv = state.params.leaves
 const c = state.params.custom
 const shaderError = computed(() => state.shaderError)
+
+/* ---------------- 内置叶片卡片 ---------------- */
+const batches = ['batch1', 'batch2']
+const total = LEAF_CARDS.length
+const batch = ref('batch1')
+const row = ref(1)
+const col = ref(1)
+const cardsOfShape = computed(() => leafCardsFor(batch.value, row.value))
+const current = computed(() => cardsOfShape.value[Math.min(col.value - 1, cardsOfShape.value.length - 1)] || cardsOfShape.value[0] || LEAF_CARDS[0])
+
+function use(card) {
+  if (!card) return
+  applyLeafCard(card.id)
+  state.frameVersion++
+}
+
+function rand() {
+  const card = randomLeafCard(batch.value, row.value) || randomLeafCard()
+  if (card) {
+    const b2 = card.batch
+    const r2 = card.row
+    batch.value = b2
+    row.value = r2
+    col.value = Math.max(1, leafCardsFor(b2, r2).findIndex((x) => x.id === card.id) + 1)
+    state.frameVersion++
+  }
+}
 
 const barkStyles = [
   { value: 'rough', label: '粗糙 rough' },
@@ -79,6 +140,16 @@ function applyCustom() {
   state.materialVersion++
 }
 </script>
+
+<style scoped>
+.chip {
+  padding: 2px 7px; font-size: 11px; color: var(--text-2);
+  background: var(--bg-3); border: 1px solid var(--line); border-radius: 6px; cursor: pointer;
+}
+.chip.active { border-color: var(--accent); color: #eafff7; }
+.chip.dot { padding: 0; width: 30px; height: 30px; overflow: hidden; display: inline-flex; }
+.chip.dot img { width: 100%; height: 100%; object-fit: contain; }
+</style>
 
 <style scoped>
 .error-inline {

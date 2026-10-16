@@ -168,6 +168,11 @@ export function defaultParams() {
       // 叶形混合: 同一棵树可混用多种叶形 (不同树种叶形差别很大)
       // 每项 { shape, weight }, weight 为相对比例; 留空 = 只用 shape
       shapeMix: [],
+      // 叶片卡片模式: 叶形轮廓直接用贴图 alpha (照片级), 而不是程序化轮廓
+      cardMode: false,
+      cardAspect: 1,       // 选中卡片的 宽/高 (由 UI 从卡片库写入)
+      cardCurl: 0.1,       // 卡片的轻微弓弯
+      cardFold: 0.12,      // 卡片沿中脉的折叠
     },
 
     // ---------------- 果实 ----------------

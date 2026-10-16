@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><title>card-check: booting</title></head>
+  <body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+    <iframe id="f" src="/" style="width:1500px;height:900px;border:0"></iframe>
+    <pre id="out">…</pre>
+    <script type="module">
+      const RECV = 'http://127.0.0.1:5274/shot'
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const lines = []
+      const bar = (l) => { lines.push(l); document.getElementById('out').textContent = lines.join('\n') }
+      let win, doc, state, sc
+      const errs = []
+      f.addEventListener('load', () => {
+        win = f.contentWindow; doc = f.contentDocument; state = win.__fastTree; sc = win.__fastTreeScene
+        win.addEventListener('error', (e) => errs.push('ERR:' + String(e.message).slice(0, 120)))
+        const oe = win.console.error
+        win.console.error = function (...a) { errs.push('CERR:' + a.map(String).join(' ').slice(0, 150)); oe.apply(win.console, a) }
+      })
+      async function shot(name) {
+        const cv = doc.querySelector('canvas')
+        for (let i = 0; i < 8; i++) { sc.renderer.render(sc.scene, sc.camera); await sleep(120) }
+        await fetch(`${RECV}?name=${name}`, { method: 'POST', body: cv.toDataURL('image/png') })
+        bar('shot ' + name)
+      }
+      setTimeout(async () => {
+        try {
+          for (let i = 0; i < 40 && !sc.barkMesh; i++) await sleep(150)
+          win.__fastTreeApi.applyClassification('oak', 'mature', 'summer')
+          await sleep(200)
+          win.__fastTreeSceneApi.rebuildNow(true)
+          await sleep(300)
+          // 1) 面板里能不能选到卡片
+          const tab = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('材质'))
+          tab?.click(); await sleep(500)
+          const secTitles = [...doc.querySelectorAll('.section-head .title')].map((e) => e.textContent.trim())
+          bar('材质页分节: ' + secTitles.join(' / '))
+          const hasCards = secTitles.some((t) => t.includes('内置叶片卡片'))
+          bar('含"内置叶片卡片"分节: ' + hasCards)
+          const imgs = [...doc.querySelectorAll('.chip.dot img')]
+          bar('当前叶形的颜色变体缩略图数: ' + imgs.length)
+          // 2) 应用第一张卡片
+          const card = win.__fastTreeApi ? null : null
+          const mod = await import('/src/core/leafCards.generated.js')
+          const c0 = mod.LEAF_CARDS[0]
+          win.__fastTreeApi.applyLeafCard(c0.id)
+          win.__fastTreeSceneApi.rebuildNow(true)
+          await sleep(300)
+          bar(`应用卡片 ${c0.id}: cardMode=${state.params.leaves.cardMode} aspect=${state.params.leaves.cardAspect} texture=${state.params.leafMat.texture.split('/').pop()} 叶面=${state.stats.leafTriangles}`)
+          // 3) 贴图是否真的加载成功
+          bar('材质 map: ' + (sc.materials.leaf.map ? (sc.materials.leaf.map.image ? (sc.materials.leaf.map.image.width + 'x' + sc.materials.leaf.map.image.height) : 'image 未就绪') : '无 map'))
+          // 叶片特写
+          const lb = sc.leafMesh.geometry.boundingBox
+          const cy = (lb.min.y + lb.max.y) / 2
+          sc.controls.target.set(0, cy, 0)
+          sc.camera.position.set(1.2, cy + 0.5, 1.9)
+          sc.camera.lookAt(sc.controls.target)
+          await shot('leaf-card-closeup')
+          // 4) 换一张 (batch2 绿色系) 并再看贴图
+          const g = mod.LEAF_CARDS.find((c) => c.batch === 'batch2' && c.row === 1)
+          win.__fastTreeApi.applyLeafCard(g.id)
+          win.__fastTreeSceneApi.rebuildNow(true)
+          await sleep(400)
+          bar(`换 ${g.id}: 贴图=${sc.materials.leaf.map && sc.materials.leaf.map.image ? sc.materials.leaf.map.image.width + 'x' + sc.materials.leaf.map.image.height : '未就绪'}`)
+          await shot('leaf-card-green')
+          bar('errs=' + (errs.length ? errs.slice(0, 3).join(' ;; ') : 'none'))
+          document.title = 'CARDCHECK-OK :: ' + lines.join(' || ').slice(0, 1700)
+        } catch (e) {
+          document.title = 'CARDCHECK-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 600)
+        }
+      }, 4200)
+    </script>
+  </body>
+</html>

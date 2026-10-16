@@ -9,7 +9,7 @@ import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { makeRng } from './rng.js'
 import { buildTube } from './bark.js'
-import { buildLeafTemplate, pushLeafInstance } from './leaf.js'
+import { buildLeafTemplate, buildLeafCardTemplate, pushLeafInstance } from './leaf.js'
 import { buildFruitTemplate, pushFruitInstance } from './fruit.js'
 import {
   GeoAcc, growFrames, sampleFrame, anyPerp, azimuthPerp, rotateTowardUp,
@@ -54,18 +54,25 @@ export function buildTree(params) {
 
   const barkParts = []
   const leafAcc = new GeoAcc()
-  const leafTemplate = buildLeafTemplate({
-    shape: L.shape, segments: L.segments, curl: L.curl, fold: L.fold, petiole: L.petiole,
-  })
+  const makeTemplate = (shape) => (L.cardMode
+    ? buildLeafCardTemplate({
+        aspect: L.cardAspect || 1,
+        cols: 1,
+        rows: 3,
+        curl: L.cardCurl === undefined ? 0.1 : L.cardCurl,
+        fold: L.cardFold === undefined ? 0.12 : L.cardFold,
+      })
+    : buildLeafTemplate({
+        shape, segments: L.segments, curl: L.curl, fold: L.fold, petiole: L.petiole,
+      }))
+  const leafTemplate = makeTemplate(L.shape)
   // 叶形混合: shapeMix 里每一项都生成一个模板, 实例化时按权重随机挑
   const mixList = Array.isArray(L.shapeMix)
     ? L.shapeMix.filter((m) => m && m.shape && (m.weight === undefined || m.weight > 0))
     : []
   const leafTemplates = mixList.length
     ? mixList.flatMap((m) => {
-        const tpl = buildLeafTemplate({
-          shape: m.shape, segments: L.segments, curl: L.curl, fold: L.fold, petiole: L.petiole,
-        })
+        const tpl = makeTemplate(m.shape)
         const n = Math.max(1, Math.round((m.weight === undefined ? 1 : m.weight) * 8))
         return new Array(n).fill(tpl)
       })
@@ -162,7 +169,8 @@ export function buildTree(params) {
         const size = Math.max(0.005, L.size * rng.vary(L.sizeVariance))
         // z 轴是叶片的"横向/离面"方向, 必须和宽度同尺度缩放,
         // 否则细长叶 (针叶) 的折角会被拉陡, 法线侧立 -> 背光发黑
-        const scale = new THREE.Vector3(size * L.width, size, size * L.width)
+        const widthMul = L.cardMode ? (L.cardAspect || 1) * (L.width === undefined ? 1 : L.width) : L.width
+        const scale = new THREE.Vector3(size * widthMul, size, size * widthMul)
 
         const tintA = leafBase.clone().multiplyScalar(Math.max(0, 1 + rng.signed() * L.colorVariance))
         const tintB = leafTip.clone().multiplyScalar(Math.max(0, 1 + rng.signed() * L.colorVariance * 0.7))

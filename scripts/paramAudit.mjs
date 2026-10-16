@@ -96,6 +96,10 @@ export const CONDITIONS = {
   'trunk.fork.gravity': { 'trunk.fork.enabled': true },
   'trunk.fork.trunkShrink': { 'trunk.fork.enabled': true },
   'lod.leafRatio': null, // 由双向扰动覆盖 (1 -> 0.35)
+  // 卡片几何子参数只在"卡片模式"下生效
+  'leaves.cardAspect': { 'leaves.cardMode': true },
+  'leaves.cardCurl': { 'leaves.cardMode': true },
+  'leaves.cardFold': { 'leaves.cardMode': true },
   // 开关本身要能看出效果: 先把挂果层级放到探针树有效的层级上
   'fruit.enabled': { 'fruit.levels': [false, true, true, false, false] },
 }
