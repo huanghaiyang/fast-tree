@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>dock-check: booting</title>
+  </head>
+  <body style="margin: 0; background: #111; color: #ddd; font: 12px monospace">
+    <iframe id="f" src="/" style="width: 1440px; height: 820px; border: 0"></iframe>
+    <pre id="out" style="margin: 0"></pre>
+    <script type="module">
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const summary = []
+      const errs = []
+      let win = null, doc = null, state = null, sc = null
+
+      f.addEventListener('load', () => {
+        win = f.contentWindow
+        doc = f.contentDocument
+        state = win.__fastTree
+        sc = win.__fastTreeScene
+        win.addEventListener('error', (e) => errs.push('ONERROR:' + String(e.message).slice(0, 150)))
+        win.addEventListener('unhandledrejection', (e) => errs.push('REJ:' + String(e.reason).slice(0, 150)))
+        const oe = win.console.error
+        win.console.error = function (...a) { errs.push('CERR:' + a.map(String).join(' ').slice(0, 160)); oe.apply(win.console, a) }
+      })
+
+      const rows = (s) => [...doc.querySelectorAll(s)]
+      const byText = (s, t) => rows(s).find((e) => e.textContent.includes(t))
+      const canvasW = () => (doc.querySelector('canvas') || {}).width
+      const px = () => {
+        const c = doc.querySelector('canvas')
+        const W = 320, H = 200
+        const c2 = document.createElement('canvas')
+        c2.width = W; c2.height = H
+        const ctx = c2.getContext('2d')
+        ctx.drawImage(c, 0, 0, W, H)
+        const d = ctx.getImageData(0, 0, W, H).data
+        let green = 0, yellow = 0, bright = 0
+        for (let i = 0; i < d.length; i += 4) {
+          const r = d[i], g = d[i + 1], b = d[i + 2]
+          const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+          if (lum > 60) bright++
+          if (g > r + 12 && g > b + 12 && lum > 50) green++
+          if (r > 140 && g > 110 && b < 110 && r > b + 60) yellow++
+        }
+        const n = (W * H) / 100
+        return { bright: +(bright / n).toFixed(2), green: +(green / n).toFixed(2), yellow: +(yellow / n).toFixed(2) }
+      }
+
+      setTimeout(async () => {
+        try {
+          // 1) 默认状态: 右侧面板不展示, 左侧没有节点标签
+          summary.push(`default dock=${!!doc.querySelector('.right-dock')} tabs=${rows('.tab').length} tabNames=[${rows('.tab').map((t) => t.textContent.trim()).join(',')}] canvasW=${canvasW()}`)
+          summary.push('default state.nodePanelOpen=' + state.nodePanelOpen)
+          summary.push('default px=' + JSON.stringify(px()))
+
+          // 2) 打开右侧面板
+          byText('.topbar button', '节点')?.click()
+          await sleep(900)
+          const open1 = {
+            dock: !!doc.querySelector('.right-dock'),
+            canvasW: canvasW(),
+            groups: rows('.node-row.group').length,
+            childRows: rows('.node-row.child').length,
+            openFlag: state.nodePanelOpen,
+            colCount: win.getComputedStyle(doc.querySelector('.app')).gridTemplateColumns.split(' ').length,
+          }
+          summary.push('opened ' + JSON.stringify(open1))
+
+          // 3) 默认折叠 -> 展开一个组
+          const g = rows('.node-row.group').find((r) => r.textContent.includes('树枝 L2'))
+          g?.querySelector('.tw')?.click()
+          await sleep(300)
+          summary.push(`expanded children=${rows('.node-row.child').length}`)
+
+          // 4) 选中该组 -> 高亮
+          g?.click()
+          await sleep(800)
+          summary.push('select px=' + JSON.stringify(px()) + ' label=' + JSON.stringify(state.selection.label) +
+            ' ranges=' + JSON.stringify(state.selection.ranges) + ' uMode=' + sc.uniforms.uSelectMode.value)
+
+          // 5) 隔离
+          byText('.level-tab', '仅显示选中')?.click()
+          await sleep(800)
+          summary.push('isolate px=' + JSON.stringify(px()) + ' uMode=' + sc.uniforms.uSelectMode.value)
+          byText('.level-tab', '高亮')?.click()
+          await sleep(300)
+
+          // 6) 快捷键 N 关闭
+          win.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'n', bubbles: true }))
+          await sleep(600)
+          summary.push(`afterKeyN dock=${!!doc.querySelector('.right-dock')} openFlag=${state.nodePanelOpen} canvasW=${canvasW()}`)
+
+          // 7) 选中提示条上的按钮能重新打开
+          byText('.overlay.selection button', '节点面板')?.click()
+          await sleep(700)
+          summary.push(`reopenFromChip dock=${!!doc.querySelector('.right-dock')}`)
+
+          // 8) 关闭后选择仍然保留 (高亮还在)
+          summary.push('final px=' + JSON.stringify(px()) + ' label=' + JSON.stringify(state.selection.label))
+          summary.push('errs=' + (errs.length ? errs.slice(0, 3).join(' ;; ') : 'none'))
+          document.title = 'DOCKCHECK :: ' + summary.join(' || ').slice(0, 2600)
+        } catch (e) {
+          document.title = 'DOCKCHECK-EXCEPTION :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 700)
+        }
+      }, 4000)
+    </script>
+  </body>
+</html>

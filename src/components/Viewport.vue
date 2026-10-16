@@ -26,6 +26,7 @@
       <span class="dot"></span>
       <b>{{ state.selection.label }}</b>
       <span class="muted">· {{ modeLabel }}</span>
+      <button v-if="!state.nodePanelOpen" class="btn small ghost" @click="toggleNodePanel(true)">🧩 节点面板</button>
       <button class="btn small ghost" @click="clearSelection">清除</button>
     </div>
   </div>
@@ -36,7 +37,8 @@ import { onBeforeUnmount, onMounted, ref, watch, computed } from 'vue'
 import { TreeScene } from '../core/sceneManager.js'
 import { serializeGroup } from '../core/params.js'
 import {
-  state, sceneApi, totalTriangles, setNodeModel, selectionSignature, clearSelection as clearSelectionAction,
+  state, sceneApi, totalTriangles, setNodeModel, selectionSignature,
+  clearSelection as clearSelectionAction, toggleNodePanel,
 } from '../store/treeStore.js'
 
 const host = ref(null)

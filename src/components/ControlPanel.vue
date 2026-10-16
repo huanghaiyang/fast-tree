@@ -11,7 +11,6 @@
   <LeafPanel v-else-if="active === 'leaf'" />
   <WindPanel v-else-if="active === 'wind'" />
   <MaterialPanel v-else-if="active === 'material'" />
-  <NodePanel v-else-if="active === 'nodes'" />
   <ScenePanel v-else-if="active === 'scene'" />
   <ExportPanel v-else-if="active === 'export'" />
 </template>
@@ -24,7 +23,6 @@ import BranchPanel from './panels/BranchPanel.vue'
 import LeafPanel from './panels/LeafPanel.vue'
 import WindPanel from './panels/WindPanel.vue'
 import MaterialPanel from './panels/MaterialPanel.vue'
-import NodePanel from './panels/NodePanel.vue'
 import ScenePanel from './panels/ScenePanel.vue'
 import ExportPanel from './panels/ExportPanel.vue'
 
@@ -36,7 +34,6 @@ const tabs = [
   { id: 'leaf', name: '树叶', icon: '🍃' },
   { id: 'wind', name: '风/生长', icon: '💨' },
   { id: 'material', name: '材质', icon: '🎨' },
-  { id: 'nodes', name: '节点', icon: '🧩' },
   { id: 'scene', name: '场景', icon: '🌅' },
   { id: 'export', name: '导出', icon: '📦' },
 ]

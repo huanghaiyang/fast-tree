@@ -12,6 +12,7 @@
   --danger: #ff6b6b;
   --radius: 8px;
   --sidebar: 340px;
+  --rightbar: 340px;
   --topbar: 52px;
 }
 
@@ -35,9 +36,29 @@ button, input, select, textarea { font-family: inherit; }
 /* ------------------------------- 布局 ------------------------------- */
 .app {
   display: grid;
-  grid-template-columns: var(--sidebar) 1fr;
+  grid-template-columns: var(--sidebar) minmax(0, 1fr);
   grid-template-rows: var(--topbar) 1fr;
   height: 100%;
+  position: relative;
+}
+/* 右侧「模型节点」面板打开时 => 第三列 */
+.app.with-right {
+  grid-template-columns: var(--sidebar) minmax(0, 1fr) var(--rightbar);
+}
+.app.with-right .right-dock { grid-column: 3; grid-row: 2; }
+
+/* 窄屏: 右侧面板改为浮层, 不挤压视口 */
+@media (max-width: 1180px) {
+  .app.with-right { grid-template-columns: var(--sidebar) minmax(0, 1fr); }
+  .app.with-right .right-dock {
+    position: absolute;
+    top: var(--topbar);
+    right: 0;
+    bottom: 0;
+    width: var(--rightbar);
+    z-index: 6;
+    box-shadow: -10px 0 26px rgba(0, 0, 0, 0.5);
+  }
 }
 
 .topbar {
@@ -76,6 +97,8 @@ button, input, select, textarea { font-family: inherit; }
   position: relative;
   overflow: hidden;
   background: #05070a;
+  min-width: 0;
+  min-height: 0;
 }
 
 .viewport-canvas {
@@ -104,6 +127,7 @@ button, input, select, textarea { font-family: inherit; }
 .btn.small { padding: 3px 7px; font-size: 11px; }
 .btn.danger { border-color: #5a2b2b; color: #ffb3b3; }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn.active { border-color: var(--accent); color: #d8fff1; background: #16302a; }
 
 .input, select.input {
   background: #0c1016;

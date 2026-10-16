@@ -112,7 +112,8 @@ const model = computed(() => {
 })
 
 const filter = ref('')
-const open = ref(new Set(['trunk', 'branch-L1', 'branch-L2']))
+// 默认全部折叠 —— 展开交给用户
+const open = ref(new Set())
 
 const modes = [
   { id: 'highlight', name: '高亮', hint: '选中项加高亮色与自发光，其余不变' },
@@ -238,7 +239,7 @@ watch(visibleGroups, (gs) => {
 .node-summary { display: flex; flex-wrap: wrap; gap: 5px; }
 .node-toolbar { display: flex; align-items: center; gap: 6px; }
 .node-tree {
-  max-height: 300px;
+  max-height: min(46vh, 560px);
   overflow-y: auto;
   border: 1px solid var(--line);
   border-radius: 6px;

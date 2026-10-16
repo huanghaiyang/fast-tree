@@ -24,6 +24,7 @@ export const state = reactive({
   rebuildVersion: 0,   // 请求强制重建
   materialVersion: 0,  // 请求重新编译自定义 GLSL
   nodeVersion: 0,      // 模型节点表刷新计数
+  nodePanelOpen: false, // 右侧「模型节点」面板 (默认不展示)
   // --- 模型节点选中 ---
   selection: {
     ids: [],           // 选中的 node id
@@ -140,6 +141,17 @@ export function clearSelection() {
   sel.ranges = []
   sel.box = null
   sel.label = ''
+}
+
+/** 右侧模型节点面板 (默认收起) */
+export function toggleNodePanel(force) {
+  state.nodePanelOpen = force === undefined ? !state.nodePanelOpen : !!force
+}
+
+/** 从视口/别处点"节点"时: 打开面板并选中一批节点 */
+export function openNodePanel(selectId) {
+  state.nodePanelOpen = true
+  if (selectId !== undefined && selectId !== null) selectNodes([selectId], { activeId: selectId })
 }
 
 export function setSelectionMode(mode) {
