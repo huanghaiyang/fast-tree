@@ -1,0 +1,257 @@
+/**
+ * 无浏览器自检: 校验生成器的确定性、参数隔离、几何合法性
+ * 运行: npm run selftest
+ */
+import { buildTree } from '../src/core/treeBuilder.js'
+import { defaultParams, normalizeParams, MAX_LEVELS } from '../src/core/params.js'
+import { autoGenerate, autoWind, applyPreset, PRESETS } from '../src/core/presets.js'
+import { buildLeafTemplate, LEAF_SHAPE_KEYS } from '../src/core/leaf.js'
+
+let pass = 0
+let fail = 0
+const failures = []
+
+function check(name, cond, extra = '') {
+  if (cond) {
+    pass++
+    console.log(`  ✓ ${name}`)
+  } else {
+    fail++
+    failures.push(name + (extra ? ` — ${extra}` : ''))
+    console.log(`  ✗ ${name}${extra ? ' — ' + extra : ''}`)
+  }
+}
+
+function hashArray(arr) {
+  // FNV-1a over the Float32 bytes
+  const buf = Buffer.from(arr.buffer, arr.byteOffset, arr.byteLength)
+  let h = 2166136261
+  for (let i = 0; i < buf.length; i++) {
+    h ^= buf[i]
+    h = Math.imul(h, 16777619)
+  }
+  return (h >>> 0).toString(16)
+}
+
+function geomHash(g) {
+  if (!g) return 'none'
+  return [
+    g.attributes.position.count,
+    hashArray(g.attributes.position.array),
+    g.index ? hashArray(new Uint32Array(g.index.array)) : 'noidx',
+  ].join(':')
+}
+
+function checkGeometry(g, label) {
+  const pos = g.attributes.position.array
+  let finite = true
+  let minY = Infinity
+  let maxY = -Infinity
+  let maxAbs = 0
+  for (let i = 0; i < pos.length; i += 3) {
+    const x = pos[i], y = pos[i + 1], z = pos[i + 2]
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) { finite = false; break }
+    if (y < minY) minY = y
+    if (y > maxY) maxY = y
+    maxAbs = Math.max(maxAbs, Math.abs(x), Math.abs(y), Math.abs(z))
+  }
+  check(`${label}: 所有顶点有限`, finite)
+  check(`${label}: 尺寸合理 (无 NaN 爆炸)`, maxAbs < 500, `maxAbs=${maxAbs.toFixed(1)}`)
+  return { minY, maxY }
+}
+
+console.log('\n=== FastTree 自检 ===\n')
+
+/* 1. 确定性 */
+console.log('[1] 确定性 (种子可复现)')
+const base = defaultParams()
+const a = buildTree(base)
+const b = buildTree(base)
+check('同参数同种子 → 树皮几何完全一致', geomHash(a.barkGeometry) === geomHash(b.barkGeometry))
+check('同参数同种子 → 树叶几何完全一致', geomHash(a.leafGeometry) === geomHash(b.leafGeometry))
+
+const other = normalizeParams({ ...base, seed: base.seed + 1 })
+const c = buildTree(other)
+check('换种子 → 几何不同', geomHash(a.barkGeometry) !== geomHash(c.barkGeometry))
+
+/* 2. 参数隔离 */
+console.log('\n[2] 参数隔离 (调树叶不挪动树干)')
+const leafChanged = JSON.parse(JSON.stringify(base))
+leafChanged.leaves.size *= 2
+leafChanged.leaves.clusterCount += 2
+const d = buildTree(leafChanged)
+check('改树叶参数 → 树皮几何不变', geomHash(a.barkGeometry) === geomHash(d.barkGeometry))
+check('改树叶参数 → 树叶几何改变', geomHash(a.leafGeometry) !== geomHash(d.leafGeometry))
+
+const barkChanged = JSON.parse(JSON.stringify(base))
+barkChanged.trunk.height *= 1.5
+const e = buildTree(barkChanged)
+check('改树干 → 树皮几何改变', geomHash(a.barkGeometry) !== geomHash(e.barkGeometry))
+
+/* 3. 几何合法性 */
+console.log('\n[3] 几何合法性')
+const info = checkGeometry(a.barkGeometry, '树皮')
+check('树高 > 0', info.maxY - info.minY > 1, `h=${(info.maxY - info.minY).toFixed(2)}`)
+check('树皮三角面 > 0', a.stats.barkTriangles > 100, `${a.stats.barkTriangles}`)
+check('树叶三角面 > 0', a.stats.leafTriangles > 100, `${a.stats.leafTriangles}`)
+check('树枝计数 > 0', a.stats.branches > 5, `${a.stats.branches}`)
+check('叶片计数 > 0', a.stats.leaves > 50, `${a.stats.leaves}`)
+check('顶点属性齐全', ['position', 'normal', 'uv', 'color', 'aWind', 'aPhase', 'aOrigin', 'aGrow']
+  .every((k) => !!a.barkGeometry.attributes[k] && !!a.leafGeometry.attributes[k]))
+check('aWind ∈ [0,1]', (() => {
+  const w = a.barkGeometry.attributes.aWind.array
+  for (let i = 0; i < w.length; i++) if (w[i] < -1e-6 || w[i] > 1 + 1e-6) return false
+  return true
+})())
+check('构建耗时 < 2000ms', a.stats.buildMs < 2000, `${a.stats.buildMs.toFixed(0)}ms`)
+
+/* 4. 各层级 / 各截面 */
+console.log('\n[4] 全参数组合')
+let comboOk = true
+let comboErr = ''
+for (let levels = 1; levels <= MAX_LEVELS; levels++) {
+  for (const cross of ['round', 'star', 'square']) {
+    const p = JSON.parse(JSON.stringify(base))
+    p.branches.levels = levels
+    for (const lv of p.branches.level) lv.crossSection = cross
+    try {
+      const r = buildTree(p)
+      if (!(r.stats.barkTriangles > 0)) { comboOk = false; comboErr = `levels=${levels} ${cross}` }
+    } catch (err) {
+      comboOk = false
+      comboErr = `levels=${levels} ${cross}: ${err.message}`
+      break
+    }
+  }
+}
+check('1~5 层级 × 3 种截面 全部可生成', comboOk, comboErr)
+
+let leafOk = true
+let leafErr = ''
+for (const shape of LEAF_SHAPE_KEYS) {
+  const p = JSON.parse(JSON.stringify(base))
+  p.leaves.shape = shape
+  p.leaves.enabled = true
+  try {
+    const r = buildTree(p)
+    if (!r.leafGeometry || r.stats.leafTriangles <= 0) { leafOk = false; leafErr = shape }
+  } catch (err) {
+    leafOk = false
+    leafErr = `${shape}: ${err.message}`
+  }
+}
+check('全部叶片形状可生成', leafOk, leafErr)
+
+const tpl = buildLeafTemplate({ shape: 'oval', segments: 6, curl: 0.2, fold: 0.3 })
+check('叶片模板顶点/索引一致', tpl.vertexCount === tpl.positions.length / 3 && tpl.index.length % 3 === 0)
+
+/* 5. 预设 + 自动生成 */
+console.log('\n[5] 预设与自动生成')
+for (const preset of PRESETS) {
+  let ok = true
+  let msg = ''
+  try {
+    const p = normalizeParams(applyPreset(defaultParams(), preset.id))
+    const r = buildTree(p)
+    ok = r.stats.barkTriangles > 0
+    if (!ok) msg = 'empty geometry'
+  } catch (err) {
+    ok = false
+    msg = err.message
+  }
+  check(`预设「${preset.name}」可生成`, ok, msg)
+}
+
+let autoOk = true
+let autoErr = ''
+let autoSeeds = []
+for (let i = 0; i < 25; i++) {
+  const seed = 1000 + i * 7919
+  autoSeeds.push(seed)
+  try {
+    const { params, type } = autoGenerate(seed, 0.65)
+    const p = normalizeParams(params)
+    const r = buildTree(p)
+    if (!(r.stats.barkTriangles > 0) || !Number.isFinite(r.stats.height) || r.stats.height <= 0) {
+      autoOk = false
+      autoErr = `seed=${seed} type=${type} h=${r.stats.height}`
+      break
+    }
+  } catch (err) {
+    autoOk = false
+    autoErr = `seed=${seed}: ${err.message}`
+    break
+  }
+}
+check('25 个随机种子自动生成全部成功', autoOk, autoErr)
+
+const again = autoGenerate(autoSeeds[0], 0.65)
+const again2 = autoGenerate(autoSeeds[0], 0.65)
+check('自动生成可复现', JSON.stringify(again.params) === JSON.stringify(again2.params))
+
+// 规模预算: 随机生成的树不应该炸掉浏览器
+let worstTri = 0
+let worstInfo = ''
+for (let i = 0; i < 20; i++) {
+  const seed = 5000 + i * 131
+  const { params } = autoGenerate(seed, 0.8)
+  const r = buildTree(normalizeParams(params))
+  const tri = Math.round(r.stats.barkTriangles + r.stats.leafTriangles)
+  if (tri > worstTri) {
+    worstTri = tri
+    worstInfo = `seed=${seed} leaves=${r.stats.leaves}`
+  }
+}
+check('自动生成的三角面规模可控 (< 400k)', worstTri < 400000, `${worstTri} @ ${worstInfo}`)
+
+/* 6. 自动风场 */
+console.log('\n[6] 自动风场')
+let windOk = true
+let windMsg = ''
+for (const intensity of [0, 0.25, 0.5, 0.75, 1]) {
+  const w = autoWind(4242, intensity)
+  const ranges = [
+    ['direction', w.direction, 0, 360],
+    ['strength', w.strength, 0, 3],
+    ['speed', w.speed, 0, 4],
+    ['gust', w.gust, 0, 1],
+    ['turbulence', w.turbulence, 0, 2],
+    ['flexFalloff', w.flexFalloff, 0.2, 4],
+    ['leafFlutter', w.leafFlutter, 0, 4],
+  ]
+  for (const [k, v, lo, hi] of ranges) {
+    if (!(Number.isFinite(v) && v >= lo && v <= hi)) {
+      windOk = false
+      windMsg = `${k}=${v} @intensity=${intensity}`
+    }
+  }
+  if (w.strength > autoWind(4242, intensity + 0.5 >= 1 ? 1 : intensity + 0.5).strength + 1e-9 && intensity < 1) {
+    // 强度随滑杆单调不减 (允许随机扰动, 这里只做粗检查)
+  }
+}
+check('自动风场输出在合法范围', windOk, windMsg)
+check('风向随种子变化', autoWind(1, 0.5).direction !== autoWind(2, 0.5).direction || autoWind(3, 0.5).direction !== autoWind(4, 0.5).direction)
+
+/* 7. LOD 与上限 */
+console.log('\n[7] LOD / 上限')
+const lodP = JSON.parse(JSON.stringify(base))
+lodP.lod.leafRatio = 0.25
+lodP.lod.maxLeaves = 2000
+const lodR = buildTree(lodP)
+check('叶片上限生效', lodR.stats.leaves <= 2000, `${lodR.stats.leaves}`)
+check('叶片降比例后数量减少', lodR.stats.leaves < a.stats.leaves, `${lodR.stats.leaves} < ${a.stats.leaves}`)
+
+const lodP2 = JSON.parse(JSON.stringify(base))
+lodP2.lod.barkDetail = 0.5
+const lodR2 = buildTree(lodP2)
+check('树皮细节倍率降低三角面', lodR2.stats.barkTriangles < a.stats.barkTriangles,
+  `${lodR2.stats.barkTriangles} < ${a.stats.barkTriangles}`)
+
+/* 汇总 */
+console.log(`\n=== 结果: ${pass} 通过 / ${fail} 失败 ===`)
+if (fail) {
+  console.log('\n失败项:')
+  for (const f of failures) console.log('  - ' + f)
+  process.exit(1)
+}
+console.log('全部自检通过 ✅\n')

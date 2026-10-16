@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>shader-check: booting</title>
+  </head>
+  <body style="margin: 0; background: #111; color: #eee; font: 12px monospace">
+    <pre id="out">running…</pre>
+    <script type="module">
+      import * as THREE from 'three'
+      import { buildTree } from '../src/core/treeBuilder.js'
+      import { defaultParams } from '../src/core/params.js'
+      import {
+        createSharedUniforms, createBarkMaterial, createLeafMaterial,
+        updateMaterials, updateWindUniforms, updateGrowthUniforms,
+      } from '../src/core/materials.js'
+
+      const out = document.getElementById('out')
+      const lines = []
+      const log = (s) => { lines.push(String(s)); out.textContent = lines.join('\n') }
+      const finish = (tag) => { document.title = tag + ' :: ' + lines.slice(-3).join(' || ').slice(0, 2600) }
+
+      const captured = []
+      function captureShader(gl, shader, kind) {
+        const info = gl.getShaderInfoLog(shader) || ''
+        const src = gl.getShaderSource(shader) || ''
+        const m = /0:(\d+):/.exec(info)
+        const lineNo = m ? Number(m[1]) : 0
+        const arr = src.split('\n')
+        const ctx = []
+        if (lineNo) {
+          for (let i = Math.max(0, lineNo - 7); i < Math.min(arr.length, lineNo + 3); i++) {
+            ctx.push(`${i + 1}${i + 1 === lineNo ? '>>' : '  '}${arr[i]}`)
+          }
+        }
+        captured.push(`[${kind}] ${info.trim().slice(0, 160)}`)
+        if (ctx.length) captured.push(ctx.join(' ~ '))
+      }
+
+      try {
+        const canvas = document.createElement('canvas')
+        canvas.width = 320
+        canvas.height = 240
+        document.body.appendChild(canvas)
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: false })
+        renderer.shadowMap.enabled = true
+        renderer.debug.checkShaderErrors = true
+        let shaderErrors = 0
+        renderer.debug.onShaderError = (gl, program, vs, fs) => {
+          shaderErrors++
+          captured.length = 0
+          if (vs) captureShader(gl, vs, 'VERT')
+          if (fs) captureShader(gl, fs, 'FRAG')
+          log('### shader error #' + shaderErrors)
+          for (const c of captured) log(c)
+        }
+
+        const scene = new THREE.Scene()
+        const camera = new THREE.PerspectiveCamera(45, 4 / 3, 0.1, 100)
+        camera.position.set(8, 6, 12)
+        camera.lookAt(0, 4, 0)
+        scene.add(new THREE.HemisphereLight(0xffffff, 0x222222, 0.8))
+        const sun = new THREE.DirectionalLight(0xffffff, 2)
+        sun.position.set(8, 12, 6)
+        sun.castShadow = true
+        scene.add(sun)
+
+        const params = defaultParams()
+        log('custom.fragment=[' + JSON.stringify(params.custom.fragment) + ']')
+        log('custom.vertex=[' + JSON.stringify(params.custom.vertex) + ']')
+        const uniforms = createSharedUniforms()
+        const barkMat = createBarkMaterial(params, uniforms)
+        const leafMat = createLeafMaterial(params, uniforms)
+        updateMaterials({ bark: barkMat, leaf: leafMat, uniforms }, params)
+        updateWindUniforms(uniforms, params.wind)
+        updateGrowthUniforms(uniforms, params.growth, 1)
+        log('uTranslucency=' + JSON.stringify(leafMat.userData.uniforms.uTranslucency.value) +
+          ' uTint=' + leafMat.userData.uniforms.uTint.value.getHexString())
+
+        const built = buildTree(params)
+        log(`几何: bark=${built.stats.barkTriangles}tri leaf=${built.stats.leafTriangles}tri`)
+        const barkMesh = new THREE.Mesh(built.barkGeometry, barkMat)
+        barkMesh.castShadow = true
+        scene.add(barkMesh)
+        if (built.leafGeometry) {
+          const leafMesh = new THREE.Mesh(built.leafGeometry, leafMat)
+          leafMesh.castShadow = true
+          scene.add(leafMesh)
+        }
+
+        renderer.render(scene, camera)
+        renderer.render(scene, camera)
+        log('shaderErrors=' + shaderErrors)
+        finish(shaderErrors ? 'SHADER-FAIL' : 'SHADER-OK')
+      } catch (e) {
+        log('EXCEPTION: ' + (e && e.stack ? e.stack : e))
+        finish('CHECK-EXCEPTION')
+      }
+    </script>
+  </body>
+</html>
