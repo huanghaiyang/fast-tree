@@ -17,6 +17,25 @@
     <SliderRow label="椭圆化" v-model="t.squash" :min="0.4" :max="2" :step="0.02" hint="1 = 正圆截面" />
   </Section>
 
+  <Section title="主干分叉 (多主枝)" hint="Fork / Leaders" :default-collapsed="true">
+    <ToggleRow label="启用主干分叉" v-model="f.enabled"
+      hint="乔木常见形态: 主干在 1/3 高度处分成 2~4 条主枝 (参考橡树)" />
+    <template v-if="f.enabled">
+      <SliderRow label="分叉主枝数" v-model="f.count" :min="2" :max="6" :step="1" />
+      <SliderRow label="分叉高度" v-model="f.height" :min="0.1" :max="0.65" :step="0.01" hint="占树干高度的比例" />
+      <SliderRow label="主枝夹角" v-model="f.angle" :min="5" :max="60" :step="1" unit="°" />
+      <SliderRow label="方位离散" v-model="f.spread" :min="0" :max="1.5" :step="0.05" hint="0 = 完全均匀分布" />
+      <SliderRow label="主枝半径比" v-model="f.radiusScale" :min="0.3" :max="0.95" :step="0.01"
+        hint="主枝基部半径 ÷ 分叉处主干半径" />
+      <SliderRow label="主枝长度倍率" v-model="f.lengthScale" :min="0.5" :max="1.6" :step="0.02" />
+      <div class="grid-2">
+        <SliderRow label="主枝锥度" v-model="f.taper" :min="0.05" :max="0.8" :step="0.01" />
+        <SliderRow label="主枝弯曲" v-model="f.curve" :min="0" :max="1.2" :step="0.02" />
+      </div>
+      <SliderRow label="主枝重力" v-model="f.gravity" :min="-0.5" :max="0.5" :step="0.01" />
+    </template>
+  </Section>
+
   <Section title="根部外扩 / 节瘤" hint="Flare & Knots" :default-collapsed="true">
     <SliderRow label="根部外扩强度" v-model="t.flare" :min="0" :max="3" :step="0.05" />
     <SliderRow label="外扩高度比例" v-model="t.flareHeight" :min="0.02" :max="0.6" :step="0.01" />
@@ -52,4 +71,5 @@ import { state } from '../../store/treeStore.js'
 
 const t = state.params.trunk
 const r = state.params.roots
+const f = state.params.trunk.fork
 </script>

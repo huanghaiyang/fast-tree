@@ -72,6 +72,10 @@ export function defaultParams() {
     seed: 20240607,
     auto: { chaos: 0.6 },
 
+    // ---------------- 分类 (树种 / 生长阶段 / 季节) ----------------
+    // 这三个只作为"预设元数据"记录在参数里 (方便 JSON 复现), 由 store 组合出实际参数
+    classify: { species: 'oak', stage: 'mature', season: 'summer' },
+
     // ---------------- 树干 ----------------
     trunk: {
       height: 9.0,
@@ -92,6 +96,18 @@ export function defaultParams() {
       knotSize: 0.35,       // 节瘤凸起强度
       squash: 1.0,          // 椭圆化 (1 = 圆)
       capBase: true,
+      fork: {
+        enabled: false,    // 主干分叉 (多主枝): 橡树这类乔木常在 1/3 高处分成 2~4 条主枝
+        count: 3,          // 分出的主枝数 (2~6)
+        height: 0.34,      // 分叉高度 (占树干比例)
+        angle: 26,         // 主枝与主干轴线的夹角(度)
+        spread: 0.8,       // 方位离散度 (0 = 完全均匀)
+        radiusScale: 0.62, // 主枝基部半径 ÷ 分叉处主干半径
+        lengthScale: 1.0,  // 主枝长度倍率 (基准 = 分叉点以上的剩余高度)
+        taper: 0.3,        // 主枝自身锥度
+        curve: 0.4,        // 主枝弯曲
+        gravity: 0.03,     // 主枝重力 (负 = 下垂)
+      },
     },
 
     // ---------------- 树根 ----------------

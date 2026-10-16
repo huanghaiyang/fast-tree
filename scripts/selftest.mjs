@@ -5,6 +5,9 @@
 import { buildTree, selectionRanges } from '../src/core/treeBuilder.js'
 import { defaultParams, normalizeParams, MAX_LEVELS } from '../src/core/params.js'
 import { autoGenerate, autoWind, applyPreset, PRESETS } from '../src/core/presets.js'
+import {
+  SPECIES, GROWTH_STAGES, SEASONS, composeTree, classificationName, allCombinations,
+} from '../src/core/species.js'
 import { buildLeafTemplate, LEAF_SHAPE_KEYS } from '../src/core/leaf.js'
 import { motionMetrics, swayEnvelope } from '../src/core/windModel.js'
 import { readFileSync, readdirSync } from 'node:fs'
@@ -396,6 +399,137 @@ check('关键参数说明不为空且够具体', (() => {
   }
   return true
 })())
+
+/* 11. 树种 × 生长阶段 × 季节 */
+console.log('\n[11] 树种 × 生长阶段 × 季节')
+const combos = allCombinations()
+check(`组合矩阵完整 (${SPECIES.length} 树种 × ${GROWTH_STAGES.length} 阶段 × ${SEASONS.length} 季节 = ${combos.length})`,
+  combos.length === SPECIES.length * GROWTH_STAGES.length * SEASONS.length)
+
+// 11a. 每个树种都跑通 5 个阶段 (抽样种子)
+let matrixOk = true
+let matrixMsg = ''
+let matrixWorst = 0
+for (const sp of SPECIES) {
+  for (const st of GROWTH_STAGES) {
+    const p = composeTree(sp.id, st.id, 'summer', 20240601)
+    try {
+      const r = buildTree(p)
+      const tris = r.stats.barkTriangles + r.stats.leafTriangles
+      matrixWorst = Math.max(matrixWorst, tris)
+      if (!Number.isFinite(r.stats.height) || r.stats.height <= 0 || tris <= 0) {
+        matrixOk = false
+        matrixMsg = `${sp.id}/${st.id} h=${r.stats.height} tris=${tris}`
+      }
+      if (tris > 400000) {
+        matrixOk = false
+        matrixMsg = `${sp.id}/${st.id} 面数超预算 ${tris}`
+      }
+    } catch (e) {
+      matrixOk = false
+      matrixMsg = `${sp.id}/${st.id} 抛异常 ${e.message}`
+    }
+  }
+}
+check('全部树种 × 阶段都能生成且在面数预算内', matrixOk, `${matrixMsg} (最重 ${Math.round(matrixWorst / 1000)}k)`)
+
+// 11b. 生长阶段: 越老越高越粗 (对每个树种都成立)
+let stageOk = true
+let stageMsg = ''
+let trunkOk = true
+let trunkMsg = ''
+for (const sp of SPECIES) {
+  // 主干高度由构造保证 (阶段 size 直接相乘) -> 必须严格单调
+  const th = GROWTH_STAGES.map((st) => composeTree(sp.id, st.id, 'summer', 777).trunk.height)
+  for (let i = 1; i < th.length; i++) {
+    if (!(th[i] > th[i - 1])) {
+      trunkOk = false
+      trunkMsg = `${sp.id}: ${th.map((h) => h.toFixed(1)).join(' < ')}`
+    }
+  }
+  // 整树外接高度取 5 个种子的均值 (单株的树冠形态本身有波动)
+  const hs = GROWTH_STAGES.map((st) => {
+    let sum = 0
+    for (const seed of [101, 202, 303, 404, 505]) {
+      sum += buildTree(composeTree(sp.id, st.id, 'summer', seed)).stats.height
+    }
+    return sum / 5
+  })
+  for (let i = 1; i < hs.length; i++) {
+    if (!(hs[i] > hs[i - 1])) {
+      stageOk = false
+      stageMsg = `${sp.id}: ${hs.map((h) => h.toFixed(1)).join(' < ')}`
+    }
+  }
+}
+check('生长阶段: 主干高度严格递增 (树苗 → 古树)', trunkOk, trunkMsg)
+check('生长阶段: 整树高度均值递增 (5 个种子平均)', stageOk, stageMsg)
+
+// 11c. 季节只改物候, 不改形态 (同一棵树)
+const oakSummer = composeTree('oak', 'mature', 'summer', 4242)
+const oakAutumn = composeTree('oak', 'mature', 'autumn', 4242)
+const oakWinter = composeTree('oak', 'mature', 'winter', 4242)
+const gSummer = buildTree(oakSummer)
+const gAutumn = buildTree(oakAutumn)
+const gWinter = buildTree(oakWinter)
+check('季节不改变树皮几何 (同一棵树换物候)',
+  geomHash(gSummer.barkGeometry) === geomHash(gAutumn.barkGeometry) &&
+  geomHash(gSummer.barkGeometry) === geomHash(gWinter.barkGeometry))
+check('季节改变叶片数量 (夏 > 秋 > 冬)',
+  gSummer.stats.leaves > gAutumn.stats.leaves && gAutumn.stats.leaves > gWinter.stats.leaves,
+  `${gSummer.stats.leaves} / ${gAutumn.stats.leaves} / ${gWinter.stats.leaves}`)
+check('冬季仍保留少量枯叶 (橡树的枯叶残留)', gWinter.stats.leaves > 0 && gWinter.stats.leaves < gSummer.stats.leaves * 0.3,
+  `${gWinter.stats.leaves} vs 夏 ${gSummer.stats.leaves}`)
+const hue = (hex) => {
+  const n = parseInt(hex.slice(1), 16)
+  const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b)
+  let h = 0
+  if (mx !== mn) {
+    if (mx === r) h = ((g - b) / (mx - mn)) % 6
+    else if (mx === g) h = (b - r) / (mx - mn) + 2
+    else h = (r - g) / (mx - mn) + 4
+  }
+  return ((h * 60) + 360) % 360
+}
+const summerHue = hue(oakSummer.leaves.color)
+const autumnHue = hue(oakAutumn.leaves.color)
+check('夏季叶色偏绿 (色相 70~160°)', summerHue > 70 && summerHue < 160, `${summerHue.toFixed(0)}°`)
+check('秋季叶色偏红橙 (色相 < 50°)', autumnHue < 50, `${autumnHue.toFixed(0)}°`)
+check('常绿树种冬季不落叶 (松树)',
+  buildTree(composeTree('pine', 'mature', 'winter', 4242)).stats.leaves >
+  buildTree(composeTree('pine', 'mature', 'summer', 4242)).stats.leaves * 0.7)
+check('樱花春季是花 (粉色且比夏季更密)',
+  hue(composeTree('sakura', 'mature', 'spring', 99).leaves.color) > 300 &&
+  buildTree(composeTree('sakura', 'mature', 'spring', 99)).stats.leaves >=
+  buildTree(composeTree('sakura', 'mature', 'summer', 99)).stats.leaves * 0.9)
+
+// 11d. 橡树形态: 低分叉、树冠开张、比同高其他树种更宽
+check('橡树默认带主干分叉 (2~6 条主枝)',
+  oakSummer.trunk.fork.enabled && oakSummer.trunk.fork.count >= 2 && oakSummer.trunk.fork.count <= 6,
+  `count=${oakSummer.trunk.fork.count}`)
+const noFork = JSON.parse(JSON.stringify(oakSummer))
+noFork.trunk.fork.enabled = false
+check('关掉分叉会改变几何 (分叉真的参与生成)',
+  geomHash(buildTree(noFork).barkGeometry) !== geomHash(gSummer.barkGeometry))
+check('橡树树冠开张 (成熟个体 宽/高 >= 0.75)',
+  gSummer.stats.spread / gSummer.stats.height >= 0.75,
+  `${(gSummer.stats.spread / gSummer.stats.height).toFixed(2)}`)
+check('树苗树冠窄而高 (宽/高 <= 0.6)',
+  (() => { const r = buildTree(composeTree('oak', 'seedling', 'summer', 4242)); return r.stats.spread / r.stats.height <= 0.6 })(),
+  (() => { const r = buildTree(composeTree('oak', 'seedling', 'summer', 4242)); return (r.stats.spread / r.stats.height).toFixed(2) })())
+
+// 11e. 个体差异: 同组合不同种子不同; 同组合同种子完全一致
+check('同组合不同种子 -> 不同个体',
+  geomHash(buildTree(composeTree('oak', 'mature', 'summer', 11)).barkGeometry) !==
+  geomHash(buildTree(composeTree('oak', 'mature', 'summer', 12)).barkGeometry))
+check('同组合同种子 -> 完全一致 (可复现)',
+  geomHash(buildTree(composeTree('oak', 'mature', 'autumn', 555)).barkGeometry) ===
+  geomHash(buildTree(composeTree('oak', 'mature', 'autumn', 555)).barkGeometry))
+check('不同树种差异明显 (橡树 ≠ 松树 ≠ 白桦)',
+  new Set(SPECIES.map((sp) => geomHash(buildTree(composeTree(sp.id, 'mature', 'summer', 2024)).barkGeometry))).size === SPECIES.length)
+check('组合名可读', classificationName('oak', 'mature', 'autumn').includes('橡树') &&
+  classificationName('oak', 'mature', 'autumn').includes('秋'))
 
 /* 汇总 */
 console.log(`\n=== 结果: ${pass} 通过 / ${fail} 失败 ===`)

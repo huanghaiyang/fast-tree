@@ -84,6 +84,16 @@ function perturbations(path, value) {
 /** 只在特定条件下生效的参数: 审计前先满足条件 */
 export const CONDITIONS = {
   'branches.level[0].starDepth': { 'branches.level[0].crossSection': 'star' },
+  // 分叉子参数只有在"启用分叉"时才有意义 (默认树种没有分叉)
+  'trunk.fork.count': { 'trunk.fork.enabled': true },
+  'trunk.fork.height': { 'trunk.fork.enabled': true },
+  'trunk.fork.angle': { 'trunk.fork.enabled': true },
+  'trunk.fork.spread': { 'trunk.fork.enabled': true },
+  'trunk.fork.radiusScale': { 'trunk.fork.enabled': true },
+  'trunk.fork.lengthScale': { 'trunk.fork.enabled': true },
+  'trunk.fork.taper': { 'trunk.fork.enabled': true },
+  'trunk.fork.curve': { 'trunk.fork.enabled': true },
+  'trunk.fork.gravity': { 'trunk.fork.enabled': true },
   'lod.leafRatio': null, // 由双向扰动覆盖 (1 -> 0.35)
 }
 

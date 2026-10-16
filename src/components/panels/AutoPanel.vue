@@ -1,4 +1,45 @@
 <template>
+  <Section title="树种 · 生长阶段 · 季节" hint="Species / Stage / Season">
+    <div class="axis">
+      <div class="row-head"><label>树种</label></div>
+      <div class="chips">
+        <button v-for="sp in SPECIES" :key="sp.id" class="chip" :class="{ active: cur.species === sp.id }"
+          :title="sp.desc" @click="pick('species', sp.id)">
+          <span>{{ sp.icon }}</span>{{ sp.name }}
+        </button>
+      </div>
+    </div>
+
+    <div class="axis">
+      <div class="row-head"><label>生长阶段</label></div>
+      <div class="chips">
+        <button v-for="st in GROWTH_STAGES" :key="st.id" class="chip" :class="{ active: cur.stage === st.id }"
+          :title="`${st.years} — ${st.desc}`" @click="pick('stage', st.id)">
+          <span>{{ st.icon }}</span>{{ st.name }}
+        </button>
+      </div>
+    </div>
+
+    <div class="axis">
+      <div class="row-head"><label>季节</label></div>
+      <div class="chips">
+        <button v-for="se in SEASONS" :key="se.id" class="chip" :class="{ active: cur.season === se.id }"
+          :title="seasonTitle(se)" @click="pick('season', se.id)">
+          <span>{{ (seasonProfile(speciesObj, se.id) || se).icon }}</span>{{ (seasonProfile(speciesObj, se.id) || se).name }}
+        </button>
+      </div>
+    </div>
+
+    <div class="inline">
+      <span class="tag on">{{ classificationName(cur.species, cur.stage, cur.season) }}</span>
+      <button class="btn small" @click="onRandomCombo" title="随机换一组树种/阶段/季节组合">🎲 随机组合</button>
+    </div>
+    <p class="muted" style="margin: 0">{{ classificationDesc(cur.species, cur.stage, cur.season) }}</p>
+    <p class="muted" style="margin: 0">
+      同一组合换种子 = 同一个种群里的不同个体 (形态、大小、枝角都会变)。
+    </p>
+  </Section>
+
   <Section title="随机种子 · 自动生成" hint="Seed / Auto">
     <div class="seed-box">
       <span class="muted">种子</span>
@@ -17,14 +58,6 @@
       <span class="tag on">{{ archetypeLabel }}</span>
     </div>
 
-    <div class="presets">
-      <div v-for="pr in PRESETS" :key="pr.id" class="preset" :class="{ active: archetypeId === pr.id }"
-        @click="onPreset(pr.id)">
-        <span class="ico">{{ pr.icon }}</span>
-        <span>{{ pr.name }}</span>
-      </div>
-    </div>
-
     <div class="inline">
       <button class="btn small" :disabled="!canUndo.value" @click="undo">↶ 撤销</button>
       <button class="btn small" :disabled="!canRedo.value" @click="redo">↷ 重做</button>
@@ -41,25 +74,48 @@ import { computed } from 'vue'
 import Section from '../ui/Section.vue'
 import SliderRow from '../ui/SliderRow.vue'
 import SelectRow from '../ui/SelectRow.vue'
+import { SPECIES, GROWTH_STAGES, SEASONS, seasonProfile, classificationName, classificationDesc, speciesById } from '../../core/species.js'
 import { PRESETS } from '../../core/presets.js'
 import { defaultParams } from '../../core/params.js'
 import {
-  state, doAutoGenerate, doApplyPreset, randomizeSeed, setSeed,
+  state, doAutoGenerate, randomizeSeed, setSeed, applyClassification, randomClassification,
   undo, redo, canUndo, canRedo, pushUndo, archetypeLabel,
 } from '../../store/treeStore.js'
 
 const p = state.params
-const archetypeId = computed(() => state.archetype)
+
+const cur = computed(() => {
+  const c = state.params.classify || { species: 'oak', stage: 'mature', season: 'summer' }
+  return { species: c.species || 'oak', stage: c.stage || 'mature', season: c.season || 'summer' }
+})
+const speciesObj = computed(() => speciesById(cur.value.species))
 
 const typeOptions = [
   { value: '', label: '随机 (按权重)' },
   ...PRESETS.map((x) => ({ value: x.id, label: `${x.icon} ${x.name}` })),
 ]
 
+function seasonTitle(se) {
+  const prof = seasonProfile(speciesObj.value, se.id) || se
+  return prof.desc || se.desc
+}
+
 const autoTypeModel = computed({
   get: () => state.autoType || '',
   set: (v) => { state.autoType = v || null },
 })
+
+/** 点选任一维度: 立即用三维组合重新生成 */
+function pick(axis, id) {
+  const next = { ...cur.value, [axis]: id }
+  applyClassification(next.species, next.stage, next.season)
+  state.frameVersion++
+}
+
+function onRandomCombo() {
+  randomClassification()
+  state.frameVersion++
+}
 
 function onSeedChange(v) {
   pushUndo()
@@ -76,11 +132,6 @@ function onAuto() {
   state.frameVersion++
 }
 
-function onPreset(id) {
-  doApplyPreset(id)
-  state.frameVersion++
-}
-
 function onResetAll() {
   pushUndo()
   state.params = defaultParams()
@@ -89,5 +140,28 @@ function onResetAll() {
 </script>
 
 <style scoped>
-.preset.active { border-color: var(--accent); color: #eafff7; }
+.axis { margin-bottom: 6px; }
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 7px;
+  font-size: 11px;
+  color: var(--text-2);
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.chip:hover { border-color: var(--line-2); color: var(--text); }
+.chip.active {
+  border-color: var(--accent);
+  color: #eafff7;
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-3));
+}
 </style>

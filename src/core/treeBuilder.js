@@ -31,7 +31,17 @@ function now() {
   return typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
 }
 
-/** 子枝方向: 叶序方位 + 俯仰 + 重力/趋光 */
+/** 把骨架截断到相对位置 t (用于树干在分叉点结束) */
+function truncateFrames(frames, t) {
+  const out = []
+  for (const f of frames) {
+    if (f.t < t) out.push(f)
+    else break
+  }
+  const end = sampleFrame(frames, t)
+  if (end) out.push({ pos: end.pos, dir: end.dir, radius: end.radius, t, roll: end.roll })
+  return out.length >= 2 ? out : frames
+}
 function childDirection(rng, parentDir, cfg, k, params) {
   const axis = parentDir.clone().normalize()
   const perp = anyPerp(axis)
@@ -182,7 +192,7 @@ export function buildTree(params) {
   /* ------------------------------------------------------------------ */
   /* 递归生长                                                            */
   /* ------------------------------------------------------------------ */
-  const spawnChildren = (parentFrames, parentLevel, parentLength, parentRng, parentWind0, parentWind1, parentSlot) => {
+  const spawnChildren = (parentFrames, parentLevel, parentLength, parentRng, parentWind0, parentWind1, parentSlot, clampEndT) => {
     const level = parentLevel + 1
     if (level > branchParams.levels) return
     const cfg = branchParams.level[level - 1]
@@ -191,7 +201,9 @@ export function buildTree(params) {
     const rng = levelRng[level]
     const count = Math.max(0, Math.round(cfg.count))
     const startT = clamp01(Math.min(cfg.startT, cfg.endT) + (branchParams.startSpread || 0))
-    const endT = clamp01(Math.max(cfg.startT, cfg.endT))
+    let endT = clamp01(Math.max(cfg.startT, cfg.endT))
+    if (clampEndT !== undefined && clampEndT !== null) endT = Math.min(endT, clamp01(clampEndT))
+    if (endT <= startT) return
 
     for (let k = 0; k < count; k++) {
       const u = (k + 0.5) / count
@@ -317,7 +329,7 @@ export function buildTree(params) {
 
   const trunkR0 = t.baseRadius
   const trunkR1 = Math.max(0.003, t.baseRadius * t.taper)
-  const trunkFrames = growFrames(trunkRng, {
+  const trunkFramesAll = growFrames(trunkRng, {
     startPos: new THREE.Vector3(0, 0, 0),
     startDir: trunkDir,
     length: t.height,
@@ -333,6 +345,12 @@ export function buildTree(params) {
     taperRatio: t.taper,
   })
 
+  // 分叉 (多主枝): 橡树这类乔木常在 1/3 高度处分成 2~4 条主枝
+  const forkCfg = t.fork || {}
+  const forkOn = !!forkCfg.enabled && Math.round(forkCfg.count || 0) > 0
+  const forkT = forkOn ? clamp01(forkCfg.height === undefined ? 0.34 : forkCfg.height) : 1
+  const trunkFrames = forkOn ? truncateFrames(trunkFramesAll, forkT) : trunkFramesAll
+
   const squash = Math.max(0.2, t.squash || 1)
   const trunkSlot = addSlot({
     type: 'trunk',
@@ -340,7 +358,7 @@ export function buildTree(params) {
     group: 'trunk',
     name: '树干',
     parent: null,
-    meta: { length: t.height, radius: trunkR0, segments: Math.max(3, Math.round(t.segments)) },
+    meta: { length: t.height * forkT, radius: trunkR0, segments: Math.max(3, Math.round(t.segments)), fork: forkOn ? Math.round(forkCfg.count) : 0 },
   })
   barkParts.push(buildTube(trunkFrames, {
     radialSegments: Math.max(4, Math.round(t.radialSegments * ((P.lod && P.lod.barkDetail) || 1))),
@@ -358,7 +376,7 @@ export function buildTree(params) {
     origin: new THREE.Vector3(0, 0, 0),
     phase: trunkRng.range(0, Math.PI * 2),
     capStart: t.capBase,
-    capEnd: false,
+    capEnd: forkOn,
     radiusModifier: trunkRadiusMod,
     vertexNoise: 0.03,
     nodeId: trunkSlot,
@@ -430,7 +448,52 @@ export function buildTree(params) {
   /* ------------------------------------------------------------------ */
   /* 树枝                                                                */
   /* ------------------------------------------------------------------ */
-  spawnChildren(trunkFrames, 0, t.height, trunkRng, 0.012, 0.2, trunkSlot)
+  // 主干上的第一级枝条: 有分叉时只在分叉点以下生长
+  spawnChildren(trunkFrames, 0, t.height, trunkRng, 0.012, 0.2, trunkSlot,
+    forkOn ? Math.max(0.06, forkT - 0.06) : null)
+
+  // 分叉出的主枝 (领导者): 承接主干继续向上, 自身再长二级/三级枝
+  if (forkOn) {
+    const base1 = branchParams.level[0] || {}
+    const fr = sampleFrame(trunkFramesAll, forkT)
+    if (fr) {
+      const rng = trunkRng.fork('fork-leaders')
+      const n = Math.max(2, Math.min(6, Math.round(forkCfg.count)))
+      const angle = (forkCfg.angle === undefined ? 26 : forkCfg.angle) * DEG
+      const spread = forkCfg.spread === undefined ? 1 : forkCfg.spread
+      const radiusScale = forkCfg.radiusScale === undefined ? 0.62 : forkCfg.radiusScale
+      const lengthScale = forkCfg.lengthScale === undefined ? 1 : forkCfg.lengthScale
+      const leaderCfg = {
+        ...base1,
+        taper: forkCfg.taper === undefined ? 0.3 : forkCfg.taper,
+        curve: forkCfg.curve === undefined ? 0.4 : forkCfg.curve,
+        curveVariance: 0.55,
+        gravity: forkCfg.gravity === undefined ? 0.03 : forkCfg.gravity,
+        upBias: 0.1,
+        segments: Math.max(5, Math.round((base1.segments || 8) * 0.9)),
+      }
+      for (let k = 0; k < n; k++) {
+        const az = (k / n) * Math.PI * 2 + rng.range(-0.55, 0.55) * spread
+        const side = azimuthPerp(fr.dir, az, new THREE.Vector3())
+        const dir = fr.dir.clone().applyAxisAngle(side, angle * rng.range(0.7, 1.3))
+        rotateTowardUp(dir, 0.05)
+        const r0 = Math.max(0.002, fr.radius * radiusScale * rng.vary(0.1))
+        buildBranch({
+          level: 1,
+          startPos: fr.pos.clone(),
+          startDir: dir,
+          length: Math.max(0.05, t.height * (1 - forkT) * lengthScale * rng.vary(0.16)),
+          radius0: r0,
+          radius1: Math.max(0.0008, r0 * leaderCfg.taper),
+          cfg: leaderCfg,
+          rng,
+          wind0: 0.2,
+          wind1: Math.min(1, 0.2 + 0.3 * (base1.windGain === undefined ? 1 : base1.windGain)),
+          parentSlot: trunkSlot,
+        })
+      }
+    }
+  }
 
   /* ------------------------------------------------------------------ */
   /* 合并 + 节点表                                                        */
@@ -674,23 +737,46 @@ export function selectionRanges(ids, maxRanges = 8) {
   return ranges
 }
 
-/** 只计算统计信息 (不建几何), 供 UI 预估规模 */
+/** 只计算统计信息 (不建几何), 供 UI 预估规模与预算控制
+ *  注意: 会把"树干分叉出的主枝"也算进去 —— 它们等同于一级枝 */
 export function estimateScale(params) {
-  const total = (level) => {
+  const lv = params.branches.levels
+  const cnt = (level) => {
+    const cfg = params.branches.level[level - 1]
+    return cfg && cfg.enabled ? Math.max(0, Math.round(cfg.count)) : 0
+  }
+  const forkN = (params.trunk && params.trunk.fork && params.trunk.fork.enabled)
+    ? Math.max(0, Math.round(params.trunk.fork.count)) : 0
+
+  /** 一条 level 级枝条的整棵子树节点数 (含自己) */
+  const subtree = (level) => {
+    let acc = 1
+    let prod = 1
+    for (let i = level + 1; i <= lv; i++) {
+      prod *= cnt(i)
+      acc += prod
+      if (acc > 2e6) return acc
+    }
+    return acc
+  }
+  /** level 级枝条的条数 (含分叉主枝带来的那部分) */
+  const countAt = (level) => {
     let n = 1
-    for (let i = 1; i <= level; i++) {
-      const cfg = params.branches.level[i - 1]
-      n *= cfg && cfg.enabled ? Math.max(0, Math.round(cfg.count)) : 0
-      if (n > 1e6) return n
+    for (let i = 1; i <= level; i++) n *= cnt(i)
+    if (forkN) {
+      let f = forkN
+      for (let i = 2; i <= level; i++) f *= cnt(i)
+      n += f
     }
     return n
   }
-  let branches = 1
-  for (let i = 1; i <= params.branches.levels; i++) branches += total(i)
+
+  let branches = subtree(0) + forkN * subtree(1)
   let leaves = 0
-  for (let i = 1; i <= params.branches.levels; i++) {
+  for (let i = 1; i <= lv; i++) {
     if (!params.leaves.levels[i - 1]) continue
-    leaves += total(i) * Math.max(1, Math.round(params.leaves.perBranch)) * Math.max(1, Math.round(params.leaves.clusterCount))
+    leaves += countAt(i) * Math.max(1, Math.round(params.leaves.perBranch)) *
+      Math.max(1, Math.round(params.leaves.clusterCount))
   }
   return { branches, leaves }
 }

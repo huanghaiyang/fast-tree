@@ -77,8 +77,16 @@ onMounted(() => {
   sceneApi.frameCamera = () => scene.frameCamera()
   sceneApi.focusBox = (min, max) => scene.focusBox(min, max)
   sceneApi.getWindScreenBasis = () => scene.getWindScreenBasis()
+  // 验证/脚本用的同步重建 (应用内重建走 rAF, 后台标签页会被节流)
+  sceneApi.rebuildNow = (frame = true) => {
+    if (!scene) return null
+    const stats = scene.build(state.params, { frameCamera: !!frame })
+    scene.setSelection(state.selection)
+    return stats
+  }
   if (import.meta.env && import.meta.env.DEV) {
     window.__fastTreeScene = scene
+    window.__fastTreeSceneApi = sceneApi
   }
 
   scene.updateScene(state.params.scene)
@@ -175,10 +183,15 @@ function setupWatchers() {
   }, { deep: true })
   watch(() => state.playing, (v) => scene?.setPlaying(v))
   watch(() => state.frameVersion, () => {
-    if (state.params.growth.auto) {
-      state.params.growth.value = 0
-    }
+    // 注意: 这里不能重置生长进度 —— 否则切换树种/阶段/季节或点取景时整棵树会先消失再长出来
+    // (需要"重新长一遍"的动作会显式调用 state.regrowToken)
     scene?.frameCamera()
+  })
+  watch(() => state.regrowToken, () => {
+    if (!scene) return
+    state.params.growth.value = 0
+    scene.updateGrowth(state.params.growth, 0)
+    scene.setGrowthAuto(state.params.growth.enabled && state.params.growth.auto, state.params.growth.speed)
   })
   watch(() => state.rebuildVersion, () => scheduleRebuild(true))
   watch(() => state.materialVersion, () => {

@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>gallery-check: booting</title>
+  </head>
+  <body style="margin: 0; background: #0b0e13; color: #ddd; font: 12px monospace">
+    <iframe id="f" src="/" style="width: 1500px; height: 900px; border: 0"></iframe>
+    <pre id="out" style="margin: 0">running…</pre>
+    <script type="module">
+      const RECV = 'http://127.0.0.1:5274/shot'
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const out = document.getElementById('out')
+      const errs = []
+      const lines = []
+      let win = null, doc = null, state = null, sc = null
+
+      f.addEventListener('load', () => {
+        win = f.contentWindow
+        doc = f.contentDocument
+        state = win.__fastTree
+        sc = win.__fastTreeScene
+        win.addEventListener('error', (e) => errs.push('ONERROR:' + String(e.message).slice(0, 120)))
+        const oe = win.console.error
+        win.console.error = function (...a) { errs.push('CERR:' + a.map(String).join(' ').slice(0, 140)); oe.apply(win.console, a) }
+      })
+
+      const bar = (l) => { lines.push(l); out.textContent = lines.join('\n') }
+
+      /** 非透明像素占比 —— 用来判断画布是不是空的 (不能只看 PNG 大小) */
+      function coverage(canvas) {
+        const c = document.createElement('canvas')
+        c.width = 140
+        c.height = 100
+        const ctx = c.getContext('2d')
+        ctx.drawImage(canvas, 0, 0, 140, 100)
+        const d = ctx.getImageData(0, 0, 140, 100).data
+        let n = 0
+        for (let i = 3; i < d.length; i += 4) if (d[i] > 16) n++
+        return n / (140 * 100)
+      }
+
+      async function shot(name) {
+        const canvas = doc.querySelector('.viewport-wrap canvas') || doc.querySelector('canvas')
+        let url = ''
+        let fill = 0
+        for (let attempt = 0; attempt < 8; attempt++) {
+          await sleep(300)
+          try { sc.renderer.render(sc.scene, sc.camera) } catch (e) { /* ignore */ }
+          url = canvas.toDataURL('image/png')
+          fill = coverage(canvas)
+          if (fill > 0.025) break
+        }
+        await fetch(`${RECV}?name=${name}`, { method: 'POST', body: url })
+        bar(`shot ${name} fill=${(fill * 100).toFixed(1)}%`)
+        return fill
+      }
+
+      /** 用统计信息摆一个确定的三分四视角 (不依赖应用内部的取景逻辑) */
+      function frameFromStats() {
+        const r = state.stats || {}
+        const h = Math.max(0.5, r.height || 10)
+        const s = Math.max(0.5, r.spread || 6)
+        const R = Math.max(h * 0.9, s) * 1.35
+        sc.controls.target.set(0, h * 0.45, 0)
+        sc.camera.position.set(R * 0.72, h * 0.5 + R * 0.3, R * 0.82)
+        sc.camera.lookAt(sc.controls.target)
+        sc.camera.updateProjectionMatrix()
+        sc.controls.update()
+      }
+
+      async function applyAndShoot(species, stage, season, name) {
+        // 走应用内的同一份 store (直接 import 会拿到 Vite 的另一个模块实例)
+        win.__fastTreeApi.applyClassification(species, stage, season)
+        await sleep(120)
+        // 后台标签页里 rAF 被节流 -> 用同步重建入口, 不依赖渲染循环
+        win.__fastTreeSceneApi.rebuildNow(true)
+        await sleep(150)
+        frameFromStats()
+        await sleep(150)
+        await shot(name)
+        const r = state.stats || {}
+        const tris = (r.barkTriangles || 0) + (r.leafTriangles || 0)
+        bar(`  ${species}/${stage}/${season}: h=${(r.height || 0).toFixed(1)} 宽=${(r.spread || 0).toFixed(1)} ` +
+          `叶=${r.leaves || 0} 枝=${r.branches || 0} 面=${Math.round(tris / 1000)}k`)
+      }
+
+      setTimeout(async () => {
+        try {
+          for (const st of ['seedling', 'sapling', 'young', 'mature', 'ancient']) {
+            await applyAndShoot('oak', st, 'summer', 'oak-' + st)
+          }
+          for (const se of ['spring', 'summer', 'autumn', 'winter']) {
+            await applyAndShoot('oak', 'mature', se, 'oak-season-' + se)
+          }
+          for (const sp of ['pine', 'birch', 'willow', 'sakura', 'shrub', 'dead']) {
+            await applyAndShoot(sp, 'mature', sp === 'shrub' ? 'autumn' : 'summer', 'sp-' + sp)
+          }
+          document.title = 'GALLERY-OK :: ' + lines.filter((l) => l.startsWith('  ')).join(' || ').slice(0, 1800) +
+            ' || errs=' + (errs.length ? errs.slice(0, 2).join(' ;; ') : 'none')
+        } catch (e) {
+          document.title = 'GALLERY-EXCEPTION :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 600)
+        }
+      }, 3500)
+    </script>
+  </body>
+</html>

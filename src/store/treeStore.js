@@ -4,6 +4,7 @@
 import { reactive, computed } from 'vue'
 import { defaultParams, cloneParams, normalizeParams, mergeParams } from '../core/params.js'
 import { autoGenerate, autoWind, applyPreset, randomSeed, presetById, archetypeName } from '../core/presets.js'
+import { SPECIES, GROWTH_STAGES, SEASONS } from '../core/species.js'
 import { selectionRanges } from '../core/treeBuilder.js'
 
 export const state = reactive({
@@ -21,6 +22,7 @@ export const state = reactive({
   autoType: null,      // 强制树种 (null = 随机)
   timeScale: 1,
   frameVersion: 0,     // 请求重新取景
+  regrowToken: 0,      // 请求"重新长一遍"(只有真正生成新树时才用)
   rebuildVersion: 0,   // 请求强制重建
   materialVersion: 0,  // 请求重新编译自定义 GLSL
   nodeVersion: 0,      // 模型节点表刷新计数
@@ -212,6 +214,7 @@ export const sceneApi = {
   frameCamera: null,
   focusBox: null,
   getWindScreenBasis: null,
+  rebuildNow: null,
 }
 
 function snapshot() {
@@ -289,6 +292,7 @@ export function doAutoGenerate(opts = {}) {
   state.params.seed = seed
   state.params.auto.chaos = chaos
   state.archetype = usedType
+  state.regrowToken++   // 这是一棵新树: 让它重新长一遍
   return usedType
 }
 
@@ -318,6 +322,26 @@ export function doApplyPreset(id) {
   if (state.params.wind.auto) {
     Object.assign(state.params.wind, autoWind(state.params.seed, state.params.wind.intensity))
   }
+}
+
+/** 按"树种 + 生长阶段 + 季节"重新生成 (三维预设) */
+export function applyClassification(speciesId, stageId, seasonId) {
+  pushUndo()
+  state.params = normalizeParams(applyPreset(state.params, speciesId, stageId, seasonId))
+  state.archetype = speciesId
+  state.classifySig = `${speciesId}/${stageId}/${seasonId}`
+  if (state.params.wind.auto) {
+    Object.assign(state.params.wind, autoWind(state.params.seed, state.params.wind.intensity))
+  }
+  return state.params.classify
+}
+
+/** 随机换一组组合 (树种/阶段/季节都随机) */
+export function randomClassification() {
+  const species = SPECIES[Math.floor(Math.random() * SPECIES.length)].id
+  const stage = GROWTH_STAGES[Math.floor(Math.random() * GROWTH_STAGES.length)].id
+  const season = SEASONS[Math.floor(Math.random() * SEASONS.length)].id
+  return applyClassification(species, stage, season)
 }
 
 /** 风力滑杆: 自动模式下一并重算风向/阵风/湍流 */
@@ -379,5 +403,9 @@ export const totalTriangles = computed(() =>
 // 开发期把 store 挂到 window, 方便在浏览器控制台里调试 / 脚本化验证
 if (typeof window !== 'undefined' && import.meta.env && import.meta.env.DEV) {
   window.__fastTree = state
-  window.__fastTreeApi = { pushUndo, doAutoGenerate, doApplyPreset, setSeed, randomizeSeed }
+  window.__fastTreeApi = {
+    pushUndo, doAutoGenerate, doApplyPreset, setSeed, randomizeSeed,
+    applyClassification, randomClassification,
+  }
 }
+
