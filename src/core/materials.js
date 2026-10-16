@@ -77,25 +77,29 @@ function vertexBody(customVertex) {
   float freq = max(0.05, uWindFrequency);
   // 顺风主波 + 高频次波
   float wave = sin(tw + phase) * 0.72 + sin(tw * 2.17 * freq + phase * 1.7) * 0.28;
-  float gust = mix(1.0, sin(tw * uGustSpeed + phase * 0.21) * 0.5 + 0.5, uGust);
-  // 风只"推"不"拉": 位移恒偏下风向, 所以轨迹是一段来回的线段, 结构上不可能绕圈
-  float along = (wave * 0.5 + 0.5) * gust + uWindBias;
+  float osc = wave * 0.5 + 0.5;                 // 0..1
+  // 阵风: 压低摆动区间的低谷 (uGust 越大, 起伏越强)
+  float gust = 1.0 - uGust * 0.6 *
+    (1.0 - (sin(tw * uGustSpeed + phase * 0.21) * 0.5 + 0.5));
+  // 风只"推"不"拉": 位移恒偏下风向; bias 只抬低谷, 不削峰值
+  // -> 摆动幅度几乎全部是"动"的 (静态偏置只占一小部分), 否则方向看不出来
+  float along = osc * gust + uWindBias * 0.35;
   float turb = sin(tw * 3.1 * freq + phase * 4.3);
   vec2 sway = windDir * along + windPerp * turb * uTurbulence;
   float amount = uWindStrength * uSway * flex * uWindEnabled;
   treePos.xz += sway * amount;
   if (uIsLeaf > 0.5) {
     // 叶片: 叶柄固定不动, 只做"弯曲 + 铰链式俯仰"
-    //  1) 弯曲方向固定 (下风向 + 重力), 只有幅度随时间变化 -> 不会画圈
+    //  1) 弯曲方向固定且以水平分量为主 (下风向占绝对主导) -> 方向一眼可辨
     //  2) 俯仰绕固定的水平轴 (垂直于风向), 小角度来回 -> 物理上就是叶片迎风翻动
     vec3 rel = treePos - aOrigin;
     float stemDist = length(rel);
     float flap = sin(tw * 4.1 * freq + phase * 6.3);
     float surge = sin(tw * 1.35 + phase * 2.1);
-    float leafAmp = uLeafFlutter * uWindStrength * 1.6 * uWindEnabled * (0.35 + aWind);
-    vec3 bendDir = normalize(vec3(windDir.x, -0.55, windDir.y));
-    rel += bendDir * stemDist * leafAmp * (0.55 + 0.30 * flap + 0.15 * surge);
-    float pitch = flap * uLeafTwist * 0.45 * uWindEnabled * (0.35 + uWindStrength * 2.0);
+    float leafAmp = uLeafFlutter * uWindStrength * 1.8 * uWindEnabled * (0.35 + aWind);
+    vec3 bendDir = normalize(vec3(windDir.x, -0.3, windDir.y));
+    rel += bendDir * stemDist * leafAmp * (0.5 + 0.35 * flap + 0.15 * surge);
+    float pitch = flap * uLeafTwist * 0.5 * uWindEnabled * (0.35 + uWindStrength * 2.0);
     rel = treeRotate(rel, vec3(windPerp.x, 0.0, windPerp.y), pitch);
     treePos = aOrigin + rel;
   }
@@ -376,6 +380,9 @@ export function updateLeafMaterial(mat, params, sharedUniforms) {
   mat.alphaTest = p.alphaTest
   mat.side = p.doubleSided ? THREE.DoubleSide : THREE.FrontSide
   mat.color.set(0xffffff)
+  // 叶片自发光: 用叶色做底, 强度由滑杆控制 (让背光/阴影里的叶子不至于死黑)
+  mat.emissive.set(params.leaves.color || '#ffffff')
+  mat.emissiveIntensity = p.emissive || 0
   const u = mat.userData.uniforms
   u.uVertexColorMix.value = p.vertexColorMix
   u.uTint.value.set(p.tint || '#ffffff')

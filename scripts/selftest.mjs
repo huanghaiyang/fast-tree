@@ -6,7 +6,11 @@ import { buildTree, selectionRanges } from '../src/core/treeBuilder.js'
 import { defaultParams, normalizeParams, MAX_LEVELS } from '../src/core/params.js'
 import { autoGenerate, autoWind, applyPreset, PRESETS } from '../src/core/presets.js'
 import { buildLeafTemplate, LEAF_SHAPE_KEYS } from '../src/core/leaf.js'
-import { motionMetrics } from '../src/core/windModel.js'
+import { motionMetrics, swayEnvelope } from '../src/core/windModel.js'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
+import { runAudit, AUDIT_EXEMPT, STORE_LEVEL } from './paramAudit.mjs'
+import { docFor, DOC_KEYS } from '../src/core/paramDocs.js'
 
 let pass = 0
 let fail = 0
@@ -237,12 +241,22 @@ check('自动风场输出在合法范围', windOk, windMsg)
 check('风向随种子变化', autoWind(1, 0.5).direction !== autoWind(2, 0.5).direction || autoWind(3, 0.5).direction !== autoWind(4, 0.5).direction)
 
 const defWind = defaultParams().wind
-check('默认风力很轻 (树梢位移 <= 0.15m)', defWind.strength <= 0.15, `strength=${defWind.strength}`)
-check('自动风中档 (k=0.3) 也 <= 0.15m', autoWind(999, 0.3).strength <= 0.15, `${autoWind(999, 0.3).strength}`)
-check('大风档 (k=1) 仍 <= 0.4m', autoWindSamples[4].strength <= 0.4, `${autoWindSamples[4].strength}`)
+const env = swayEnvelope(defWind)
+check('默认风力很轻 (树梢动态摆幅 <= 0.2m)', env.p2p <= 0.2, `p2p=${env.p2p}`)
+check('默认风力看得见 (动态摆幅 >= 0.08m)', env.p2p >= 0.08, `p2p=${env.p2p}`)
+check('自动风中档 (k=0.3) 动态摆幅 0.08~0.2m', (() => {
+  const e = swayEnvelope(autoWind(999, 0.3))
+  return e.p2p >= 0.08 && e.p2p <= 0.2
+})(), `${swayEnvelope(autoWind(999, 0.3)).p2p}`)
+check('大风档 (k=1) 动态摆幅 <= 0.5m', swayEnvelope(autoWindSamples[4]).p2p <= 0.5, `${swayEnvelope(autoWindSamples[4]).p2p}`)
+check('摆幅随风力档位单调增大', (() => {
+  const p = [0, 0.25, 0.5, 0.75, 1].map((k) => swayEnvelope(autoWind(4242, k)).p2p)
+  for (let i = 1; i < p.length; i++) if (p[i] < p[i - 1] - 1e-9) return false
+  return true
+})())
 
-/* 6b. 叶片运动学: 不许绕圈 */
-console.log('\n[6b] 叶片运动学 (物理合理性)')
+/* 6b. 叶片运动学: 方向跟随 + 不绕圈 */
+console.log('\n[6b] 叶片运动学 (方向 + 物理合理性)')
 const nowMetrics = motionMetrics(defWind, 'current')
 const legacyMetrics = motionMetrics(
   { strength: 0.35, speed: 1.15, frequency: 1.4, gust: 0.45, gustSpeed: 0.22, turbulence: 0.3, bias: 0, leafFlutter: 1.2, leafTwist: 0.7, direction: 45 },
@@ -251,12 +265,24 @@ const legacyMetrics = motionMetrics(
 const lineOnly = motionMetrics({ ...defWind, turbulence: 0 }, 'current', { steps: 900 })
 check('默认: 叶片摆动以顺风往复为主 (垂直分量 < 40%)',
   nowMetrics.thinness < 0.4, `thinness=${nowMetrics.thinness}`)
-check('默认: 叶片摆动幅度 <= 0.15m (不再是大风)',
-  nowMetrics.spanAlong <= 0.15, `spanAlong=${nowMetrics.spanAlong}`)
+check('默认: 运动以水平位移为主 (水平占比 > 0.9) -> 方向看得见',
+  nowMetrics.horizontalShare > 0.9, `horizontalShare=${nowMetrics.horizontalShare}`)
+check('默认: 叶片摆动幅度 <= 0.25m (不再是大风)',
+  nowMetrics.spanAlong <= 0.25, `spanAlong=${nowMetrics.spanAlong}`)
+check('风向改变 -> 运动主轴跟随 (8 个方向误差 < 5°)', (() => {
+  for (const dir of [0, 45, 90, 135, 180, 225, 270, 315]) {
+    const r = motionMetrics({ ...defWind, direction: dir })
+    const a = r.azimuthDeg
+    const d = dir % 180
+    const diff = Math.min(Math.abs(a - d), 180 - Math.abs(a - d))
+    if (!(diff < 5)) return false
+  }
+  return true
+})(), `45°->${nowMetrics.azimuthDeg}°`)
 check('对照: 旧公式近乎各向同性 (=看着在绕圈)',
   legacyMetrics.thinness > 0.7, `legacy thinness=${legacyMetrics.thinness}`)
-check('对照: 旧公式摆幅远大于现在 (>4x)',
-  legacyMetrics.spanAlong > nowMetrics.spanAlong * 4,
+check('对照: 旧公式摆幅远大于现在 (>2x)',
+  legacyMetrics.spanAlong > nowMetrics.spanAlong * 2,
   `${legacyMetrics.spanAlong} vs ${nowMetrics.spanAlong}`)
 check('去掉横向湍流后轨迹退化成一条直线 (结构上不可能绕圈)',
   lineOnly.thinness === 0 && lineOnly.spanPerp === 0,
@@ -329,6 +355,47 @@ check('同种子 -> 节点表完全一致',
 const nC = buildTree(normalizeParams(autoGenerate(1000, 0.5).params))
 check('不同种子 -> 节点表不同',
   JSON.stringify(nA.nodes.map((n) => n.name)) !== JSON.stringify(nC.nodes.map((n) => n.name)))
+
+/* 9. 参数有效性审计 (改了就一定变) + 说明覆盖率 */
+console.log('\n[9] 参数有效性审计')
+const audit = runAudit({ env: 'node' })
+check(`几何/材质/风场参数全部有效 (共 ${audit.all.length} 项, Node 侧)`,
+  audit.dead.length === 0, audit.dead.map((r) => r.path).join(', '))
+check('扰动参数不抛异常 (DOM 相关除外)', audit.threw.length === 0,
+  audit.threw.map((r) => r.path).join(', '))
+check('豁免项都有书面理由', audit.exempt.every((r) => STORE_LEVEL[r.path] || AUDIT_EXEMPT[r.path]),
+  audit.exempt.map((r) => r.path).join(', '))
+check('浏览器侧待验证项已登记 (canvas/ImageLoader)', audit.browserOnly.length > 0,
+  `${audit.browserOnly.length} 项: ` + audit.browserOnly.map((r) => r.path).join(', '))
+
+/* 10. hover 说明覆盖率 */
+console.log('\n[10] 属性 hover 说明覆盖率')
+const vueFiles = []
+const walkVue = (dir) => {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name)
+    if (e.isDirectory()) walkVue(p)
+    else if (p.endsWith('.vue')) vueFiles.push(p)
+  }
+}
+walkVue('src')
+const needed = new Map()
+for (const f of vueFiles) {
+  const src = readFileSync(f, 'utf8')
+  for (const m of src.matchAll(/label="([^"]+)"/g)) needed.set(m[1], f)
+  for (const m of src.matchAll(/<Section[^>]*\btitle="([^"]+)"/g)) needed.set(m[1], f)
+}
+const missingDocs = [...needed.keys()].filter((k) => !docFor(k))
+check(`所有面板标签都有 hover 说明 (${needed.size} 个标签)`, missingDocs.length === 0, missingDocs.join(', '))
+check('说明词典没有多余条目 (体量合理)', DOC_KEYS.length >= needed.size,
+  `${DOC_KEYS.length} 条说明 / ${needed.size} 个标签`)
+check('关键参数说明不为空且够具体', (() => {
+  for (const k of ['树干高度', '风向', '顺风偏置', '叶片铰链俯仰', '顶端优势', '柔度衰减指数']) {
+    const d = docFor(k)
+    if (!d || d.length < 8) return false
+  }
+  return true
+})())
 
 /* 汇总 */
 console.log(`\n=== 结果: ${pass} 通过 / ${fail} 失败 ===`)

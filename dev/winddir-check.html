@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>winddir-check: booting</title>
+  </head>
+  <body style="margin: 0; background: #111; color: #ddd; font: 12px monospace">
+    <iframe id="f" src="/" style="width: 1280px; height: 800px; border: 0"></iframe>
+    <pre id="out" style="margin: 0"></pre>
+    <script type="module">
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const summary = []
+      const errs = []
+      let win = null, doc = null, state = null, sc = null
+
+      f.addEventListener('load', () => {
+        win = f.contentWindow
+        doc = f.contentDocument
+        state = win.__fastTree
+        sc = win.__fastTreeScene
+        win.addEventListener('error', (e) => errs.push('ONERROR:' + String(e.message).slice(0, 140)))
+        const oe = win.console.error
+        win.console.error = function (...a) { errs.push('CERR:' + a.map(String).join(' ').slice(0, 150)); oe.apply(win.console, a) }
+      })
+
+      // 只看画面左上 1/4 区域的叶片像素质心 (避免整个树冠平均后相互抵消)
+      function centroid() {
+        const canvas = doc.querySelector('canvas')
+        const W = 360, H = 225
+        const c2 = document.createElement('canvas')
+        c2.width = W; c2.height = H
+        const ctx = c2.getContext('2d')
+        ctx.drawImage(canvas, 0, 0, W, H)
+        const d = ctx.getImageData(0, 0, W, H).data
+        let sw = 0, sx = 0, sy = 0
+        for (let y = 0; y < H * 0.6; y++) {
+          for (let x = 0; x < W * 0.6; x++) {
+            const i = (y * W + x) * 4
+            const r = d[i], g = d[i + 1], b = d[i + 2]
+            const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            if (g > r + 10 && g > b + 10 && lum > 55) { const w = g; sw += w; sx += w * x; sy += w * y }
+          }
+        }
+        if (sw < 80) return null
+        return [sx / sw, sy / sw]
+      }
+
+      async function track(frames = 70, gap = 30) {
+        const pts = []
+        for (let i = 0; i < frames; i++) { const c = centroid(); if (c) pts.push(c); await sleep(gap) }
+        if (pts.length < 12) return { n: pts.length, error: 'too few' }
+        const n = pts.length
+        let mx = 0, my = 0
+        for (const p of pts) { mx += p[0]; my += p[1] }
+        mx /= n; my /= n
+        let sxx = 0, syy = 0, sxy = 0
+        for (const p of pts) { const dx = p[0]-mx, dy = p[1]-my; sxx += dx*dx; syy += dy*dy; sxy += dx*dy }
+        sxx /= n; syy /= n; sxy /= n
+        const tr = sxx + syy, det = sxx*syy - sxy*sxy
+        const disc = Math.sqrt(Math.max(0, tr*tr/4 - det))
+        const l1 = tr/2 + disc, l2 = Math.max(0, tr/2 - disc)
+        // 主轴角度 (屏幕坐标系, x 向右, y 向下)
+        const theta = 0.5 * Math.atan2(2*sxy, sxx - syy)
+        const angleDeg = +(theta * 180 / Math.PI).toFixed(1)
+        return {
+          n,
+          rmsMajor: +Math.sqrt(l1).toFixed(3),
+          rmsMinor: +Math.sqrt(l2).toFixed(3),
+          angleDeg,
+          thinness: +(Math.sqrt(l2)/Math.max(1e-9, Math.sqrt(l1))).toFixed(3),
+        }
+      }
+
+      setTimeout(async () => {
+        try {
+          // 推近树冠 + 固定风向为手动, 让屏幕上有足够像素
+          win.__fastTreeApi.pushUndo()
+          const w = state.params.wind
+          w.auto = false
+          w.strength = 0.5
+          w.leafFlutter = 1.2
+          w.turbulence = 0.05
+          const h = sc.treeHeight || 10
+          sc.controls.target.set(0, h * 0.8, 0)
+          sc.camera.position.set(h * 0.3, h * 0.86, h * 0.4)
+          sc.controls.update()
+          await sleep(1500)
+          // 相机朝向: 屏幕右方向对应的世界方位角
+          const bx = sc.camera.position.x, bz = sc.camera.position.z
+          const viewAz = (Math.atan2(bz, bx) * 180 / Math.PI + 360) % 360
+          summary.push(`相机方位角=${viewAz.toFixed(0)}° (屏幕右方向 ≈ 该值-90°=${((viewAz-90+360)%360).toFixed(0)}°)`)
+
+          const results = []
+          for (const dir of [130, 40, 310, 220]) {
+            w.direction = dir
+            await sleep(1400)
+            const u = sc.uniforms.uWindDir.value
+            const r = await track(70, 30)
+            results.push({ dir, uWindDir: [+u.x.toFixed(3), +u.y.toFixed(3)], ...r })
+            summary.push(`风向=${dir}° uWindDir=(${u.x.toFixed(2)},${u.y.toFixed(2)}) ` + JSON.stringify(r))
+          }
+          const amps = results.map((r) => r.rmsMajor)
+          summary.push('屏幕位移幅度 min=' + Math.min(...amps).toFixed(3) + ' max=' + Math.max(...amps).toFixed(3) +
+            ' 比值=' + (Math.max(...amps) / Math.max(1e-9, Math.min(...amps))).toFixed(2) + 'x')
+          summary.push('errs=' + (errs.length ? errs.slice(0, 2).join(' ;; ') : 'none'))
+          document.title = 'WINDDIR :: ' + summary.join(' || ').slice(0, 2400)
+        } catch (e) {
+          document.title = 'WINDDIR-EXCEPTION :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 700)
+        }
+      }, 4200)
+    </script>
+  </body>
+</html>

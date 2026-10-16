@@ -26,6 +26,8 @@
       hint="1 = 完全使用叶片本身的颜色" />
     <SliderRow label="粗糙度" v-model="lm.roughness" :min="0" :max="1" :step="0.01" />
     <SliderRow label="金属度" v-model="lm.metalness" :min="0" :max="1" :step="0.01" />
+    <SliderRow label="自发光强度" v-model="lm.emissive" :min="0" :max="1" :step="0.01"
+      hint="用叶色做底的自发光: 让背光/阴影里的叶片不发黑" />
     <SliderRow label="Alpha 裁剪" v-model="lm.alphaTest" :min="0" :max="1" :step="0.01" />
     <SliderRow label="透光度 (背光)" v-model="lm.translucency" :min="0" :max="1.5" :step="0.01"
       hint="树叶逆光时的半透效果" />

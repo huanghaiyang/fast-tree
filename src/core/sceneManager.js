@@ -389,6 +389,18 @@ export class TreeScene {
     this.playing = !!p
   }
 
+  /** 把相机的地面基交给风向指示器: 屏幕右方向 + 屏幕"远去"方向的水平投影 */
+  getWindScreenBasis() {
+    const m = this.camera.matrixWorld.elements
+    const right = new THREE.Vector3(m[0], m[1], m[2]).normalize()
+    const fwd = new THREE.Vector3(-m[8], -m[9], -m[10]) // 相机看向 -Z
+    const fl = Math.hypot(fwd.x, fwd.z) || 1
+    return {
+      right: [right.x, right.y, right.z],
+      fwd: [fwd.x / fl, 0, fwd.z / fl],
+    }
+  }
+
   /* ------------------------------------------------------------------ */
   /* 导出                                                                */
   /* ------------------------------------------------------------------ */

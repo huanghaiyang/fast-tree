@@ -22,6 +22,8 @@
       左键旋转 · 右键平移 · 滚轮缩放
     </div>
 
+    <WindCompass />
+
     <div v-if="state.selection.label" class="overlay selection">
       <span class="dot"></span>
       <b>{{ state.selection.label }}</b>
@@ -36,6 +38,7 @@
 import { onBeforeUnmount, onMounted, ref, watch, computed } from 'vue'
 import { TreeScene } from '../core/sceneManager.js'
 import { serializeGroup } from '../core/params.js'
+import WindCompass from './WindCompass.vue'
 import {
   state, sceneApi, totalTriangles, setNodeModel, selectionSignature,
   clearSelection as clearSelectionAction, toggleNodePanel,
@@ -73,6 +76,7 @@ onMounted(() => {
   sceneApi.screenshot = (name) => scene.screenshot(name)
   sceneApi.frameCamera = () => scene.frameCamera()
   sceneApi.focusBox = (min, max) => scene.focusBox(min, max)
+  sceneApi.getWindScreenBasis = () => scene.getWindScreenBasis()
   if (import.meta.env && import.meta.env.DEV) {
     window.__fastTreeScene = scene
   }

@@ -17,7 +17,7 @@ export function defaultLevel(i) {
     {
       enabled: true, count: 7, pitch: 62, pitchVariance: 14,
       lengthRatio: 0.42, lengthVariance: 0.22, radiusRatio: 0.40, radiusVariance: 0.18,
-      startT: 0.22, endT: 0.96, startJitter: 0.05, tipShorten: 0.30,
+      startT: 0.22, endT: 0.96, startJitter: 0.05,
       taper: 0.50, radiusCurve: 1.25, curve: 0.30, curveVariance: 0.35,
       gravity: 0.06, twist: 0.25, phyllotaxis: 137.5, spread: 0.14,
       upBias: 0.06, segments: 9, radialSegments: 7,
@@ -27,7 +27,7 @@ export function defaultLevel(i) {
     {
       enabled: true, count: 5, pitch: 52, pitchVariance: 16,
       lengthRatio: 0.55, lengthVariance: 0.25, radiusRatio: 0.46, radiusVariance: 0.2,
-      startT: 0.10, endT: 0.99, startJitter: 0.06, tipShorten: 0.38,
+      startT: 0.10, endT: 0.99, startJitter: 0.06,
       taper: 0.50, radiusCurve: 1.2, curve: 0.34, curveVariance: 0.4,
       gravity: 0.0, twist: 0.3, phyllotaxis: 137.5, spread: 0.25,
       upBias: 0.04, segments: 7, radialSegments: 5,
@@ -37,7 +37,7 @@ export function defaultLevel(i) {
     {
       enabled: true, count: 4, pitch: 46, pitchVariance: 18,
       lengthRatio: 0.62, lengthVariance: 0.28, radiusRatio: 0.5, radiusVariance: 0.22,
-      startT: 0.08, endT: 1.0, startJitter: 0.07, tipShorten: 0.42,
+      startT: 0.08, endT: 1.0, startJitter: 0.07,
       taper: 0.45, radiusCurve: 1.15, curve: 0.38, curveVariance: 0.45,
       gravity: -0.04, twist: 0.35, phyllotaxis: 137.5, spread: 0.35,
       upBias: 0.02, segments: 5, radialSegments: 4,
@@ -47,7 +47,7 @@ export function defaultLevel(i) {
     {
       enabled: true, count: 3, pitch: 42, pitchVariance: 20,
       lengthRatio: 0.68, lengthVariance: 0.3, radiusRatio: 0.55, radiusVariance: 0.25,
-      startT: 0.05, endT: 1.0, startJitter: 0.08, tipShorten: 0.45,
+      startT: 0.05, endT: 1.0, startJitter: 0.08,
       taper: 0.4, radiusCurve: 1.1, curve: 0.42, curveVariance: 0.5,
       gravity: -0.08, twist: 0.4, phyllotaxis: 137.5, spread: 0.45,
       upBias: 0.0, segments: 4, radialSegments: 4,
@@ -57,7 +57,7 @@ export function defaultLevel(i) {
     {
       enabled: true, count: 2, pitch: 40, pitchVariance: 22,
       lengthRatio: 0.7, lengthVariance: 0.32, radiusRatio: 0.6, radiusVariance: 0.28,
-      startT: 0.05, endT: 1.0, startJitter: 0.08, tipShorten: 0.5,
+      startT: 0.05, endT: 1.0, startJitter: 0.08,
       taper: 0.35, radiusCurve: 1.05, curve: 0.45, curveVariance: 0.55,
       gravity: -0.1, twist: 0.45, phyllotaxis: 137.5, spread: 0.55,
       upBias: 0.0, segments: 3, radialSegments: 3,
@@ -107,7 +107,6 @@ export function defaultParams() {
       radialSegments: 5,
       curve: 0.5,
       sink: 0.35,          // 向下垂的强度
-      startT: 0.0,
     },
 
     // ---------------- 树枝 ----------------
@@ -144,7 +143,6 @@ export function defaultParams() {
       droop: 0.35,         // 自重下垂
       rollVariance: 180,
       faceUp: 0.5,         // 叶面朝上程度 0..1
-      orientToBranch: 0.6, // 叶轴对齐枝条的程度
       twist: 0.25,         // 叶柄扭转
       color: '#5da03a',
       colorTip: '#a6d45e',
@@ -166,7 +164,6 @@ export function defaultParams() {
       bump: 1.0,
       texture: '',         // 用户上传的贴图(dataURL)
       normalTexture: '',
-      roughnessTexture: '',
       procedural: { enabled: true, style: 'rough', scale: 1.0, contrast: 0.5 },
     },
 
@@ -197,14 +194,14 @@ export function defaultParams() {
       auto: true,
       intensity: 0.3,      // 用户看到的"风力"总滑杆
       direction: 45,       // 风向(度)
-      strength: 0.12,      // 基础位移(米): 树梢的顺风偏移量级
+      strength: 0.15,      // 基础位移(米): 树梢顺风偏移量级 (动态摆动占绝大部分)
       speed: 0.8,          // 摆动速度
       frequency: 1.0,      // 高频分量密度 (次波/抖动的频率倍率)
-      gust: 0.35,          // 阵风强度
+      gust: 0.5,           // 阵风强度: 压低摆动低谷, 越大起伏越明显
       gustSpeed: 0.16,
       turbulence: 0.12,    // 湍流(横向小摆动)
       spatialScale: 0.22,  // 相位空间尺度
-      bias: 0.3,           // 顺风偏置: 风只推不拉 (0 = 完全对称往复)
+      bias: 0.3,           // 顺风偏置: 只抬摆动低谷 (=风只推不拉), 不削峰值
       flexFalloff: 1.5,    // 柔度衰减指数
       barkSway: 0.6,       // 树干/树枝摆幅倍率
       leafFlutter: 0.6,    // 叶片扇动倍率
@@ -306,3 +303,5 @@ export function serializeGroup(params, group) {
 
 /** 仅重建几何时需要的子集 (材质代码不参与) */
 export const GROUP_KEYS = { geometry: GEOMETRY_KEYS, material: MATERIAL_KEYS, wind: WIND_KEYS, scene: SCENE_KEYS }
+
+

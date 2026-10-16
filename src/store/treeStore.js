@@ -211,6 +211,7 @@ export const sceneApi = {
   screenshot: null,
   frameCamera: null,
   focusBox: null,
+  getWindScreenBasis: null,
 }
 
 function snapshot() {

@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>ui-check: booting</title>
+  </head>
+  <body style="margin: 0; background: #111; color: #ddd; font: 12px monospace">
+    <iframe id="f" src="/" style="width: 1440px; height: 820px; border: 0"></iframe>
+    <pre id="out" style="margin: 0"></pre>
+    <script type="module">
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const summary = []
+      const errs = []
+      let win = null, doc = null, state = null, sc = null
+
+      f.addEventListener('load', () => {
+        win = f.contentWindow
+        doc = f.contentDocument
+        state = win.__fastTree
+        sc = win.__fastTreeScene
+        win.addEventListener('error', (e) => errs.push('ONERROR:' + String(e.message).slice(0, 140)))
+        const oe = win.console.error
+        win.console.error = function (...a) { errs.push('CERR:' + a.map(String).join(' ').slice(0, 150)); oe.apply(win.console, a) }
+      })
+
+      const rows = (s) => [...doc.querySelectorAll(s)]
+      const byText = (s, t) => rows(s).find((e) => e.textContent.includes(t))
+
+      /* ---- hover 说明 ---- */
+      function hoverTest(labelText, tabName) {
+        const tab = byText('.tab', tabName)
+        tab?.click()
+        return new Promise(async (resolve) => {
+          await sleep(250)
+          const label = rows('.row-head label').find((l) => l.textContent.trim() === labelText)
+          if (!label) return resolve({ label: labelText, found: false })
+          const r = label.getBoundingClientRect()
+          const opts = { bubbles: true, clientX: r.left + 5, clientY: r.top + 5 }
+          label.dispatchEvent(new win.MouseEvent('mouseover', opts))
+          await sleep(420)
+          const tip = doc.querySelector('.param-tip')
+          resolve({
+            label: labelText,
+            found: true,
+            tipShown: !!tip,
+            title: tip ? tip.querySelector('.tip-title')?.textContent : '',
+            len: tip ? (tip.querySelector('.tip-body')?.textContent || '').length : 0,
+            pos: tip ? tip.style.left + ',' + tip.style.top : '',
+          })
+          label.dispatchEvent(new win.MouseEvent('mouseout', opts))
+          await sleep(150)
+          resolve({ label: labelText, found: true, tipShown: !!tip, len: tip ? (tip.querySelector('.tip-body')?.textContent || '').length : 0, hiddenAfterOut: !doc.querySelector('.param-tip') })
+        })
+      }
+
+      /* ---- 风向指示器: 箭头像素质心方向 ---- */
+      function compassVector() {
+        const cv = doc.querySelector('.wind-compass canvas')
+        if (!cv) return null
+        const ctx = cv.getContext('2d')
+        const W = cv.width, H = cv.height
+        const d = ctx.getImageData(0, 0, W, H).data
+        let sx = 0, sy = 0, sw = 0
+        for (let y = 0; y < H; y++) {
+          for (let x = 0; x < W; x++) {
+            const i = (y * W + x) * 4
+            const r = d[i], g = d[i + 1], b = d[i + 2], a = d[i + 3]
+            if (a < 40) continue
+            // 箭头是 accent 绿 (#5ac8a0)
+            if (g > 150 && g > r + 40 && g > b + 20) { sx += x; sy += y; sw++ }
+          }
+        }
+        if (!sw) return { px: 0, angle: null }
+        const cx = W / 2, cy = H / 2
+        const ang = Math.atan2(sy / sw - cy, sx / sw - cx) * 180 / Math.PI
+        return { px: sw, angle: +ang.toFixed(1) }
+      }
+
+      /* ---- 屏幕上的摆动幅度 (验证风向真的改变了运动) ---- */
+      function centroid() {
+        const canvas = doc.querySelector('canvas:not(.wind-compass canvas)')
+        const W = 320, H = 200
+        const c2 = document.createElement('canvas')
+        c2.width = W; c2.height = H
+        const ctx = c2.getContext('2d')
+        ctx.drawImage(canvas, 0, 0, W, H)
+        const d = ctx.getImageData(0, 0, W, H).data
+        let sw = 0, sx = 0, sy = 0
+        for (let y = 0; y < H; y++) {
+          for (let x = 0; x < W; x++) {
+            const i = (y * W + x) * 4
+            const r = d[i], g = d[i + 1], b = d[i + 2]
+            const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            if (g > r + 10 && g > b + 10 && lum > 55) { const w = g; sw += w; sx += w * x; sy += w * y }
+          }
+        }
+        return sw < 80 ? null : [sx / sw, sy / sw]
+      }
+
+      async function trackAmp(frames = 60, gap = 30) {
+        const pts = []
+        for (let i = 0; i < frames; i++) { const c = centroid(); if (c) pts.push(c); await sleep(gap) }
+        if (pts.length < 10) return { n: pts.length }
+        const n = pts.length
+        let mx = 0, my = 0
+        for (const p of pts) { mx += p[0]; my += p[1] }
+        mx /= n; my /= n
+        let sxx = 0, syy = 0, sxy = 0
+        for (const p of pts) { const dx = p[0] - mx, dy = p[1] - my; sxx += dx * dx; syy += dy * dy; sxy += dx * dy }
+        sxx /= n; syy /= n; sxy /= n
+        const tr = sxx + syy, det = sxx * syy - sxy * sxy
+        const disc = Math.sqrt(Math.max(0, tr * tr / 4 - det))
+        return { n, rmsMajor: +Math.sqrt(tr / 2 + disc).toFixed(3), angleDeg: +(0.5 * Math.atan2(2 * sxy, sxx - syy) * 180 / Math.PI).toFixed(1) }
+      }
+
+      setTimeout(async () => {
+        try {
+          // 1) hover 说明
+          const t1 = await hoverTest('树干高度', '树干')
+          summary.push('hover 树干高度: ' + JSON.stringify(t1))
+          const t2 = await hoverTest('顺风偏置', '风/生长')
+          summary.push('hover 顺风偏置: ' + JSON.stringify(t2))
+          const secTitle = rows('.section-head .title').find((e) => e.textContent.includes('材质'))
+          if (secTitle) {
+            const r = secTitle.getBoundingClientRect()
+            secTitle.dispatchEvent(new win.MouseEvent('mouseover', { bubbles: true, clientX: r.left + 4, clientY: r.top + 4 }))
+            await sleep(420)
+            const tip = doc.querySelector('.param-tip')
+            summary.push('hover 分节标题: ' + JSON.stringify({ shown: !!tip, title: tip?.querySelector('.tip-title')?.textContent || '' }))
+          }
+
+          // 2) 风向指示器
+          const hasCompass = !!doc.querySelector('.wind-compass canvas')
+          const windTab = byText('.tab', '风/生长')
+          windTab?.click()
+          await sleep(300)
+          state.params.wind.auto = false
+          state.params.wind.strength = 0.5
+          state.params.wind.leafFlutter = 1.2
+          state.params.wind.turbulence = 0.05
+          const c1 = compassVector()
+          await sleep(400)
+          state.params.wind.direction = (state.params.wind.direction + 90) % 360
+          await sleep(700)
+          const c2 = compassVector()
+          summary.push(`罗盘 exists=${hasCompass} 风向${Math.round((state.params.wind.direction - 90 + 360) % 360)}°->箭头${JSON.stringify(c1)} ` +
+            `风向${Math.round(state.params.wind.direction)}°->箭头${JSON.stringify(c2)}`)
+
+          // 3) 推近树冠, 验证不同风向在屏幕上的摆动幅度/方向不同
+          const h = sc.treeHeight || 10
+          sc.controls.target.set(0, h * 0.8, 0)
+          sc.camera.position.set(h * 0.3, h * 0.86, h * 0.4)
+          sc.controls.update()
+          const bx = sc.camera.position.x, bz = sc.camera.position.z
+          const viewAz = (Math.atan2(bz, bx) * 180 / Math.PI + 360) % 360
+          const screenRightAz = (viewAz - 90 + 360) % 360
+          const res = []
+          for (const dir of [screenRightAz, (screenRightAz + 90) % 360]) {
+            state.params.wind.direction = dir
+            await sleep(1300)
+            const r = await trackAmp(60, 30)
+            res.push({ dir: Math.round(dir), ...r })
+          }
+          summary.push(`屏幕右方向=${Math.round(screenRightAz)}° ` + JSON.stringify(res) +
+            ' 幅度比=' + (res[0].rmsMajor / Math.max(1e-6, res[1].rmsMajor)).toFixed(2) + 'x')
+
+          summary.push('errs=' + (errs.length ? errs.slice(0, 3).join(' ;; ') : 'none'))
+          document.title = 'UICHECK :: ' + summary.join(' || ').slice(0, 2400)
+        } catch (e) {
+          document.title = 'UICHECK-EXCEPTION :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 700)
+        }
+      }, 4500)
+    </script>
+  </body>
+</html>

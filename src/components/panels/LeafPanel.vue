@@ -34,9 +34,7 @@
     <SliderRow label="自重下垂" v-model="L.droop" :min="0" :max="1.2" :step="0.01" />
     <SliderRow label="叶面朝上" v-model="L.faceUp" :min="0" :max="1" :step="0.01" />
     <SliderRow label="滚转随机" v-model="L.rollVariance" :min="0" :max="360" :step="1" unit="°" />
-    <SliderRow label="叶柄扭转" v-model="L.twist" :min="0" :max="1.5" :step="0.01" />
-    <SliderRow label="对齐枝条程度" v-model="L.orientToBranch" :min="0" :max="1" :step="0.01" />
-  </Section>
+    <SliderRow label="叶柄扭转" v-model="L.twist" :min="0" :max="1.5" :step="0.01" />  </Section>
 
   <Section title="叶片颜色" hint="Color" :default-collapsed="true">
     <ColorRow label="叶基颜色" v-model="L.color" />
@@ -74,3 +72,4 @@ const shapes = [
   { value: 'needle', label: '针叶 needle' },
 ]
 </script>
+

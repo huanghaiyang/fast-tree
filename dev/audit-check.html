@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>audit-check: booting</title>
+  </head>
+  <body style="margin: 0; background: #111; color: #ddd; font: 12px monospace">
+    <pre id="out">running…</pre>
+    <script type="module">
+      import { runAudit } from '../scripts/paramAudit.mjs'
+
+      const out = document.getElementById('out')
+      const lines = []
+      const log = (s) => { lines.push(String(s)); out.textContent = lines.join('\n') }
+
+      setTimeout(() => {
+        try {
+          const t0 = performance.now()
+          // 浏览器环境: 有 canvas/ImageLoader, 可以验证 bark.color / 程序化贴图 / 贴图上传等
+          const report = runAudit({ env: 'browser' })
+          log(`环境=${report.env} 共 ${report.all.length} 个参数, 耗时 ${Math.round(performance.now() - t0)}ms`)
+          log(`通过 ${report.all.length - report.dead.length - report.exempt.length - report.browserOnly.length}` +
+            ` / 豁免 ${report.exempt.length} / 需浏览器 ${report.browserOnly.length} / 失效 ${report.dead.length} / 异常 ${report.threw.length}`)
+          if (report.dead.length) {
+            log('\n失效参数:')
+            for (const r of report.dead) log('  ✗ ' + r.path + '  ' + r.how)
+          }
+          if (report.threw.length) {
+            log('\n异常:')
+            for (const r of report.threw) log('  ! ' + r.path + ' ' + r.how)
+          }
+          if (report.exempt.length) {
+            log('\n豁免: ' + report.exempt.map((r) => r.path).join(', '))
+          }
+          const domRows = report.all.filter((r) => r.path.startsWith('bark.') || r.path.startsWith('leafMat.'))
+          const bad = domRows.filter((r) => !r.changed)
+          log('\n材质/贴图参数明细: ' + domRows.length + ' 项, 未生效 ' + bad.length)
+          for (const r of domRows) log('  ' + (r.changed ? '✓' : '✗') + ' ' + r.path)
+          document.title = (report.dead.length ? 'AUDIT-FAIL' : 'AUDIT-OK') + ' :: ' +
+            `browser 通过${report.all.length - report.dead.length - report.exempt.length} 失效${report.dead.length} 异常${report.threw.length}` +
+            (report.dead.length ? ' || ' + report.dead.map((r) => r.path).join(',') : '')
+        } catch (e) {
+          document.title = 'AUDIT-EXCEPTION :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 700)
+        }
+      }, 600)
+    </script>
+  </body>
+</html>

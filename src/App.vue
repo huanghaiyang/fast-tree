@@ -30,6 +30,8 @@
     <Viewport />
 
     <NodeDock v-if="state.nodePanelOpen" />
+
+    <ParamTip />
   </div>
 </template>
 
@@ -38,6 +40,7 @@ import { computed, onBeforeUnmount, onMounted } from 'vue'
 import ControlPanel from './components/ControlPanel.vue'
 import Viewport from './components/Viewport.vue'
 import NodeDock from './components/NodeDock.vue'
+import ParamTip from './components/ParamTip.vue'
 import {
   state, randomizeSeed, setSeed, doAutoGenerate, sceneApi, pushUndo, toggleNodePanel,
 } from './store/treeStore.js'
