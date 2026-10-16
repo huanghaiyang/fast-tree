@@ -9,6 +9,7 @@
  *   aPhase  float  风场相位偏移 (让每根枝条不同步)
  *   aOrigin vec3   该枝条的基点 (生长动画的收缩目标)
  *   aGrow   vec2   生长区间 [start, end]
+ *   aNodeId float  所属模型节点 id (用于节点树选中/高亮/隔离)
  */
 import * as THREE from 'three'
 
@@ -133,6 +134,7 @@ export class GeoAcc {
     this.aPhase = []
     this.aOrigin = []
     this.aGrow = []
+    this.aNodeId = []
     this.index = []
   }
 
@@ -144,7 +146,7 @@ export class GeoAcc {
     return this.index.length / 3
   }
 
-  vertex(px, py, pz, nx, ny, nz, u, v, r, g, b, wind, phase, ox, oy, oz, g0, g1) {
+  vertex(px, py, pz, nx, ny, nz, u, v, r, g, b, wind, phase, ox, oy, oz, g0, g1, nodeId = 0) {
     const i = this.position.length / 3
     this.position.push(px, py, pz)
     this.normal.push(nx, ny, nz)
@@ -154,6 +156,7 @@ export class GeoAcc {
     this.aPhase.push(phase)
     this.aOrigin.push(ox, oy, oz)
     this.aGrow.push(g0, g1)
+    this.aNodeId.push(nodeId)
     return i
   }
 
@@ -172,6 +175,7 @@ export class GeoAcc {
     g.setAttribute('aPhase', new THREE.Float32BufferAttribute(this.aPhase, 1))
     g.setAttribute('aOrigin', new THREE.Float32BufferAttribute(this.aOrigin, 3))
     g.setAttribute('aGrow', new THREE.Float32BufferAttribute(this.aGrow, 2))
+    g.setAttribute('aNodeId', new THREE.Float32BufferAttribute(this.aNodeId, 1))
     g.setIndex(this.index)
     g.computeBoundingBox()
     g.computeBoundingSphere()

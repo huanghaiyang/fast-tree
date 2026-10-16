@@ -21,17 +21,33 @@
     <div class="overlay help">
       左键旋转 · 右键平移 · 滚轮缩放
     </div>
+
+    <div v-if="state.selection.label" class="overlay selection">
+      <span class="dot"></span>
+      <b>{{ state.selection.label }}</b>
+      <span class="muted">· {{ modeLabel }}</span>
+      <button class="btn small ghost" @click="clearSelection">清除</button>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch, computed } from 'vue'
 import { TreeScene } from '../core/sceneManager.js'
 import { serializeGroup } from '../core/params.js'
-import { state, sceneApi, totalTriangles } from '../store/treeStore.js'
+import {
+  state, sceneApi, totalTriangles, setNodeModel, selectionSignature, clearSelection as clearSelectionAction,
+} from '../store/treeStore.js'
 
 const host = ref(null)
 const fps = ref(0)
+
+const MODE_LABEL = { highlight: '高亮', isolate: '仅显示选中', dim: '其余变暗' }
+const modeLabel = computed(() => MODE_LABEL[state.selection.mode] || '高亮')
+
+function clearSelection() {
+  clearSelectionAction()
+}
 
 let scene = null
 let rebuildTimer = 0
@@ -47,12 +63,14 @@ onMounted(() => {
       state.renderInfo = { calls: info.calls, triangles: info.triangles }
     },
     onGrowth: (v) => { state.params.growth.value = v },
+    onModel: (m) => setNodeModel(m),
   })
 
   sceneApi.exportGLB = (name) => scene.exportGLB(name)
   sceneApi.exportOBJ = (name) => scene.exportOBJ(name)
   sceneApi.screenshot = (name) => scene.screenshot(name)
   sceneApi.frameCamera = () => scene.frameCamera()
+  sceneApi.focusBox = (min, max) => scene.focusBox(min, max)
   if (import.meta.env && import.meta.env.DEV) {
     window.__fastTreeScene = scene
   }
@@ -106,6 +124,8 @@ function rebuild(frame) {
     try {
       scene.build(state.params, { frameCamera: !!frame })
       state.shaderError = ''
+      // 重建后 node id 会变, 重新套用选中状态 (高亮 uniform + 包围盒)
+      scene.setSelection(state.selection)
     } catch (e) {
       console.error(e)
       state.shaderError = String((e && e.stack) || e)
@@ -122,6 +142,9 @@ function customSignature() {
 
 function setupWatchers() {
   watch(() => serializeGroup(state.params, 'geometry'), () => scheduleRebuild(false))
+  watch(() => selectionSignature(), () => {
+    scene?.setSelection(state.selection)
+  })
   watch(() => serializeGroup(state.params, 'material'), () => {
     if (!scene) return
     scene.updateMaterialParams(state.params)

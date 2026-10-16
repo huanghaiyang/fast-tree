@@ -88,7 +88,7 @@ export function buildLeafTemplate(o = {}) {
  * @param {THREE.Color} color0  叶基颜色
  * @param {THREE.Color} color1  叶尖颜色
  */
-export function pushLeafInstance(acc, tmpl, basis, scale, pos, color0, color1, wind, phase, origin, grow0, grow1) {
+export function pushLeafInstance(acc, tmpl, basis, scale, pos, color0, color1, wind, phase, origin, grow0, grow1, nodeId = 0) {
   const { positions, normals, uvs, index } = tmpl
   const base = acc.vertexCount
   const n = tmpl.vertexCount
@@ -123,7 +123,7 @@ export function pushLeafInstance(acc, tmpl, basis, scale, pos, color0, color1, w
       Math.min(1, r), Math.min(1, g), Math.min(1, b),
       wind, phase,
       origin.x, origin.y, origin.z,
-      grow0, grow1,
+      grow0, grow1, nodeId,
     )
   }
   for (let i = 0; i < index.length; i += 3) {

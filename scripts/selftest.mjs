@@ -2,7 +2,7 @@
  * 无浏览器自检: 校验生成器的确定性、参数隔离、几何合法性
  * 运行: npm run selftest
  */
-import { buildTree } from '../src/core/treeBuilder.js'
+import { buildTree, selectionRanges } from '../src/core/treeBuilder.js'
 import { defaultParams, normalizeParams, MAX_LEVELS } from '../src/core/params.js'
 import { autoGenerate, autoWind, applyPreset, PRESETS } from '../src/core/presets.js'
 import { buildLeafTemplate, LEAF_SHAPE_KEYS } from '../src/core/leaf.js'
@@ -246,6 +246,59 @@ lodP2.lod.barkDetail = 0.5
 const lodR2 = buildTree(lodP2)
 check('树皮细节倍率降低三角面', lodR2.stats.barkTriangles < a.stats.barkTriangles,
   `${lodR2.stats.barkTriangles} < ${a.stats.barkTriangles}`)
+
+/* 8. 模型节点表 */
+console.log('\n[8] 模型节点表 (节点树)')
+const nodeGeom = buildTree(normalizeParams(autoGenerate(777, 0.5).params))
+const { nodes } = nodeGeom
+check('返回节点表', Array.isArray(nodes) && nodes.length > 0, `${nodes.length} 个节点`)
+check('树皮几何带 aNodeId', !!nodeGeom.barkGeometry.attributes.aNodeId)
+check('树叶几何带 aNodeId', !nodeGeom.leafGeometry || !!nodeGeom.leafGeometry.attributes.aNodeId)
+
+const slotIds = (g) => Array.from(g ? g.attributes.aNodeId.array : [])
+const allIds = [...slotIds(nodeGeom.barkGeometry), ...slotIds(nodeGeom.leafGeometry)]
+check('所有顶点 nodeId 都是整数且在范围内', allIds.every((v) => Number.isInteger(v) && v >= 0 && v < nodes.length),
+  `min=${Math.min(...allIds)} max=${Math.max(...allIds)} n=${nodes.length}`)
+check('每个节点都有几何 (材质节点除外)', nodes.every((n) => n.type === 'material' || n.stats.triangles > 0))
+check('节点面数合计 = 几何面数',
+  Math.abs(nodes.filter((n) => n.type !== 'material').reduce((a, n) => a + n.stats.triangles, 0) -
+    (nodeGeom.stats.barkTriangles + nodeGeom.stats.leafTriangles)) < 1)
+check('节点包围盒有限且非空',
+  nodes.filter((n) => n.bbox).every((n) => n.bbox.min.every(Number.isFinite) && n.bbox.max.every(Number.isFinite) &&
+    n.bbox.max.every((v, i) => v >= n.bbox.min[i])))
+check('存在树干节点且为根', nodes.some((n) => n.type === 'trunk' && n.parent === null))
+check('树枝节点都有父节点', nodes.filter((n) => n.type === 'branch').every((n) => n.parent !== null && n.parent < nodes.length))
+check('材质节点: 树皮 + 树叶', nodes.filter((n) => n.type === 'material').length === 2)
+
+const groups = nodeGeom.groups
+check('组 id 区间连续 (区间高亮的前提)',
+  groups.every((g) => g.nodeIds.length > 0 && g.nodeIds[g.nodeIds.length - 1] - g.nodeIds[0] === g.nodeIds.length - 1))
+check('组互不重叠且覆盖全部节点',
+  (() => {
+    const seen = new Set()
+    for (const g of groups) for (const id of g.nodeIds) { if (seen.has(id)) return false; seen.add(id) }
+    return seen.size === nodes.length
+  })())
+check('组三角面合计 = 总面数',
+  Math.abs(groups.filter((g) => g.type !== 'material').reduce((a, g) => a + g.stats.triangles, 0) -
+    (nodeGeom.stats.barkTriangles + nodeGeom.stats.leafTriangles)) < 1)
+
+// 选区压缩
+const r1 = selectionRanges([3, 4, 5, 9, 11, 12])
+check('选区压缩成连续区间', JSON.stringify(r1) === JSON.stringify([[3, 5], [9, 9], [11, 12]]), JSON.stringify(r1))
+const r2 = selectionRanges(Array.from({ length: 40 }, (_, i) => i * 3))
+check('区间数量上限 8 段', r2.length <= 8, `${r2.length} 段`)
+check('空选择 = 空区间', selectionRanges([]).length === 0)
+
+// 节点表与种子绑定
+const nA = buildTree(normalizeParams(autoGenerate(999, 0.5).params))
+const nB = buildTree(normalizeParams(autoGenerate(999, 0.5).params))
+check('同种子 -> 节点表完全一致',
+  JSON.stringify(nA.nodes.map((n) => [n.id, n.name, n.stats.triangles])) ===
+  JSON.stringify(nB.nodes.map((n) => [n.id, n.name, n.stats.triangles])))
+const nC = buildTree(normalizeParams(autoGenerate(1000, 0.5).params))
+check('不同种子 -> 节点表不同',
+  JSON.stringify(nA.nodes.map((n) => n.name)) !== JSON.stringify(nC.nodes.map((n) => n.name)))
 
 /* 汇总 */
 console.log(`\n=== 结果: ${pass} 通过 / ${fail} 失败 ===`)

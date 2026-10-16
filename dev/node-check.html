@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>node-check: booting</title>
+  </head>
+  <body style="margin: 0; background: #111; color: #ddd; font: 12px monospace">
+    <iframe id="f" src="/" style="width: 1280px; height: 800px; border: 0"></iframe>
+    <pre id="out" style="margin: 0"></pre>
+    <script type="module">
+      const RECV = 'http://127.0.0.1:5274/shot'
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const summary = []
+      const errs = []
+      let win = null, doc = null, state = null, sc = null
+
+      f.addEventListener('load', () => {
+        win = f.contentWindow
+        doc = f.contentDocument
+        state = win.__fastTree
+        sc = win.__fastTreeScene
+        win.addEventListener('error', (e) => errs.push('ONERROR:' + String(e.message).slice(0, 160)))
+        win.addEventListener('unhandledrejection', (e) => errs.push('REJ:' + String(e.reason).slice(0, 160)))
+        const oe = win.console.error
+        win.console.error = function (...a) { errs.push('CERR:' + a.map(String).join(' ').slice(0, 170)); oe.apply(win.console, a) }
+      })
+
+      function px() {
+        const canvas = doc.querySelector('canvas')
+        const W = 320, H = 200
+        const c2 = document.createElement('canvas')
+        c2.width = W; c2.height = H
+        const ctx = c2.getContext('2d')
+        ctx.drawImage(canvas, 0, 0, W, H)
+        const d = ctx.getImageData(0, 0, W, H).data
+        let bright = 0, green = 0, yellow = 0, hash = 2166136261, maxLum = 0
+        for (let i = 0; i < d.length; i += 4) {
+          const r = d[i], g = d[i + 1], b = d[i + 2]
+          const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+          if (lum > maxLum) maxLum = lum
+          if (lum > 60) bright++
+          if (g > r + 12 && g > b + 12 && lum > 50) green++
+          if (r > 140 && g > 110 && b < 110 && r > b + 60) yellow++
+          if (i % 64 === 0) { hash ^= r + g * 3 + b * 7; hash = Math.imul(hash, 16777619) }
+        }
+        const n = (W * H) / 100
+        return { bright: +(bright / n).toFixed(2), green: +(green / n).toFixed(2), yellow: +(yellow / n).toFixed(2), maxLum: Math.round(maxLum), h: (hash >>> 0).toString(16) }
+      }
+
+      async function shot(name) {
+        try {
+          await fetch(`${RECV}?name=${name}`, { method: 'POST', body: doc.querySelector('canvas').toDataURL('image/png') })
+        } catch (e) {
+          summary.push('shot ' + name + ' failed (receiver 未启动?)')
+        }
+      }
+
+      const rows = (sel) => [...doc.querySelectorAll(sel)]
+      const byText = (sel, t) => rows(sel).find((e) => e.textContent.includes(t))
+
+      setTimeout(async () => {
+        try {
+          // 切到节点页
+          byText('.tab', '节点')?.click()
+          await sleep(600)
+          const groupRows = rows('.node-row.group')
+          const childRows = rows('.node-row.child')
+          summary.push(`panel groups=${groupRows.length} childRows=${childRows.length} tabActive=${!!doc.querySelector('.tab.active')}`)
+
+          // 展开"树枝 L2"
+          const l2 = groupRows.find((r) => r.textContent.includes('树枝 L2'))
+          if (l2) { l2.querySelector('.tw')?.click(); await sleep(300) }
+          const childAfter = rows('.node-row.child').length
+          summary.push(`afterExpand children=${childAfter} l2found=${!!l2}`)
+
+          const base = px()
+          summary.push('base px=' + JSON.stringify(base))
+
+          // 选中 L2 (单击)
+          l2?.click()
+          await sleep(900)
+          const hl = px()
+          summary.push('selectL2 px=' + JSON.stringify(hl) + ' box=' + !!(sc && sc.selBox && sc.selBox.visible) +
+            ' label=' + JSON.stringify(state.selection.label) +
+            ' ranges=' + JSON.stringify(state.selection.ranges) +
+            ' mode=' + state.selection.mode + ' uMode=' + sc.uniforms.uSelectMode.value)
+          await shot('n1-select-L2')
+
+          // 隔离模式
+          byText('.level-tab', '仅显示选中')?.click()
+          await sleep(900)
+          const iso = px()
+          summary.push('isolate px=' + JSON.stringify(iso) + ' mode=' + state.selection.mode + ' uMode=' + sc.uniforms.uSelectMode.value)
+          await shot('n2-isolate-L2')
+
+          // 点一个子节点 (单枝)
+          const child = rows('.node-row.child')[3]
+          child?.click()
+          await sleep(700)
+          const single = px()
+          summary.push('singleBranch px=' + JSON.stringify(single) + ' label=' + JSON.stringify(state.selection.label) +
+            ' uRangeCount=' + sc.uniforms.uSelRangeCount.value +
+            ' r0=' + sc.uniforms.uSelRanges.value[0].x + '-' + sc.uniforms.uSelRanges.value[0].y)
+
+          // 双击子节点 -> 相机聚焦
+          child?.dispatchEvent(new win.MouseEvent('dblclick', { bubbles: true }))
+          await sleep(800)
+          const focused = px()
+          summary.push('dblclickFocus px=' + JSON.stringify(focused) + ' camMoved=' + (focused.h !== single.h))
+
+          // 材质节点选中 (树叶)
+          byText('.level-tab', '高亮')?.click()
+          await sleep(200)
+          const leafMatRow = rows('.node-row.group').find((r) => r.textContent.includes('材质 · 树叶'))
+          leafMatRow?.click()
+          await sleep(800)
+          const matSel = px()
+          summary.push('materialLeaf px=' + JSON.stringify(matSel) + ' selMaterial=' + JSON.stringify(state.selection.material) +
+            ' uSelMaterial=' + sc.uniforms.uSelectMaterial.value + ' uMode=' + sc.uniforms.uSelectMode.value)
+
+          // 清除
+          byText('.overlay.selection button', '清除')?.click()
+          await sleep(700)
+          const cleared = px()
+          summary.push('cleared px=' + JSON.stringify(cleared) + ' uMode=' + sc.uniforms.uSelectMode.value +
+            ' restore=' + (cleared.green > 5))
+
+          // 选中一个树枝后再看详情面板
+          byText('.tab', '节点')?.click()
+          await sleep(300)
+          const l2b = rows('.node-row.group').find((r) => r.textContent.includes('树枝 L2'))
+          l2b?.click()
+          await sleep(600)
+
+          // 详情面板 (精确取"节点详情"那一节)
+          const secs = rows('.section')
+          const detailSec = secs.find((s) => (s.querySelector('.title')?.textContent || '').includes('节点详情'))
+          const detailTxt = (detailSec ? detailSec.innerText : 'NO-SECTION').replace(/\s+/g, ' ').slice(0, 200)
+          summary.push('inspector=' + JSON.stringify(detailTxt))
+          summary.push('errs=' + (errs.length ? errs.slice(0, 3).join(' ;; ') : 'none'))
+          document.title = 'NODECHECK :: ' + summary.join(' || ').slice(0, 2600)
+        } catch (e) {
+          document.title = 'NODECHECK-EXCEPTION :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 700)
+        }
+      }, 4000)
+    </script>
+  </body>
+</html>

@@ -4,12 +4,13 @@
 import { reactive, computed } from 'vue'
 import { defaultParams, cloneParams, normalizeParams, mergeParams } from '../core/params.js'
 import { autoGenerate, autoWind, applyPreset, randomSeed, presetById, archetypeName } from '../core/presets.js'
+import { selectionRanges } from '../core/treeBuilder.js'
 
 export const state = reactive({
   params: defaultParams(),
   stats: {
     branches: 0, leaves: 0, barkTriangles: 0, leafTriangles: 0,
-    barkVertices: 0, leafVertices: 0, buildMs: 0, height: 0, spread: 0,
+    barkVertices: 0, leafVertices: 0, buildMs: 0, height: 0, spread: 0, nodeCount: 0,
   },
   renderInfo: { calls: 0, triangles: 0 },
   shaderError: '',
@@ -22,7 +23,170 @@ export const state = reactive({
   frameVersion: 0,     // 请求重新取景
   rebuildVersion: 0,   // 请求强制重建
   materialVersion: 0,  // 请求重新编译自定义 GLSL
+  nodeVersion: 0,      // 模型节点表刷新计数
+  // --- 模型节点选中 ---
+  selection: {
+    ids: [],           // 选中的 node id
+    material: null,    // 'bark' | 'leaf' | null
+    mode: 'highlight', // highlight | isolate | dim
+    activeId: null,    // 详情面板展示的节点
+    color: '#ffd166',
+    glow: 0.35,
+    dim: 0.35,
+    label: '',
+  },
 })
+
+/* ------------------------------------------------------------------ */
+/* 模型节点表 (数量可能上千, 放在非响应式容器里, 用 nodeVersion 触发刷新)   */
+/* ------------------------------------------------------------------ */
+const nodeModel = { nodes: [], groups: [], byId: new Map(), groupById: new Map() }
+
+export function getNodeModel() {
+  return nodeModel
+}
+
+export function setNodeModel(model) {
+  nodeModel.nodes = model.nodes || []
+  nodeModel.groups = model.groups || []
+  nodeModel.byId = new Map(nodeModel.nodes.map((n) => [n.id, n]))
+  nodeModel.groupById = new Map(nodeModel.groups.map((g) => [g.id, g]))
+  state.nodeVersion++
+  // 重建后之前选中的节点可能已不存在
+  const alive = new Set(nodeModel.nodes.map((n) => n.id))
+  const kept = state.selection.ids.filter((id) => alive.has(id))
+  if (kept.length !== state.selection.ids.length) {
+    state.selection.ids = kept
+    if (kept.length === 0 && !state.selection.material) state.selection.activeId = null
+  }
+  if (!kept.length && state.selection.material) {
+    // 材质节点恒在
+  }
+  refreshSelectionRanges()
+}
+
+function refreshSelectionRanges() {
+  const sel = state.selection
+  sel.ranges = selectionRanges(sel.ids)
+  sel.label = describeSelection(sel)
+}
+
+function describeSelection(sel) {
+  if (!sel.ids.length && !sel.material) return ''
+  const parts = []
+  if (sel.material === 'bark') parts.push('材质 · 树皮')
+  else if (sel.material === 'leaf') parts.push('材质 · 树叶')
+  const groups = new Set()
+  let single = null
+  for (const id of sel.ids) {
+    const n = nodeModel.byId.get(id)
+    if (!n) continue
+    groups.add(n.groupName)
+    single = n
+  }
+  if (groups.size === 1 && sel.ids.length > 1) {
+    const g = [...groups][0]
+    parts.push(`${g} · ${sel.ids.length} 个节点`)
+  } else if (sel.ids.length === 1 && single) {
+    parts.push(groups.has('树干') || groups.has('树根') ? single.name : `${single.groupName} · ${single.name}`)
+  } else if (sel.ids.length > 1) {
+    parts.push(`${sel.ids.length} 个节点 (${groups.size} 组)`)
+  }
+  return parts.join(' + ')
+}
+
+export function selectNodes(ids, opts = {}) {
+  const sel = state.selection
+  const list = Array.isArray(ids) ? ids : [ids]
+  if (opts.additive) {
+    const set = new Set(sel.ids)
+    for (const id of list) {
+      if (set.has(id)) set.delete(id)
+      else set.add(id)
+    }
+    sel.ids = [...set]
+  } else {
+    sel.ids = [...new Set(list)]
+  }
+  sel.material = opts.material || null
+  if (opts.activeId !== undefined) sel.activeId = opts.activeId
+  else sel.activeId = sel.ids.length ? sel.ids[sel.ids.length - 1] : null
+  refreshSelectionRanges()
+  updateSelectionBox()
+}
+
+export function selectGroup(groupId, opts = {}) {
+  const g = nodeModel.groupById.get(groupId)
+  if (!g) return
+  if (g.material) {
+    state.selection.material = g.material
+    state.selection.ids = []
+    state.selection.activeId = null
+    refreshSelectionRanges()
+    state.selection.box = g.bbox
+    return
+  }
+  selectNodes(opts.additive && !g.material ? g.nodeIds : g.nodeIds.slice(), {
+    additive: opts.additive,
+    activeId: opts.activeId !== undefined ? opts.activeId : g.nodeIds[0],
+  })
+}
+
+export function clearSelection() {
+  const sel = state.selection
+  sel.ids = []
+  sel.material = null
+  sel.activeId = null
+  sel.ranges = []
+  sel.box = null
+  sel.label = ''
+}
+
+export function setSelectionMode(mode) {
+  state.selection.mode = mode
+}
+
+export function focusSelection() {
+  const box = state.selection.box
+  if (box && sceneApi.focusBox) sceneApi.focusBox(box.min, box.max)
+}
+
+export function focusNode(nodeId) {
+  const n = nodeModel.byId.get(nodeId)
+  if (n && n.bbox && sceneApi.focusBox) sceneApi.focusBox(n.bbox.min, n.bbox.max)
+}
+
+function updateSelectionBox() {
+  const sel = state.selection
+  if (!sel.ids.length) {
+    const n = sel.material ? nodeModel.groupById.get('material-' + sel.material) : null
+    sel.box = n && n.bbox ? n.bbox : null
+    return
+  }
+  let box = null
+  for (const id of sel.ids) {
+    const n = nodeModel.byId.get(id)
+    if (!n || !n.bbox) continue
+    if (!box) box = { min: [...n.bbox.min], max: [...n.bbox.max] }
+    else {
+      for (let i = 0; i < 3; i++) {
+        if (n.bbox.min[i] < box.min[i]) box.min[i] = n.bbox.min[i]
+        if (n.bbox.max[i] > box.max[i]) box.max[i] = n.bbox.max[i]
+      }
+    }
+  }
+  sel.box = box
+}
+
+/** 选中状态签名 (给 Viewport 做变更监听) */
+export function selectionSignature() {
+  const s = state.selection
+  return [
+    s.mode, s.material || '', s.color, s.glow, s.dim,
+    (s.ranges || []).map((r) => r.join('-')).join(','),
+    s.box ? s.box.min.join(',') + '|' + s.box.max.join(',') : '',
+  ].join(';')
+}
 
 const undoStack = []
 const redoStack = []
@@ -34,6 +198,7 @@ export const sceneApi = {
   exportOBJ: null,
   screenshot: null,
   frameCamera: null,
+  focusBox: null,
 }
 
 function snapshot() {

@@ -227,6 +227,7 @@ export class TreeScene {
       this.leafMesh.name = 'Leaves'
       this.treeGroup.add(this.leafMesh)
     }
+    this.applyShadowFlags()
 
     this.stats = { ...result.stats, totalMs: performance.now() - t }
     const info = boxInfo(result.barkGeometry)
@@ -234,9 +235,81 @@ export class TreeScene {
     this.treeSpread = Math.max(0.5, this.stats.spread || 1)
     this.treeCenter = info.center.clone()
 
+    // 模型节点表 (节点树面板 + 选中高亮)
+    this.nodes = result.nodes || []
+    this.groups = result.groups || []
+
     if (opts.frameCamera !== false) this.frameCamera()
     if (this.callbacks.onStats) this.callbacks.onStats(this.stats)
+    if (this.callbacks.onModel) this.callbacks.onModel({ nodes: this.nodes, groups: this.groups })
     return this.stats
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 模型节点: 选中高亮 / 隔离 / 包围盒 / 聚焦                            */
+  /* ------------------------------------------------------------------ */
+  setSelection(sel) {
+    const u = this.uniforms
+    const hasTarget = (sel.ids && sel.ids.length > 0) || sel.material != null
+    const modeMap = { highlight: 1, isolate: 2, dim: 3 }
+    this.selectMode = hasTarget ? (modeMap[sel.mode] || 1) : 0
+    u.uSelectMode.value = this.selectMode
+    u.uSelectMaterial.value = sel.material === 'bark' ? 0 : sel.material === 'leaf' ? 1 : -1
+    const ranges = sel.ranges || []
+    const n = Math.min(8, ranges.length)
+    u.uSelRangeCount.value = n
+    for (let i = 0; i < 8; i++) {
+      const v = u.uSelRanges.value[i]
+      if (i < n) v.set(ranges[i][0], ranges[i][1])
+      else v.set(0, -1)
+    }
+    u.uSelColor.value.set(sel.color || '#ffd166')
+    u.uSelGlow.value = sel.glow === undefined ? 0.35 : sel.glow
+    u.uSelDim.value = sel.dim === undefined ? 0.35 : sel.dim
+    this.setSelectionBox(sel.box || null)
+    this.applyShadowFlags()
+  }
+
+  /** 隔离模式下被隐藏的几何不该再投影 (阴影 pass 用的是独立depth材质, 看不到选中逻辑) */
+  applyShadowFlags() {
+    const isolate = this.selectMode === 2
+    const on = !!this.shadowsEnabled && !isolate
+    if (this.barkMesh) this.barkMesh.castShadow = on
+    if (this.leafMesh) this.leafMesh.castShadow = on
+  }
+
+  /** 选中框 (世界坐标 min/max 数组) 或 null */
+  setSelectionBox(box) {
+    if (!box || !box.min || !box.max) {
+      if (this.selBox) this.selBox.visible = false
+      return
+    }
+    if (!this.selBox) {
+      const b3 = new THREE.Box3()
+      this.selBox = new THREE.Box3Helper(b3, 0xffd166)
+      this.selBox.material.depthTest = false
+      this.selBox.material.transparent = true
+      this.selBox.material.opacity = 0.9
+      this.selBox.renderOrder = 10
+      this.scene.add(this.selBox)
+    }
+    this.selBox.box.min.set(box.min[0], box.min[1], box.min[2])
+    this.selBox.box.max.set(box.max[0], box.max[1], box.max[2])
+    this.selBox.visible = true
+    this.selBox.updateMatrixWorld(true)
+  }
+
+  /** 把相机聚焦到某个包围盒 */
+  focusBox(min, max) {
+    if (!min || !max) return
+    const c = new THREE.Vector3((min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2)
+    const size = Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2], 0.4)
+    const dir = new THREE.Vector3().subVectors(this.camera.position, this.controls.target)
+    if (dir.lengthSq() < 1e-6) dir.set(0.6, 0.5, 0.8)
+    dir.normalize()
+    this.controls.target.copy(c)
+    this.camera.position.copy(c).addScaledVector(dir, size * 2.3)
+    this.controls.update()
   }
 
   frameCamera(padding = 1.35) {
@@ -279,6 +352,7 @@ export class TreeScene {
     this.controls.autoRotate = !!s.autoRotate
     this.controls.autoRotateSpeed = 0.8
     this.renderer.shadowMap.enabled = !!s.shadows
+    this.shadowsEnabled = !!s.shadows
     this.sun.castShadow = !!s.shadows
     this.sun.intensity = s.sunIntensity === undefined ? 2.6 : s.sunIntensity
     this.hemi.intensity = s.ambient === undefined ? (s.gradient ? 0.7 : 0.4) : s.ambient
@@ -297,6 +371,7 @@ export class TreeScene {
     this.sun.target.updateMatrixWorld()
     this.uniforms.uSunDir.value.copy(this.sun.position).normalize()
     this.uniforms.uSunColor.value.copy(this.sun.color).multiplyScalar(Math.min(1, this.sun.intensity / 2.5))
+    this.applyShadowFlags()
   }
 
   updateGrowth(growth, value) {
@@ -361,6 +436,12 @@ export class TreeScene {
     this.controls.dispose()
     this.barkMesh?.geometry.dispose()
     this.leafMesh?.geometry.dispose()
+    if (this.selBox) {
+      this.scene.remove(this.selBox)
+      this.selBox.geometry.dispose()
+      this.selBox.material.dispose()
+      this.selBox = null
+    }
     this.materials?.bark?.dispose()
     this.materials?.leaf?.dispose()
     this.ground.geometry.dispose()

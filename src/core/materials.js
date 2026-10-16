@@ -19,6 +19,7 @@ attribute float aWind;
 attribute float aPhase;
 attribute vec3 aOrigin;
 attribute vec2 aGrow;
+attribute float aNodeId;
 uniform float uTime;
 uniform vec2 uWindDir;
 uniform float uWindStrength;
@@ -36,8 +37,14 @@ uniform float uWindEnabled;
 uniform float uGrowth;
 uniform float uGrowthEnabled;
 uniform float uSeed;
+// --- 模型节点选中 (节点树) ---
+uniform float uSelectMode;      // 0 关 / 1 高亮 / 2 仅显示选中 / 3 其余变暗
+uniform float uSelectMaterial;  // -1 不过滤 / 0 树皮 / 1 树叶
+uniform vec2 uSelRanges[8];
+uniform float uSelRangeCount;
 varying vec2 vTreeUv;
 varying float vTreeWind;
+varying float vTreeSelected;
 `
 
 function vertexBody(customVertex) {
@@ -76,6 +83,17 @@ function vertexBody(customVertex) {
     treePos = aOrigin + rel;
   }
   transformed = treePos;
+  // --- 模型节点选中判定 (逐顶点算一次, 片元直接用) ---
+  float treeSel = 0.0;
+  if (uSelectMode > 0.5) {
+    if (uSelectMaterial > -0.5 && abs(uSelectMaterial - uIsLeaf) < 0.5) treeSel = 1.0;
+    for (int i = 0; i < 8; i++) {
+      if (float(i) >= uSelRangeCount) break;
+      vec2 rg = uSelRanges[i];
+      if (aNodeId >= rg.x - 0.5 && aNodeId <= rg.y + 0.5) { treeSel = 1.0; break; }
+    }
+  }
+  vTreeSelected = treeSel;
 ${customVertex || ''}
 `
 }
@@ -88,8 +106,14 @@ uniform vec3 uTint;
 uniform float uTranslucency;
 uniform vec3 uSunDir;
 uniform vec3 uSunColor;
+// --- 模型节点选中 ---
+uniform float uSelectMode;
+uniform vec3 uSelColor;
+uniform float uSelGlow;
+uniform float uSelDim;
 varying vec2 vTreeUv;
 varying float vTreeWind;
+varying float vTreeSelected;
 `
 
 function fragmentBody(customFragment) {
@@ -99,9 +123,24 @@ function fragmentBody(customFragment) {
     diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vColor.rgb, uVertexColorMix);
   #endif
   diffuseColor.rgb *= uTint;
+  // --- 模型节点: 隔离 / 变暗 / 选中着色 ---
+  if (uSelectMode > 1.5 && vTreeSelected < 0.5) {
+    if (uSelectMode < 2.5) discard;                 // 仅显示选中
+    else diffuseColor.rgb *= uSelDim;               // 其余变暗
+  }
+  if (vTreeSelected > 0.5) {
+    // 保持一点原有明暗, 避免高亮后完全变成色块
+    diffuseColor.rgb = mix(diffuseColor.rgb, uSelColor, 0.3);
+  }
 ${customFragment || ''}
 `
 }
+
+const SELECTION_GLOW = /* glsl */`
+  if (vTreeSelected > 0.5) {
+    totalEmissiveRadiance += uSelColor * uSelGlow;
+  }
+`
 
 const TRANSLUCENCY = /* glsl */`
   #ifndef FLAT_SHADED
@@ -137,6 +176,14 @@ export function createSharedUniforms() {
     uSeed: { value: 0 },
     uSunDir: { value: new THREE.Vector3(0.5, 1, 0.35).normalize() },
     uSunColor: { value: new THREE.Color(1, 0.96, 0.9) },
+    // 模型节点选中 (两个材质共用同一份, uSelectMaterial 再配合各自的 uIsLeaf 判定)
+    uSelectMode: { value: 0 },
+    uSelectMaterial: { value: -1 },
+    uSelRangeCount: { value: 0 },
+    uSelRanges: { value: Array.from({ length: 8 }, () => new THREE.Vector2(0, -1)) },
+    uSelColor: { value: new THREE.Color('#ffd166') },
+    uSelGlow: { value: 0.35 },
+    uSelDim: { value: 0.35 },
   }
 }
 
@@ -173,12 +220,13 @@ function applyTreeShader(material, shaderUniforms, opts) {
       '#include <color_fragment>',
       '#include <color_fragment>\n' + fragmentBody(customFragment),
     )
-    if (opts.translucency) {
-      shader.fragmentShader = shader.fragmentShader.replace(
-        '#include <emissivemap_fragment>',
-        '#include <emissivemap_fragment>\n' + TRANSLUCENCY,
-      )
-    }
+    // 选中高亮 (自发光) 必须在 totalEmissiveRadiance 声明之后注入
+    const emissiveInjection = '#include <emissivemap_fragment>\n' + SELECTION_GLOW +
+      (opts.translucency ? TRANSLUCENCY : '')
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <emissivemap_fragment>',
+      emissiveInjection,
+    )
     material.userData.shader = shader
   }
   material.customProgramCacheKey = () => cacheKey

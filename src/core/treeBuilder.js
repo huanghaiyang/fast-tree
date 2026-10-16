@@ -64,13 +64,27 @@ export function buildTree(params) {
   let branchCount = 0
   let leafCount = 0
 
+  /* ------------------------------------------------------------------ */
+  /* 模型节点 (节点树的原始记录)                                          */
+  /* ------------------------------------------------------------------ */
+  // 生成阶段先给每个元素一个顺序 slot, 顶点里写的是 slot;
+  // 全部生成完后按"组"重排成最终 node id (保证每组 id 连续, 便于用区间高亮)
+  const slots = []
+  const levelBranchCounter = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+  const levelLeafCounter = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+  const addSlot = (info) => {
+    const s = slots.length
+    slots.push(info)
+    return s
+  }
+
   const leafBase = new THREE.Color(L.color)
   const leafTip = new THREE.Color(L.colorTip)
 
   /* ------------------------------------------------------------------ */
   /* 叶片                                                                */
   /* ------------------------------------------------------------------ */
-  const spawnLeaves = (frames, level, branchWind) => {
+  const spawnLeaves = (frames, level, branchWind, parentSlot) => {
     if (!L.enabled || leafCount >= maxLeaves) return
     const rng = leafRng
     const perBranch = Math.max(1, Math.round(L.perBranch))
@@ -78,6 +92,9 @@ export function buildTree(params) {
     const tA = Math.min(L.startT, L.endT)
     const tB = Math.max(L.startT, L.endT)
     const phyllo = (L.phyllotaxis === undefined ? 137.5 : L.phyllotaxis) * DEG
+    // 该枝条的叶节点 (惰性创建: 真的长出叶子才登记)
+    let leafSlot = -1
+    const leafStart = leafCount
 
     for (let i = 0; i < perBranch; i++) {
       if (leafCount >= maxLeaves) return
@@ -135,21 +152,37 @@ export function buildTree(params) {
         const g0 = Math.min(0.98, 0.5 + rng.next() * 0.4)
         const g1 = Math.min(1.0, g0 + 0.14)
 
+        if (leafSlot < 0) {
+          levelLeafCounter[level] = (levelLeafCounter[level] || 0) + 1
+          leafSlot = addSlot({
+            type: 'leaves',
+            level,
+            group: `leaves-L${level}`,
+            name: `L${level} 叶簇 #${levelLeafCounter[level]}`,
+            parent: parentSlot,
+            meta: { leaves: 0 },
+          })
+        }
+
         pushLeafInstance(
           leafAcc, leafTemplate,
           { x: xA, y: yA, z: zA }, scale, pos,
           tintA, tintB, wind, phase,
-          pos.clone(), g0, g1,
+          pos.clone(), g0, g1, leafSlot,
         )
+        if (slots[leafSlot]) slots[leafSlot].meta.leaves++
         leafCount++
       }
+    }
+    if (leafSlot >= 0 && slots[leafSlot]) {
+      slots[leafSlot].meta.clusters = Math.max(1, Math.round((leafCount - leafStart) / Math.max(1, clusterCount)))
     }
   }
 
   /* ------------------------------------------------------------------ */
   /* 递归生长                                                            */
   /* ------------------------------------------------------------------ */
-  const spawnChildren = (parentFrames, parentLevel, parentLength, parentRng, parentWind0, parentWind1) => {
+  const spawnChildren = (parentFrames, parentLevel, parentLength, parentRng, parentWind0, parentWind1, parentSlot) => {
     const level = parentLevel + 1
     if (level > branchParams.levels) return
     const cfg = branchParams.level[level - 1]
@@ -181,13 +214,13 @@ export function buildTree(params) {
       const wind1 = Math.min(1, wind0 + 0.3 * (cfg.windGain === undefined ? 1 : cfg.windGain))
 
       buildBranch({
-        level, startPos, startDir: dir, length, radius0, radius1, cfg, rng, wind0, wind1,
+        level, startPos, startDir: dir, length, radius0, radius1, cfg, rng, wind0, wind1, parentSlot,
       })
     }
   }
 
   const buildBranch = (o) => {
-    const { level, startPos, startDir, length, radius0, radius1, cfg, rng, wind0, wind1 } = o
+    const { level, startPos, startDir, length, radius0, radius1, cfg, rng, wind0, wind1, parentSlot } = o
     const frames = growFrames(rng, {
       startPos,
       startDir,
@@ -210,6 +243,16 @@ export function buildTree(params) {
     const colorBase = isYoung ? new THREE.Color(0.82, 0.94, 0.74) : new THREE.Color(0.88, 0.88, 0.86)
     const growSpan = LEVEL_GROW[Math.min(level, LEVEL_GROW.length - 1)]
 
+    levelBranchCounter[level] = (levelBranchCounter[level] || 0) + 1
+    const mySlot = addSlot({
+      type: 'branch',
+      level,
+      group: `branch-L${level}`,
+      name: `L${level} 枝 #${levelBranchCounter[level]}`,
+      parent: parentSlot,
+      meta: { length, radius: radius0, segments: Math.max(2, Math.round(cfg.segments)) },
+    })
+
     barkParts.push(buildTube(frames, {
       radialSegments,
       crossSection: cfg.crossSection || 'round',
@@ -226,12 +269,13 @@ export function buildTree(params) {
       capStart: false,
       capEnd: level >= 3,
       vertexNoise: 0.05,
+      nodeId: mySlot,
     }))
     branchCount++
 
-    if (level < branchParams.levels) spawnChildren(frames, level, length, rng, wind0, wind1)
+    if (level < branchParams.levels) spawnChildren(frames, level, length, rng, wind0, wind1, mySlot)
     const leafIdx = level - 1
-    if (L.enabled && L.levels[leafIdx]) spawnLeaves(frames, level, wind1)
+    if (L.enabled && L.levels[leafIdx]) spawnLeaves(frames, level, wind1, mySlot)
   }
 
   /* ------------------------------------------------------------------ */
@@ -290,6 +334,14 @@ export function buildTree(params) {
   })
 
   const squash = Math.max(0.2, t.squash || 1)
+  const trunkSlot = addSlot({
+    type: 'trunk',
+    level: 0,
+    group: 'trunk',
+    name: '树干',
+    parent: null,
+    meta: { length: t.height, radius: trunkR0, segments: Math.max(3, Math.round(t.segments)) },
+  })
   barkParts.push(buildTube(trunkFrames, {
     radialSegments: Math.max(4, Math.round(t.radialSegments * ((P.lod && P.lod.barkDetail) || 1))),
     crossSection: 'round',
@@ -309,6 +361,7 @@ export function buildTree(params) {
     capEnd: false,
     radiusModifier: trunkRadiusMod,
     vertexNoise: 0.03,
+    nodeId: trunkSlot,
   }))
   branchCount++
 
@@ -330,6 +383,14 @@ export function buildTree(params) {
       ).normalize()
       const length = Math.max(0.02, t.height * R.length * rootRng.vary(R.lengthVariance))
       const radius0 = Math.max(0.002, t.baseRadius * R.radiusRatio * rootRng.vary(0.3))
+      const rootSlot = addSlot({
+        type: 'root',
+        level: 0,
+        group: 'roots',
+        name: `树根 #${k + 1}`,
+        parent: trunkSlot,
+        meta: { length, radius: radius0 },
+      })
       const frames = growFrames(rootRng, {
         startPos: new THREE.Vector3(dir.x * t.baseRadius * 0.4, t.baseRadius * 0.15, dir.z * t.baseRadius * 0.4),
         startDir: dir,
@@ -360,6 +421,7 @@ export function buildTree(params) {
         capStart: false,
         capEnd: true,
         vertexNoise: 0.07,
+        nodeId: rootSlot,
       }))
       branchCount++
     }
@@ -368,13 +430,15 @@ export function buildTree(params) {
   /* ------------------------------------------------------------------ */
   /* 树枝                                                                */
   /* ------------------------------------------------------------------ */
-  spawnChildren(trunkFrames, 0, t.height, trunkRng, 0.012, 0.2)
+  spawnChildren(trunkFrames, 0, t.height, trunkRng, 0.012, 0.2, trunkSlot)
 
   /* ------------------------------------------------------------------ */
-  /* 合并                                                                */
+  /* 合并 + 节点表                                                        */
   /* ------------------------------------------------------------------ */
   const barkGeometry = barkParts.length ? mergeGeometries(barkParts, false) : new GeoAcc().build()
   const leafGeometry = leafAcc.vertexCount > 0 ? leafAcc.build() : null
+
+  const { nodes, groups } = finalizeNodes(slots, barkGeometry, leafGeometry)
 
   const bInfo = boxInfo(barkGeometry)
   const lInfo = leafGeometry ? boxInfo(leafGeometry) : null
@@ -385,6 +449,8 @@ export function buildTree(params) {
   return {
     barkGeometry,
     leafGeometry,
+    nodes,
+    groups,
     stats: {
       branches: branchCount,
       leaves: leafCount,
@@ -397,8 +463,215 @@ export function buildTree(params) {
       spread: maxXZ,
       trunkLength: t.height,
       levelCount: branchParams.levels,
+      nodeCount: nodes.length,
     },
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* 节点表: slot -> 最终 node id, 并统计每个节点的面数/顶点数/包围盒        */
+/* ------------------------------------------------------------------ */
+
+/** 组顺序: 同一组的节点 id 连续 -> 选中一组只需一个 id 区间 */
+const NODE_GROUPS = [
+  { id: 'trunk', name: '树干', icon: '🪵', type: 'bark' },
+  { id: 'roots', name: '树根', icon: '🪵', type: 'bark' },
+  { id: 'branch-L1', name: '树枝 L1', icon: '🌿', type: 'bark', level: 1 },
+  { id: 'branch-L2', name: '树枝 L2', icon: '🌿', type: 'bark', level: 2 },
+  { id: 'branch-L3', name: '树枝 L3', icon: '🌿', type: 'bark', level: 3 },
+  { id: 'branch-L4', name: '树枝 L4', icon: '🌿', type: 'bark', level: 4 },
+  { id: 'branch-L5', name: '树枝 L5', icon: '🌿', type: 'bark', level: 5 },
+  { id: 'leaves-L1', name: '树叶 L1', icon: '🍃', type: 'leaf', level: 1 },
+  { id: 'leaves-L2', name: '树叶 L2', icon: '🍃', type: 'leaf', level: 2 },
+  { id: 'leaves-L3', name: '树叶 L3', icon: '🍃', type: 'leaf', level: 3 },
+  { id: 'leaves-L4', name: '树叶 L4', icon: '🍃', type: 'leaf', level: 4 },
+  { id: 'leaves-L5', name: '树叶 L5', icon: '🍃', type: 'leaf', level: 5 },
+  { id: 'material-bark', name: '材质 · 树皮', icon: '🎨', type: 'material', material: 'bark' },
+  { id: 'material-leaf', name: '材质 · 树叶', icon: '🎨', type: 'material', material: 'leaf' },
+]
+
+function emptyBox() {
+  return { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] }
+}
+
+function unionBox(a, b) {
+  if (!a) return b
+  if (!b) return a
+  for (let i = 0; i < 3; i++) {
+    if (b.min[i] < a.min[i]) a.min[i] = b.min[i]
+    if (b.max[i] > a.max[i]) a.max[i] = b.max[i]
+  }
+  return a
+}
+
+/**
+ * @param {Array} slots  生成阶段记录的元素 (顶点里存的是 slot 序号)
+ * @param {THREE.BufferGeometry} barkGeometry
+ * @param {THREE.BufferGeometry|null} leafGeometry
+ */
+export function finalizeNodes(slots, barkGeometry, leafGeometry) {
+  // 1) 按组重排, 得到最终 node id
+  const nodes = []
+  const slotToId = new Int32Array(slots.length).fill(-1)
+  for (const g of NODE_GROUPS) {
+    if (g.type === 'material') continue
+    for (let s = 0; s < slots.length; s++) {
+      const slot = slots[s]
+      if (!slot || slot.group !== g.id) continue
+      const id = nodes.length
+      slotToId[s] = id
+      nodes.push({
+        id,
+        slot: s,
+        type: slot.type,
+        group: g.id,
+        groupName: g.name,
+        level: slot.level || 0,
+        name: slot.name,
+        parent: slot.parent === null || slot.parent === undefined ? null : slot.parent,
+        meta: slot.meta || {},
+        stats: { triangles: 0, vertices: 0 },
+        bbox: null,
+      })
+    }
+  }
+
+  // 2) 把顶点里的 slot 改写成 node id, 同时统计顶点数 / 包围盒
+  const measure = (geometry, target) => {
+    if (!geometry) return
+    const attr = geometry.attributes.aNodeId
+    if (!attr) return
+    const ids = attr.array
+    const pos = geometry.attributes.position.array
+    const acc = new Map()
+    for (let i = 0; i < ids.length; i++) {
+      const id = slotToId[ids[i]] === undefined ? -1 : slotToId[ids[i]]
+      ids[i] = id
+      if (id < 0) continue
+      let rec = acc.get(id)
+      if (!rec) {
+        rec = { v: 0, t: 0, box: emptyBox() }
+        acc.set(id, rec)
+      }
+      rec.v++
+      const i3 = i * 3
+      for (let k = 0; k < 3; k++) {
+        const val = pos[i3 + k]
+        if (val < rec.box.min[k]) rec.box.min[k] = val
+        if (val > rec.box.max[k]) rec.box.max[k] = val
+      }
+    }
+    attr.needsUpdate = true
+    // 面数: 每个三角形取第一个顶点所属节点
+    const index = geometry.index ? geometry.index.array : null
+    if (index) {
+      for (let t = 0; t < index.length; t += 3) {
+        const id = ids[index[t]]
+        const rec = acc.get(id)
+        if (rec) rec.t++
+      }
+    }
+    for (const [id, rec] of acc) {
+      const node = nodes[id]
+      if (!node) continue
+      node.stats.vertices += rec.v
+      node.stats.triangles += rec.t
+      node.bbox = unionBox(node.bbox, rec.box)
+    }
+    target.info = { vertices: ids.length, triangles: index ? index.length / 3 : 0 }
+  }
+
+  const barkInfo = {}
+  const leafInfo = {}
+  measure(barkGeometry, barkInfo)
+  measure(leafGeometry, leafInfo)
+
+  // 3) 材质节点 (覆盖整块几何, 选中时按材质高亮)
+  const barkMatNode = {
+    id: nodes.length,
+    type: 'material',
+    group: 'material-bark',
+    groupName: '材质 · 树皮',
+    level: -1,
+    name: '材质 · 树皮',
+    parent: null,
+    material: 'bark',
+    meta: {},
+    stats: { triangles: barkInfo.triangles || 0, vertices: barkInfo.vertices || 0 },
+    bbox: null,
+  }
+  nodes.push(barkMatNode)
+  const leafMatNode = {
+    id: nodes.length,
+    type: 'material',
+    group: 'material-leaf',
+    groupName: '材质 · 树叶',
+    level: -1,
+    name: '材质 · 树叶',
+    parent: null,
+    material: 'leaf',
+    meta: {},
+    stats: { triangles: leafInfo.triangles || 0, vertices: leafInfo.vertices || 0 },
+    bbox: null,
+  }
+  nodes.push(leafMatNode)
+
+  // 4) 组元数据 (含 id 区间, 供着色器区间高亮)
+  const groups = []
+  for (const g of NODE_GROUPS) {
+    const members = nodes.filter((n) => n.group === g.id)
+    if (!members.length) continue
+    const stats = { triangles: 0, vertices: 0 }
+    let box = null
+    for (const m of members) {
+      stats.triangles += m.stats.triangles
+      stats.vertices += m.stats.vertices
+      if (m.bbox) box = unionBox(box, { min: [...m.bbox.min], max: [...m.bbox.max] })
+    }
+    groups.push({
+      id: g.id,
+      name: g.name,
+      icon: g.icon,
+      type: g.type,
+      level: g.level === undefined ? -1 : g.level,
+      material: g.material || null,
+      count: members.length,
+      idStart: members[0].id,
+      idEnd: members[members.length - 1].id,
+      nodeIds: members.map((m) => m.id),
+      stats,
+      bbox: box,
+      children: members.map((m) => ({ id: m.id, name: m.name, stats: m.stats, level: m.level, meta: m.meta })),
+    })
+  }
+
+  return { nodes, groups }
+}
+
+/** 把一组 node id 压缩成 <=8 个连续区间 (着色器用) */
+export function selectionRanges(ids, maxRanges = 8) {
+  const sorted = [...new Set(ids)].filter((v) => Number.isFinite(v)).sort((a, b) => a - b)
+  const ranges = []
+  for (const id of sorted) {
+    const last = ranges[ranges.length - 1]
+    if (last && id === last[1] + 1) last[1] = id
+    else ranges.push([id, id])
+  }
+  // 区间过多时合并最近的几段 (宁可多亮一点, 也不丢选中反馈)
+  while (ranges.length > maxRanges) {
+    let bestI = 0
+    let bestGap = Infinity
+    for (let i = 0; i < ranges.length - 1; i++) {
+      const gap = ranges[i + 1][0] - ranges[i][1]
+      if (gap < bestGap) {
+        bestGap = gap
+        bestI = i
+      }
+    }
+    ranges[bestI] = [ranges[bestI][0], ranges[bestI + 1][1]]
+    ranges.splice(bestI + 1, 1)
+  }
+  return ranges
 }
 
 /** 只计算统计信息 (不建几何), 供 UI 预估规模 */

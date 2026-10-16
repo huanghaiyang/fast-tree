@@ -249,6 +249,24 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 }
 .overlay.stats { right: 12px; bottom: 12px; min-width: 168px; }
 .overlay.help { left: 12px; bottom: 12px; color: var(--fg-dim); }
+.overlay.selection {
+  left: 12px;
+  top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  pointer-events: auto;
+  border-color: #6b5a2a;
+  background: rgba(28, 24, 12, 0.86);
+}
+.overlay.selection .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ffd166;
+  box-shadow: 0 0 6px #ffd166;
+}
+.overlay.selection b { color: #ffd166; }
 .overlay.stats b { color: var(--accent); font-weight: 600; }
 .overlay .k { color: var(--fg-dim); }
 

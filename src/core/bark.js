@@ -35,7 +35,7 @@ export function buildTube(frames, o = {}) {
   const radiusModifier = o.radiusModifier || null
   const capStart = !!o.capStart
   const capEnd = !!o.capEnd
-  const smoothColor = o.smoothColor !== false
+  const nodeId = o.nodeId === undefined ? 0 : o.nodeId
 
   // 周向贴图重复次数: 由平均半径决定, 整条枝条保持一致 -> 无接缝
   let sumR = 0
@@ -118,9 +118,10 @@ export function buildTube(frames, o = {}) {
         nrm.x, nrm.y, nrm.z,
         (j / radialSegments) * uRepeat, arc * uvScaleV,
         clamp01(cr), clamp01(cg), clamp01(cb),
-        wind, phase + (smoothColor ? 0 : 0),
+        wind, phase,
         origin.x, origin.y, origin.z,
         grow[0], grow[1],
+        nodeId,
       )
     }
   }
@@ -159,7 +160,7 @@ export function buildTube(frames, o = {}) {
       last.dir.x, last.dir.y, last.dir.z,
       0, arc * uvScaleV,
       clamp01(color2 ? color2.r : color.r), clamp01(color2 ? color2.g : color.g), clamp01(color2 ? color2.b : color.b),
-      wind1, phase, origin.x, origin.y, origin.z, grow[0], grow[1],
+      wind1, phase, origin.x, origin.y, origin.z, grow[0], grow[1], nodeId,
     )
     const b0 = rings[frames.length - 1]
     for (let j = 0; j < radialSegments; j++) {
