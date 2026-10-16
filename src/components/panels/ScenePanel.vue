@@ -14,6 +14,7 @@
     <ToggleRow label="阴影" v-model="s.shadows" />
     <ToggleRow label="地面" v-model="s.ground" />
     <ToggleRow label="网格" v-model="s.grid" />
+    <SelectRow label="线框展示 (三角面)" v-model="s.wireframe" :options="wireOptions" />
     <ToggleRow label="雾" v-model="s.fog" />
     <ToggleRow label="相机自动旋转" v-model="s.autoRotate" />
     <div class="inline">
@@ -27,11 +28,17 @@
 import Section from '../ui/Section.vue'
 import SliderRow from '../ui/SliderRow.vue'
 import ToggleRow from '../ui/ToggleRow.vue'
+import SelectRow from '../ui/SelectRow.vue'
 import ColorRow from '../ui/ColorRow.vue'
 import { state, sceneApi } from '../../store/treeStore.js'
 import { computed } from 'vue'
 
 const s = state.params.scene
+const wireOptions = [
+  { value: 'off', label: '关闭' },
+  { value: 'overlay', label: '实体 + 线框' },
+  { value: 'only', label: '仅线框 (看三角面)' },
+]
 const playing = computed(() => state.playing)
 
 function frame() {

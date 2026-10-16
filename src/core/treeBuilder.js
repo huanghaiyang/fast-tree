@@ -10,6 +10,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { makeRng } from './rng.js'
 import { buildTube } from './bark.js'
 import { buildLeafTemplate, pushLeafInstance } from './leaf.js'
+import { buildFruitTemplate, pushFruitInstance } from './fruit.js'
 import {
   GeoAcc, growFrames, sampleFrame, anyPerp, azimuthPerp, rotateTowardUp,
   clamp01, lerp, boxInfo, UP,
@@ -31,17 +32,6 @@ function now() {
   return typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
 }
 
-/** 把骨架截断到相对位置 t (用于树干在分叉点结束) */
-function truncateFrames(frames, t) {
-  const out = []
-  for (const f of frames) {
-    if (f.t < t) out.push(f)
-    else break
-  }
-  const end = sampleFrame(frames, t)
-  if (end) out.push({ pos: end.pos, dir: end.dir, radius: end.radius, t, roll: end.roll })
-  return out.length >= 2 ? out : frames
-}
 function childDirection(rng, parentDir, cfg, k, params) {
   const axis = parentDir.clone().normalize()
   const perp = anyPerp(axis)
@@ -60,14 +50,31 @@ export function buildTree(params) {
   const P = params
   const branchParams = P.branches
   const L = P.leaves
+  const F = P.fruit || { enabled: false, levels: [] }
 
   const barkParts = []
   const leafAcc = new GeoAcc()
   const leafTemplate = buildLeafTemplate({
     shape: L.shape, segments: L.segments, curl: L.curl, fold: L.fold, petiole: L.petiole,
   })
+  // 叶形混合: shapeMix 里每一项都生成一个模板, 实例化时按权重随机挑
+  const mixList = Array.isArray(L.shapeMix)
+    ? L.shapeMix.filter((m) => m && m.shape && (m.weight === undefined || m.weight > 0))
+    : []
+  const leafTemplates = mixList.length
+    ? mixList.flatMap((m) => {
+        const tpl = buildLeafTemplate({
+          shape: m.shape, segments: L.segments, curl: L.curl, fold: L.fold, petiole: L.petiole,
+        })
+        const n = Math.max(1, Math.round((m.weight === undefined ? 1 : m.weight) * 8))
+        return new Array(n).fill(tpl)
+      })
+    : [leafTemplate]
   const maxLeaves = Math.max(0, Math.round((P.lod && P.lod.maxLeaves) || 60000))
   const leafRng = makeRng(P.seed, 'leaves')
+  const fruitRng = makeRng(P.seed, 'fruit')
+  let fruitCount = 0
+  const fruitAcc = new GeoAcc()
   const levelRng = {}
   for (let i = 1; i <= 5; i++) levelRng[i] = makeRng(P.seed, 'branch-level-' + i)
 
@@ -82,6 +89,7 @@ export function buildTree(params) {
   const slots = []
   const levelBranchCounter = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
   const levelLeafCounter = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+  const levelFruitCounter = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
   const addSlot = (info) => {
     const s = slots.length
     slots.push(info)
@@ -174,8 +182,10 @@ export function buildTree(params) {
           })
         }
 
+        // 叶形混合: 同一棵树可以混用多种叶形 (不同树种叶形差别很大)
+        const tpl = leafTemplates.length > 1 ? rng.pick(leafTemplates) : leafTemplate
         pushLeafInstance(
-          leafAcc, leafTemplate,
+          leafAcc, tpl,
           { x: xA, y: yA, z: zA }, scale, pos,
           tintA, tintB, wind, phase,
           pos.clone(), g0, g1, leafSlot,
@@ -279,7 +289,11 @@ export function buildTree(params) {
       origin: startPos.clone(),
       phase: rng.range(0, Math.PI * 2),
       capStart: false,
-      capEnd: level >= 3,
+      capEnd: true,
+      // 末梢圆钝收尖 (不是平截面) + 基部领口 (与父枝平滑融合, 避免大小半径硬拼接)
+      tipRound: o.tipRound === undefined ? 0.06 : o.tipRound,
+      baseFlare: o.baseFlare === undefined ? (level === 1 ? 0.45 : 0.32) : o.baseFlare,
+      baseFlareLen: o.baseFlareLen === undefined ? (level === 1 ? 0.16 : 0.13) : o.baseFlareLen,
       vertexNoise: 0.05,
       nodeId: mySlot,
     }))
@@ -288,6 +302,7 @@ export function buildTree(params) {
     if (level < branchParams.levels) spawnChildren(frames, level, length, rng, wind0, wind1, mySlot)
     const leafIdx = level - 1
     if (L.enabled && L.levels[leafIdx]) spawnLeaves(frames, level, wind1, mySlot)
+    if (F.enabled && F.levels[leafIdx]) spawnFruit(frames, level, wind1, mySlot)
   }
 
   /* ------------------------------------------------------------------ */
@@ -346,10 +361,21 @@ export function buildTree(params) {
   })
 
   // 分叉 (多主枝): 橡树这类乔木常在 1/3 高度处分成 2~4 条主枝
+  // 关键: 主干**不截断** (截断会留一个可见的平截面), 而是继续向上当"主导枝";
+  //       分叉点以上用 smoothstep 平滑变细 (载荷分给主枝), 主枝带"领口"从这里长出去。
   const forkCfg = t.fork || {}
   const forkOn = !!forkCfg.enabled && Math.round(forkCfg.count || 0) > 0
   const forkT = forkOn ? clamp01(forkCfg.height === undefined ? 0.34 : forkCfg.height) : 1
-  const trunkFrames = forkOn ? truncateFrames(trunkFramesAll, forkT) : trunkFramesAll
+  const forkShrink = forkOn ? Math.max(0.2, Math.min(1, forkCfg.trunkShrink === undefined ? 0.62 : forkCfg.trunkShrink)) : 1
+  const trunkFrames = trunkFramesAll
+  const baseTrunkMod = trunkRadiusMod
+  const trunkModifier = forkOn
+    ? (tt, a, r) => {
+        const u = Math.min(1, Math.max(0, (tt - (forkT - 0.07)) / 0.2))
+        const s = u * u * (3 - 2 * u)
+        return baseTrunkMod(tt, a, r) * (1 - (1 - forkShrink) * s)
+      }
+    : baseTrunkMod
 
   const squash = Math.max(0.2, t.squash || 1)
   const trunkSlot = addSlot({
@@ -376,10 +402,11 @@ export function buildTree(params) {
     origin: new THREE.Vector3(0, 0, 0),
     phase: trunkRng.range(0, Math.PI * 2),
     capStart: t.capBase,
-    capEnd: forkOn,
-    radiusModifier: trunkRadiusMod,
+    capEnd: true,
+    radiusModifier: trunkModifier,
     vertexNoise: 0.03,
     nodeId: trunkSlot,
+    tipRound: 0.05,
   }))
   branchCount++
 
@@ -446,41 +473,101 @@ export function buildTree(params) {
   }
 
   /* ------------------------------------------------------------------ */
+  /* 果实 (橡果等): 并进树皮几何 -> 共用树皮材质, 顶点色区分坚果/壳斗帽     */
+  /* ------------------------------------------------------------------ */
+  const spawnFruit = (frames, level, branchWind, parentSlot) => {
+    const rng = fruitRng
+    const count = Math.max(1, Math.round(F.perBranch))
+    const per = Math.max(1, Math.round(F.clusterCount))
+    const fruitTpl = buildFruitTemplate({
+      type: F.type,
+      color: F.color,
+      capColor: F.capColor,
+      radial: F.radial,
+    })
+    let fruitSlot = -1
+    for (let k = 0; k < count; k++) {
+      const tt = 0.35 + 0.65 * ((k + 0.5) / count) + rng.signed() * 0.06
+      const fr = sampleFrame(frames, Math.min(0.98, Math.max(0.05, tt)))
+      if (!fr) continue
+      const perp = anyPerp(fr.dir)
+      const az = rng.range(0, Math.PI * 2)
+      const side = perp.clone().applyAxisAngle(fr.dir, az)
+      if (fruitSlot < 0) {
+        levelFruitCounter[level] = (levelFruitCounter[level] || 0) + 1
+        fruitSlot = addSlot({
+          type: 'fruit',
+          level,
+          group: `fruit-L${level}`,
+          name: `L${level} 果实簇 #${levelFruitCounter[level]}`,
+          parent: parentSlot,
+          meta: { fruit: 0, type: F.type },
+        })
+      }
+      for (let j = 0; j < per; j++) {
+        const off = side.clone().multiplyScalar(rng.range(-F.clusterRadius, F.clusterRadius))
+        off.addScaledVector(perp.clone().applyAxisAngle(fr.dir, rng.range(0, Math.PI * 2)), rng.range(0, F.clusterRadius))
+        // 果实沿枝条方向朝下挂 (橡果挂在枝下)
+        const dir = fr.dir.clone()
+        rotateTowardUp(dir, F.droop * rng.range(0.7, 1.2))
+        dir.negate()
+        const scale = Math.max(0.01, F.size * rng.vary(F.sizeVariance))
+        const tint = new THREE.Color(1, 1, 1).multiplyScalar(Math.max(0.2, 1 + rng.signed() * F.colorVariance))
+        if (fruitCount >= Math.max(0, Math.round(F.maxCount === undefined ? 420 : F.maxCount))) continue
+        if (fruitCount > 0 && !rng.chance(F.chance === undefined ? 0.5 : F.chance)) continue
+        pushFruitInstance(fruitAcc, fruitTpl, {
+          pos: fr.pos.clone().add(off),
+          dir,
+          roll: rng.range(0, Math.PI * 2),
+          scale: new THREE.Vector3(scale, scale * 1.25, scale),
+          colorTint: tint,
+          wind: Math.min(1, branchWind + 0.05),
+          phase: rng.range(0, Math.PI * 2),
+          grow: Math.min(1, LEVEL_GROW[Math.min(level, LEVEL_GROW.length - 1)][1] + 0.06),
+          origin: fr.pos.clone(),
+          nodeId: fruitSlot,
+        })
+        fruitCount++
+      }
+    }
+  }
+
+  /* ------------------------------------------------------------------ */
   /* 树枝                                                                */
   /* ------------------------------------------------------------------ */
-  // 主干上的第一级枝条: 有分叉时只在分叉点以下生长
-  spawnChildren(trunkFrames, 0, t.height, trunkRng, 0.012, 0.2, trunkSlot,
-    forkOn ? Math.max(0.06, forkT - 0.06) : null)
+  // 主干上的第一级枝条: 一直长到梢部 (主干不再截断)
+  spawnChildren(trunkFrames, 0, t.height, trunkRng, 0.012, 0.2, trunkSlot, null)
 
-  // 分叉出的主枝 (领导者): 承接主干继续向上, 自身再长二级/三级枝
+  // 分叉主枝: 从主干内部伸出, 带领口融合; 主干自身继续向上作为主导枝
   if (forkOn) {
     const base1 = branchParams.level[0] || {}
     const fr = sampleFrame(trunkFramesAll, forkT)
     if (fr) {
       const rng = trunkRng.fork('fork-leaders')
-      const n = Math.max(2, Math.min(6, Math.round(forkCfg.count)))
-      const angle = (forkCfg.angle === undefined ? 26 : forkCfg.angle) * DEG
-      const spread = forkCfg.spread === undefined ? 1 : forkCfg.spread
-      const radiusScale = forkCfg.radiusScale === undefined ? 0.62 : forkCfg.radiusScale
-      const lengthScale = forkCfg.lengthScale === undefined ? 1 : forkCfg.lengthScale
+      const n = Math.max(1, Math.min(6, Math.round(forkCfg.count) - 1))
+      const angle = (forkCfg.angle === undefined ? 27 : forkCfg.angle) * DEG
+      const spread = forkCfg.spread === undefined ? 0.85 : forkCfg.spread
+      const radiusScale = forkCfg.radiusScale === undefined ? 0.66 : forkCfg.radiusScale
+      const lengthScale = forkCfg.lengthScale === undefined ? 1.0 : forkCfg.lengthScale
       const leaderCfg = {
         ...base1,
         taper: forkCfg.taper === undefined ? 0.3 : forkCfg.taper,
-        curve: forkCfg.curve === undefined ? 0.4 : forkCfg.curve,
+        curve: forkCfg.curve === undefined ? 0.45 : forkCfg.curve,
         curveVariance: 0.55,
         gravity: forkCfg.gravity === undefined ? 0.03 : forkCfg.gravity,
         upBias: 0.1,
         segments: Math.max(5, Math.round((base1.segments || 8) * 0.9)),
       }
       for (let k = 0; k < n; k++) {
-        const az = (k / n) * Math.PI * 2 + rng.range(-0.55, 0.55) * spread
+        const az = ((k + 0.5) / n) * Math.PI * 2 + rng.range(-0.5, 0.5) * spread
         const side = azimuthPerp(fr.dir, az, new THREE.Vector3())
-        const dir = fr.dir.clone().applyAxisAngle(side, angle * rng.range(0.7, 1.3))
-        rotateTowardUp(dir, 0.05)
+        const dir = fr.dir.clone().applyAxisAngle(side, angle * rng.range(0.8, 1.25))
+        rotateTowardUp(dir, 0.06)
         const r0 = Math.max(0.002, fr.radius * radiusScale * rng.vary(0.1))
+        const startPos = fr.pos.clone().addScaledVector(dir, -fr.radius * 0.55)
         buildBranch({
           level: 1,
-          startPos: fr.pos.clone(),
+          startPos,
           startDir: dir,
           length: Math.max(0.05, t.height * (1 - forkT) * lengthScale * rng.vary(0.16)),
           radius0: r0,
@@ -490,6 +577,8 @@ export function buildTree(params) {
           wind0: 0.2,
           wind1: Math.min(1, 0.2 + 0.3 * (base1.windGain === undefined ? 1 : base1.windGain)),
           parentSlot: trunkSlot,
+          baseFlare: 0.62,
+          baseFlareLen: 0.2,
         })
       }
     }
@@ -498,7 +587,10 @@ export function buildTree(params) {
   /* ------------------------------------------------------------------ */
   /* 合并 + 节点表                                                        */
   /* ------------------------------------------------------------------ */
-  const barkGeometry = barkParts.length ? mergeGeometries(barkParts, false) : new GeoAcc().build()
+  const barkGeometry = (() => {
+    if (fruitAcc.vertexCount > 0) barkParts.push(fruitAcc.build())
+    return barkParts.length ? mergeGeometries(barkParts, false) : new GeoAcc().build()
+  })()
   const leafGeometry = leafAcc.vertexCount > 0 ? leafAcc.build() : null
 
   const { nodes, groups } = finalizeNodes(slots, barkGeometry, leafGeometry)
@@ -517,6 +609,7 @@ export function buildTree(params) {
     stats: {
       branches: branchCount,
       leaves: leafCount,
+    fruit: fruitCount,
       barkTriangles: barkGeometry.index ? barkGeometry.index.count / 3 : 0,
       leafTriangles: leafGeometry && leafGeometry.index ? leafGeometry.index.count / 3 : 0,
       barkVertices: barkGeometry.attributes.position ? barkGeometry.attributes.position.count : 0,
@@ -549,6 +642,11 @@ const NODE_GROUPS = [
   { id: 'leaves-L3', name: '树叶 L3', icon: '🍃', type: 'leaf', level: 3 },
   { id: 'leaves-L4', name: '树叶 L4', icon: '🍃', type: 'leaf', level: 4 },
   { id: 'leaves-L5', name: '树叶 L5', icon: '🍃', type: 'leaf', level: 5 },
+  { id: 'fruit-L1', name: '果实 L1', icon: '🌰', type: 'fruit', level: 1 },
+  { id: 'fruit-L2', name: '果实 L2', icon: '🌰', type: 'fruit', level: 2 },
+  { id: 'fruit-L3', name: '果实 L3', icon: '🌰', type: 'fruit', level: 3 },
+  { id: 'fruit-L4', name: '果实 L4', icon: '🌰', type: 'fruit', level: 4 },
+  { id: 'fruit-L5', name: '果实 L5', icon: '🌰', type: 'fruit', level: 5 },
   { id: 'material-bark', name: '材质 · 树皮', icon: '🎨', type: 'material', material: 'bark' },
   { id: 'material-leaf', name: '材质 · 树叶', icon: '🎨', type: 'material', material: 'leaf' },
 ]

@@ -107,6 +107,7 @@ export function defaultParams() {
         taper: 0.3,        // 主枝自身锥度
         curve: 0.4,        // 主枝弯曲
         gravity: 0.03,     // 主枝重力 (负 = 下垂)
+        trunkShrink: 0.62, // 分叉点以上主干变细的比例 (避免半径台阶)
       },
     },
 
@@ -164,6 +165,28 @@ export function defaultParams() {
       colorTip: '#a6d45e',
       colorVariance: 0.22,
       petiole: 0.12,       // 叶柄长度(相对叶长)
+      // 叶形混合: 同一棵树可混用多种叶形 (不同树种叶形差别很大)
+      // 每项 { shape, weight }, weight 为相对比例; 留空 = 只用 shape
+      shapeMix: [],
+    },
+
+    // ---------------- 果实 ----------------
+    fruit: {
+      enabled: false,
+      type: 'acorn',       // acorn | berry | cone | nut
+      levels: [false, false, false, true, false], // 挂在哪些层级
+      perBranch: 2,        // 每条枝条上的果实簇数量
+      clusterCount: 2,     // 每簇果实数量 (参考图: 橡果 2~3 个一簇)
+      maxCount: 420,       // 整棵树果实上限 (控制面数)
+      chance: 0.5,         // 只有一部分枝条结果
+      clusterRadius: 0.07,
+      size: 0.16,          // 果实长度(米)
+      sizeVariance: 0.2,
+      droop: 0.5,          // 下垂程度 (橡果挂在枝下)
+      color: '#c8a86a',    // 坚果色
+      capColor: '#8a6f45', // 壳斗帽色
+      colorVariance: 0.18,
+      radial: 8,
     },
 
     // ---------------- 树皮材质 ----------------
@@ -237,6 +260,7 @@ export function defaultParams() {
       ground: true,
       groundColor: '#262b34',
       grid: true,
+      wireframe: 'off',   // off | overlay (实体+线框) | only (仅线框看三角面)
       fog: true,
       shadows: true,
       sunAzimuth: 35,

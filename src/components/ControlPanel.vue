@@ -9,6 +9,7 @@
   <TrunkPanel v-else-if="active === 'trunk'" />
   <BranchPanel v-else-if="active === 'branch'" />
   <LeafPanel v-else-if="active === 'leaf'" />
+  <FruitPanel v-else-if="active === 'fruit'" />
   <WindPanel v-else-if="active === 'wind'" />
   <MaterialPanel v-else-if="active === 'material'" />
   <ScenePanel v-else-if="active === 'scene'" />
@@ -21,6 +22,7 @@ import AutoPanel from './panels/AutoPanel.vue'
 import TrunkPanel from './panels/TrunkPanel.vue'
 import BranchPanel from './panels/BranchPanel.vue'
 import LeafPanel from './panels/LeafPanel.vue'
+import FruitPanel from './panels/FruitPanel.vue'
 import WindPanel from './panels/WindPanel.vue'
 import MaterialPanel from './panels/MaterialPanel.vue'
 import ScenePanel from './panels/ScenePanel.vue'
@@ -32,6 +34,7 @@ const tabs = [
   { id: 'trunk', name: '树干', icon: '🪵' },
   { id: 'branch', name: '树枝', icon: '🌿' },
   { id: 'leaf', name: '树叶', icon: '🍃' },
+  { id: 'fruit', name: '果实', icon: '🌰' },
   { id: 'wind', name: '风/生长', icon: '💨' },
   { id: 'material', name: '材质', icon: '🎨' },
   { id: 'scene', name: '场景', icon: '🌅' },

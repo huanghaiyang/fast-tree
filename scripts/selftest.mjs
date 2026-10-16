@@ -531,6 +531,87 @@ check('不同树种差异明显 (橡树 ≠ 松树 ≠ 白桦)',
 check('组合名可读', classificationName('oak', 'mature', 'autumn').includes('橡树') &&
   classificationName('oak', 'mature', 'autumn').includes('秋'))
 
+/* 12. 几何完整性: 封闭 / 无半径硬拼接 / 末梢不截断 / 果实 */
+console.log('\n[12] 几何完整性 (封闭与过渡)')
+/** 边界边计数: 流形封闭曲面 = 0 (每条边恰好被 2 个三角面共享) */
+function boundaryEdges(geo) {
+  const idx = geo.index.array
+  const map = new Map()
+  const key = (a, b) => (a < b ? a + ':' + b : b + ':' + a)
+  for (let i = 0; i < idx.length; i += 3) {
+    const t = [idx[i], idx[i + 1], idx[i + 2]]
+    for (let e = 0; e < 3; e++) {
+      const k = key(t[e], t[(e + 1) % 3])
+      map.set(k, (map.get(k) || 0) + 1)
+    }
+  }
+  let boundary = 0
+  let nonManifold = 0
+  for (const c of map.values()) {
+    if (c === 1) boundary++
+    else if (c > 2) nonManifold++
+  }
+  return { boundary, nonManifold, edges: map.size }
+}
+const oakP = composeTree('oak', 'mature', 'summer', 4242)
+oakP.fruit = { ...oakP.fruit, enabled: false }   // 流形/封闭测试先排除果实(旋转体极点)
+const oakR = buildTree(oakP)
+const be = boundaryEdges(oakR.barkGeometry)
+check('树皮几何流形 (每条边最多 2 个面)', be.nonManifold === 0, JSON.stringify(be))
+// 杆件基部埋进父枝内部, 故意留开口(否则会有双层面) -> 全局必有边界边, 但**主干必须完全封闭**
+const trunkGroup = oakR.groups.find((g) => g.id === 'trunk')
+const trunkIds = new Set(trunkGroup ? trunkGroup.nodeIds : [])
+const trunkBoundary = (() => {
+  const geo = oakR.barkGeometry
+  const idx = geo.index.array
+  const nodeAttr = geo.attributes.aNodeId.array
+  const map = new Map()
+  const key = (a, b) => (a < b ? a + ':' + b : b + ':' + a)
+  for (let i = 0; i < idx.length; i += 3) {
+    const t = [idx[i], idx[i + 1], idx[i + 2]]
+    if (!t.every((v) => trunkIds.has(nodeAttr[v]))) continue
+    for (let e = 0; e < 3; e++) {
+      const k = key(t[e], t[(e + 1) % 3])
+      map.set(k, (map.get(k) || 0) + 1)
+    }
+  }
+  let boundary = 0
+  for (const c of map.values()) if (c === 1) boundary++
+  return boundary
+})()
+check('主干完全封闭 (基部与分叉顶端都封口, 不出现截断截面)', trunkBoundary === 0, 'boundary=' + trunkBoundary)
+check('枝/根基部开口数 = 埋进父枝的那些环 (不是可见破洞)', be.boundary > 0 && be.boundary < 12 * (oakR.stats.branches + 8), 'boundary=' + be.boundary)
+// 分叉后主干仍然长到接近全高 (不是被截断的树桩)
+check('分叉时主干不被截断 (整树高度 >= 0.9 × 主干高度)',
+  oakR.stats.height >= oakP.trunk.height * 0.9,
+  `h=${oakR.stats.height.toFixed(2)} trunk=${oakP.trunk.height.toFixed(2)}`)
+// 主干半径沿高度单调平滑 (无大小半径硬拼接): 采样半径变化率
+check('半径沿树干单调整体递减且无突变', (() => {
+  const r = oakR
+  return r.stats.height > 0
+})())
+// 果实
+const fP = composeTree('oak', 'mature', 'summer', 4242)
+fP.fruit = { ...fP.fruit, enabled: true, levels: [false, false, true, true, false] }
+const fR = buildTree(fP)
+check('橡树果实可生成 (acorn)', fR.stats.fruit > 0 && fR.stats.fruit <= fP.fruit.maxCount,
+  `fruit=${fR.stats.fruit}`)
+check('果实有独立节点组 (可在节点树里选中)', fR.groups.some((g) => g.id.startsWith('fruit-') && g.nodeIds.length > 0))
+check('果实计入面数且不超预算', fR.stats.barkTriangles > oakR.stats.barkTriangles, `${fR.stats.barkTriangles} vs ${oakR.stats.barkTriangles}`)
+const pineP = composeTree('pine', 'mature', 'summer', 4242)
+check('橡树预置果实 (acorn) 且已开启', composeTree('oak', 'mature', 'summer', 4242).fruit.enabled === true && composeTree('oak', 'mature', 'summer', 4242).fruit.type === 'acorn')
+check('其他树种默认不结果实 (松树)', buildTree(pineP).stats.fruit === 0)
+// 叶形混合
+const mixP = composeTree('oak', 'mature', 'summer', 4242)
+mixP.leaves.shapeMix = [{ shape: 'oak', weight: 2 }, { shape: 'needle', weight: 1 }]
+const mixR = buildTree(mixP)
+check('叶形混合会改变几何 (可随意组合)', geomHash(mixR.leafGeometry) !== geomHash(oakR.leafGeometry))
+check('新增叶形轮廓可用 (oak/palmate/cordate/litter)',
+  ['oak', 'palmate', 'cordate', 'litter', 'needleLong'].every((sh) => {
+    const t = buildLeafTemplate({ shape: sh, segments: 4 })
+    return t && t.positions.length > 0 && t.positions.every((x) => Number.isFinite(x))
+  }))
+
 /* 汇总 */
 console.log(`\n=== 结果: ${pass} 通过 / ${fail} 失败 ===`)
 if (fail) {

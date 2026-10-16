@@ -228,6 +228,9 @@ export class TreeScene {
       this.treeGroup.add(this.leafMesh)
     }
     this.applyShadowFlags()
+    if (this.wireBark || this.wireLeaf || (params.scene && params.scene.wireframe && params.scene.wireframe !== 'off')) {
+      this.applyWireframe(params.scene && params.scene.wireframe)
+    }
 
     this.stats = { ...result.stats, totalMs: performance.now() - t }
     const info = boxInfo(result.barkGeometry)
@@ -338,6 +341,12 @@ export class TreeScene {
   /* ------------------------------------------------------------------ */
   updateScene(s) {
     this.scene.background = new THREE.Color(s.background)
+    // 线框展示模式 (展示三角面)
+    const wire = s.wireframe || 'off'
+    if (wire !== (this._wireMode || 'off')) {
+      this._wireMode = wire
+      if (this.barkMesh) this.applyWireframe(wire)
+    }
     if (s.gradient) {
       this.sky.visible = true
       this.skyMat.uniforms.uTop.value.set(s.skyTop)
@@ -398,6 +407,51 @@ export class TreeScene {
     return {
       right: [right.x, right.y, right.z],
       fwd: [fwd.x / fl, 0, fwd.z / fl],
+    }
+  }
+
+  /** 线框展示: off / overlay (实体+线框) / only (只看三角面) */
+  applyWireframe(mode) {
+    const m = mode || 'off'
+    for (const key of ['wireBark', 'wireLeaf']) {
+      if (this[key]) {
+        this.treeGroup.remove(this[key])
+        this[key].material.dispose()
+        this[key] = null
+      }
+    }
+    const solid = m === 'off'
+    this.barkMesh.visible = true
+    if (this.leafMesh) this.leafMesh.visible = true
+    if (solid) {
+      this.barkMesh.material.wireframe = false
+      if (this.leafMesh) this.leafMesh.material.wireframe = false
+      return
+    }
+    // overlay: 保留实体, 叠加线框; only: 只显示线框
+    this.barkMesh.visible = m === 'overlay'
+    if (this.leafMesh) this.leafMesh.visible = m === 'overlay'
+    const mk = (geo, color) => {
+      const mat = new THREE.MeshBasicMaterial({
+        color,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.9,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+      })
+      const mesh = new THREE.Mesh(geo, mat)
+      mesh.renderOrder = 2
+      mesh.castShadow = false
+      mesh.receiveShadow = false
+      return mesh
+    }
+    this.wireBark = mk(this.barkMesh.geometry, 0x7fe0c0)
+    this.treeGroup.add(this.wireBark)
+    if (this.leafMesh) {
+      this.wireLeaf = mk(this.leafMesh.geometry, 0xffd166)
+      this.treeGroup.add(this.wireLeaf)
     }
   }
 

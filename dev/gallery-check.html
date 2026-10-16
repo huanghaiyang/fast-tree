@@ -88,14 +88,43 @@
 
       setTimeout(async () => {
         try {
-          for (const st of ['seedling', 'sapling', 'young', 'mature', 'ancient']) {
-            await applyAndShoot('oak', st, 'summer', 'oak-' + st)
+          // 先来一张"分叉处特写" (用户反馈的问题位置): 相机贴近主干分叉
+          win.__fastTreeApi.applyClassification('oak', 'mature', 'summer')
+          await sleep(200)
+          win.__fastTreeSceneApi.rebuildNow(true)
+          await sleep(200)
+          const st = state.stats
+          const forkY = state.params.trunk.height * state.params.trunk.fork.height
+          sc.controls.target.set(0, forkY, 0)
+          sc.camera.position.set(2.2, forkY + 0.9, 3.0)
+          sc.camera.lookAt(sc.controls.target)
+          await sleep(150)
+          await shot('oak-fork-closeup')
+          // 果实特写
+          state.params.fruit.enabled = true
+          win.__fastTreeSceneApi.rebuildNow(false)
+          await sleep(150)
+          const leafY = st.height * 0.62
+          sc.controls.target.set(0, leafY, 0)
+          sc.camera.position.set(3.0, leafY + 1.2, 4.2)
+          sc.camera.lookAt(sc.controls.target)
+          await shot('oak-acorn-closeup')
+          // 线框模式
+          state.params.scene.wireframe = 'overlay'
+          sc.updateScene(state.params.scene)
+          await sleep(200)
+          await shot('oak-wireframe')
+          state.params.scene.wireframe = 'only'
+          sc.updateScene(state.params.scene)
+          await sleep(200)
+          await shot('oak-wireframe-only')
+          state.params.scene.wireframe = 'off'
+          sc.updateScene(state.params.scene)
+          for (const st2 of ['seedling', 'young', 'mature', 'ancient']) {
+            await applyAndShoot('oak', st2, 'summer', 'oak-' + st2)
           }
-          for (const se of ['spring', 'summer', 'autumn', 'winter']) {
+          for (const se of ['spring', 'autumn', 'winter']) {
             await applyAndShoot('oak', 'mature', se, 'oak-season-' + se)
-          }
-          for (const sp of ['pine', 'birch', 'willow', 'sakura', 'shrub', 'dead']) {
-            await applyAndShoot(sp, 'mature', sp === 'shrub' ? 'autumn' : 'summer', 'sp-' + sp)
           }
           document.title = 'GALLERY-OK :: ' + lines.filter((l) => l.startsWith('  ')).join(' || ').slice(0, 1800) +
             ' || errs=' + (errs.length ? errs.slice(0, 2).join(' ;; ') : 'none')

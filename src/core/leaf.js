@@ -10,7 +10,8 @@
 import * as THREE from 'three'
 
 /** 形状轮廓: 返回 t (0=叶柄, 1=叶尖) 处的半宽
- *  约定: 所有形状归一到 0..0.5, 叶片粗细由 leaves.width 控制 */
+ *  约定: 所有形状归一到 0..0.5, 叶片粗细由 leaves.width 控制
+ *  注: 不同树种的叶形差别很大 (参考图), 这里为每个树种群准备独立轮廓 */
 export const LEAF_OUTLINES = {
   oval: (t) => Math.pow(Math.sin(Math.PI * t), 0.62) * 0.5,
   birch: (t) => Math.pow(Math.sin(Math.PI * Math.pow(t, 0.92)), 0.72) * 0.5,
@@ -20,6 +21,36 @@ export const LEAF_OUTLINES = {
     const base = Math.pow(Math.sin(Math.PI * Math.pow(t, 1.15)), 0.55)
     const lobes = 0.82 + 0.18 * Math.cos(t * Math.PI * 6)
     return base * lobes * 0.5
+  },
+  /** 橡树叶: 羽状深裂, 5~7 对圆裂片 (参考图 5) —— 裂片深、叶基楔形、叶尖圆钝 */
+  oak: (t) => {
+    // 叶基楔形 -> 叶尖收窄的整体轮廓
+    const base = Math.pow(Math.sin(Math.PI * Math.pow(t, 1.12)), 0.42)
+    // 裂片: 沿叶轴周期性收缩 (sinus 越深裂片越明显)
+    const lobeCount = 6
+    const sinus = 0.62 + 0.38 * Math.abs(Math.cos(t * Math.PI * lobeCount))
+    // 叶基附近裂片较浅, 叶尖附近也收敛
+    const depth = 0.55 + 0.45 * Math.sin(Math.PI * Math.pow(t, 0.85))
+    return base * (1 - (1 - sinus) * depth) * 0.5
+  },
+  /** 枫叶: 掌状 5 裂 */
+  palmate: (t) => {
+    const base = Math.pow(Math.sin(Math.PI * Math.pow(t, 1.2)), 0.5)
+    const lobes = 0.7 + 0.3 * Math.cos(t * Math.PI * 10)
+    return base * lobes * 0.5
+  },
+  /** 针叶束: 细长且几乎等宽 */
+  needleLong: (t) => Math.pow(Math.sin(Math.PI * Math.pow(t, 0.85)), 0.22) * 0.4,
+  /** 心形叶 (椴/杨) */
+  cordate: (t) => {
+    const s = Math.sin(Math.PI * Math.pow(t, 0.8))
+    return (Math.pow(s, 0.5) * (0.82 + 0.18 * Math.cos(Math.PI * 2 * t))) * 0.5
+  },
+  /** 落叶: 干燥卷曲的残叶 (边缘不规则) */
+  litter: (t) => {
+    const base = Math.pow(Math.sin(Math.PI * Math.pow(t, 1.05)), 0.6)
+    const dry = 0.86 + 0.14 * Math.cos(t * Math.PI * 7 + 1.3)
+    return base * dry * 0.5
   },
 }
 

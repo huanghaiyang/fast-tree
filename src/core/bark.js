@@ -36,6 +36,11 @@ export function buildTube(frames, o = {}) {
   const capStart = !!o.capStart
   const capEnd = !!o.capEnd
   const nodeId = o.nodeId === undefined ? 0 : o.nodeId
+  // 枝条基部"圆角/领口": 让枝条与父枝融合而不是硬插进去 (消除大半径/小半径硬拼接)
+  const baseFlare = o.baseFlare === undefined ? 0 : o.baseFlare
+  const baseFlareLen = o.baseFlareLen === undefined ? 0.14 : o.baseFlareLen
+  // 末梢收尖: 让枝条以圆钝的尖端闭合, 而不是留下一个平截面
+  const tipRound = o.tipRound === undefined ? 0 : o.tipRound
 
   // 周向贴图重复次数: 由平均半径决定, 整条枝条保持一致 -> 无接缝
   let sumR = 0
@@ -79,6 +84,17 @@ export function buildTube(frames, o = {}) {
       if (crossSection === 'star') mod *= 1 - starDepth * (0.5 + 0.5 * Math.cos(a * starPoints))
       else if (crossSection === 'square') mod *= 1 / Math.max(0.62, Math.max(Math.abs(ca), Math.abs(sa)))
       if (radiusModifier) mod *= radiusModifier(f.t, a, f.radius)
+      // 基部领口: 平滑衰减的加粗 (C1 连续, 不会有台阶)
+      if (baseFlare > 0) {
+        const u = Math.min(1, Math.max(0, f.t / Math.max(1e-4, baseFlareLen)))
+        const s = 1 - u * u * (3 - 2 * u)   // smoothstep
+        mod *= 1 + baseFlare * s
+      }
+      // 末梢圆钝收尖: 最后一段按 1 - u^2 收缩
+      if (tipRound > 0) {
+        const u = Math.min(1, Math.max(0, (f.t - (1 - tipRound)) / Math.max(1e-4, tipRound)))
+        if (u > 0) mod *= Math.sqrt(Math.max(0.0001, 1 - u * u))
+      }
 
       // 顶点噪声: 沿周向/纵向的低频扰动
       if (noiseAmp > 0) {

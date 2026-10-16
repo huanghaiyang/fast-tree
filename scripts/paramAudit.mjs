@@ -94,6 +94,7 @@ export const CONDITIONS = {
   'trunk.fork.taper': { 'trunk.fork.enabled': true },
   'trunk.fork.curve': { 'trunk.fork.enabled': true },
   'trunk.fork.gravity': { 'trunk.fork.enabled': true },
+  'trunk.fork.trunkShrink': { 'trunk.fork.enabled': true },
   'lod.leafRatio': null, // 由双向扰动覆盖 (1 -> 0.35)
 }
 
@@ -155,6 +156,7 @@ const FRACTION_KEYS = /(ratio|variance|spread|mix|scale|strength|intensity|gust|
 /** 少数参数需要"定向"的扰动值才能生效 */
 const SPECIAL_PERTURB = {
   'lod.maxLeaves': [5, 30],        // 只有上限真的卡住时才看得出来
+  'leaves.shapeMix': [[{ shape: 'oak', weight: 2 }, { shape: 'needle', weight: 1 }]],
   'trunk.knots': [9],              // 0/1 附近不明显
   'roots.count': [11],
 }
@@ -190,7 +192,7 @@ export function auditGeometry(baseParams = probeParams()) {
       // 条件参数: 先满足前置条件
       const cond = CONDITIONS[path]
       if (cond) for (const [k, v] of Object.entries(cond)) setAt(p, k, v)
-      if (Array.isArray(getAt(baseParams, path))) {
+      if (Array.isArray(getAt(baseParams, path)) && !SPECIAL_PERTURB[path]) {
         setAt(p, path, getAt(baseParams, path).map((v) => (typeof v === 'boolean' ? !v : perturbValue(v))))
       } else {
         setAt(p, path, cand)
