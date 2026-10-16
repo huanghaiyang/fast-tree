@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><title>wire-check: booting</title></head>
+  <body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+    <iframe id="f" src="/" style="width:1500px;height:900px;border:0"></iframe>
+    <pre id="out">…</pre>
+    <script type="module">
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const lines = []
+      const bar = (l) => { lines.push(l); document.getElementById('out').textContent = lines.join('\n') }
+      let win, doc, state, sc
+      const errs = []
+      f.addEventListener('load', () => {
+        win = f.contentWindow; doc = f.contentDocument; state = win.__fastTree; sc = win.__fastTreeScene
+        win.addEventListener('error', (e) => errs.push('ERR:' + String(e.message).slice(0, 120)))
+        const oe = win.console.error
+        win.console.error = function (...a) { errs.push('CERR:' + a.map(String).join(' ').slice(0, 140)); oe.apply(win.console, a) }
+      })
+      // 场景标签页里的线框下拉 + 顶栏按钮
+      const tab = (name) => [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes(name))
+      const rows = () => [...doc.querySelectorAll('.row-head label')].map((l) => l.textContent.trim())
+      setTimeout(async () => {
+        try {
+          // 等首帧重建完成 (重建期间 barkMesh 会被短暂替换)
+          for (let i = 0; i < 40 && !sc.barkMesh; i++) await sleep(150)
+          tab('场景')?.click()
+          await sleep(400)
+          bar('场景页含"线框展示 (三角面)": ' + rows().some((r) => r.includes('线框')))
+          const sel = [...doc.querySelectorAll('select')].find((s) => s.closest('.row') && s.closest('.row').textContent.includes('线框'))
+          bar('下拉选项: ' + (sel ? [...sel.options].map((o) => o.textContent).join(' / ') : '未找到'))
+          // 顶栏按钮: 依次切换
+          const wireBtn = [...doc.querySelectorAll('.topbar .btn')].find((b) => b.textContent.includes('线框'))
+          bar('顶栏按钮存在: ' + !!wireBtn + ' 文案=' + (wireBtn ? wireBtn.textContent.trim() : '-'))
+          const wireMeshes = () => {
+            let n = 0
+            sc.treeGroup.traverse((o) => { if (o.isMesh && o.material && o.material.wireframe) n++ })
+            return n
+          }
+          wireBtn?.click(); await sleep(300)
+          bar(`点击1次: 模式=${state.params.scene.wireframe} 线框网格=${wireMeshes()} 实体可见=${sc.barkMesh?.visible}`)
+          wireBtn?.click(); await sleep(300)
+          bar(`点击2次: 模式=${state.params.scene.wireframe} 线框网格=${wireMeshes()} 实体可见=${sc.barkMesh?.visible}`)
+          wireBtn?.click(); await sleep(300)
+          bar(`点击3次: 模式=${state.params.scene.wireframe} 线框网格=${wireMeshes()} 实体可见=${sc.barkMesh?.visible}`)
+          // W 快捷键
+          doc.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'w', bubbles: true }))
+          win.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'w', bubbles: true }))
+          await sleep(300)
+          bar('按 W 后模式=' + state.params.scene.wireframe + ' (应为 overlay 或 only)')
+          bar('errs=' + (errs.length ? errs.slice(0, 2).join(' ;; ') : 'none'))
+          document.title = 'WIRECHECK-OK :: ' + lines.join(' || ').slice(0, 1500)
+        } catch (e) {
+          document.title = 'WIRECHECK-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 500)
+        }
+      }, 4000)
+    </script>
+  </body>
+</html>

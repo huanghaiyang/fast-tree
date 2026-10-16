@@ -16,6 +16,9 @@
       <button class="btn" @click="onRebuild">⟳ 重建</button>
       <button class="btn" @click="onFrame">⛶ 取景</button>
       <button class="btn" :disabled="!ready" @click="onGLB">📦 GLB</button>
+      <button class="btn" :class="{ active: wireMode !== 'off' }"
+        :title="`线框展示 (展示三角面): 当前 ${wireLabel} — 点击依次切换 关闭 / 实体+线框 / 仅线框 (快捷键 W)`"
+        @click="cycleWire">🕸 线框{{ wireMode === 'off' ? '' : wireMode === 'overlay' ? '·叠加' : '·仅' }}</button>
       <button class="btn" :class="{ active: state.nodePanelOpen }" title="模型节点面板 (N)"
         @click="toggleNodePanel()">🧩 节点</button>
       <span class="tag" :class="{ on: state.playing }" style="cursor: pointer" @click="state.playing = !state.playing">
@@ -47,6 +50,16 @@ import {
 
 const p = state.params
 const ready = computed(() => state.ready)
+
+/* 线框展示 (展示三角面): 顶栏按钮 / W 键 / 场景页下拉三处共用 */
+const WIRE_MODES = ['off', 'overlay', 'only']
+const WIRE_LABELS = { off: '关闭', overlay: '实体 + 线框', only: '仅线框' }
+const wireMode = computed(() => state.params.scene.wireframe || 'off')
+const wireLabel = computed(() => WIRE_LABELS[wireMode.value] || '关闭')
+function cycleWire() {
+  const cur = WIRE_MODES.indexOf(wireMode.value)
+  state.params.scene.wireframe = WIRE_MODES[(cur + 1) % WIRE_MODES.length]
+}
 
 function onSeed(v) {
   pushUndo()
@@ -84,6 +97,10 @@ function onKeydown(e) {
   if (e.key === 'n' || e.key === 'N') {
     e.preventDefault()
     toggleNodePanel()
+  }
+  if (e.key === 'w' || e.key === 'W') {
+    e.preventDefault()
+    cycleWire()
   }
 }
 
