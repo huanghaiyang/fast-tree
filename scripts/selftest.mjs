@@ -597,6 +597,80 @@ const fR = buildTree(fP)
 check('橡树果实可生成 (acorn)', fR.stats.fruit > 0 && fR.stats.fruit <= fP.fruit.maxCount,
   `fruit=${fR.stats.fruit}`)
 check('果实有独立节点组 (可在节点树里选中)', fR.groups.some((g) => g.id.startsWith('fruit-') && g.nodeIds.length > 0))
+check('果实真的挂在枝条上 (挂果点到枝条三角面距离 <= 2cm)', (() => {
+  // 点到三角面的最近距离 (顶点间距有大有小, 只有比三角面才说明"贴在表面上")
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+  const distPointTri = (p, a, b, c) => {
+    const ab = sub(b, a), ac = sub(c, a), ap = sub(p, a)
+    const d1 = dot(ab, ap), d2 = dot(ac, ap)
+    if (d1 <= 0 && d2 <= 0) return Math.hypot(...ap)
+    const bp = sub(p, b)
+    const d3 = dot(ab, bp), d4 = dot(ac, bp)
+    if (d3 >= 0 && d4 <= d3) return Math.hypot(...bp)
+    const vc = d1 * d4 - d3 * d2
+    if (vc <= 0 && d1 >= 0 && d3 <= 0) {
+      const v = d1 / (d1 - d3)
+      return Math.hypot(...sub(p, [a[0] + ab[0] * v, a[1] + ab[1] * v, a[2] + ab[2] * v]))
+    }
+    const cp = sub(p, c)
+    const d5 = dot(ab, cp), d6 = dot(ac, cp)
+    if (d6 >= 0 && d5 <= d6) return Math.hypot(...cp)
+    const vb = d5 * d2 - d1 * d6
+    if (vb <= 0 && d2 >= 0 && d6 <= 0) {
+      const w = d2 / (d2 - d6)
+      return Math.hypot(...sub(p, [a[0] + ac[0] * w, a[1] + ac[1] * w, a[2] + ac[2] * w]))
+    }
+    const va = d3 * d6 - d5 * d4
+    if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) {
+      const w = (d4 - d3) / ((d4 - d3) + (d5 - d6))
+      return Math.hypot(...sub(p, [b[0] + (c[0] - b[0]) * w, b[1] + (c[1] - b[1]) * w, b[2] + (c[2] - b[2]) * w]))
+    }
+    const denom = 1 / (va + vb + vc)
+    const v = vb * denom, w = vc * denom
+    return Math.hypot(...sub(p, [a[0] + ab[0] * v + ac[0] * w, a[1] + ab[1] * v + ac[1] * w, a[2] + ab[2] * v + ac[2] * w]))
+  }
+  const geo = fR.barkGeometry
+  const pos = geo.attributes.position.array
+  const idx = geo.index.array
+  const nodeAttr = geo.attributes.aNodeId.array
+  const branchIds = new Set()
+  for (const g of fR.groups) if (g.id.startsWith('branch-') || g.id === 'trunk') for (const id of g.nodeIds) branchIds.add(id)
+  const CELL = 0.4
+  const gk = (x, y, z) => Math.floor(x / CELL) + ':' + Math.floor(y / CELL) + ':' + Math.floor(z / CELL)
+  const grid = new Map()
+  const tri = (i) => [i, i + 1, i + 2]
+  for (let t = 0; t < idx.length; t += 3) {
+    if (!branchIds.has(nodeAttr[idx[t]])) continue
+    const a = [pos[idx[t] * 3], pos[idx[t] * 3 + 1], pos[idx[t] * 3 + 2]]
+    const b = [pos[idx[t + 1] * 3], pos[idx[t + 1] * 3 + 1], pos[idx[t + 1] * 3 + 2]]
+    const c = [pos[idx[t + 2] * 3], pos[idx[t + 2] * 3 + 1], pos[idx[t + 2] * 3 + 2]]
+    for (const k of [gk(a[0], a[1], a[2]), gk(b[0], b[1], b[2]), gk(c[0], c[1], c[2])]) {
+      if (!grid.has(k)) grid.set(k, [])
+      const arr = grid.get(k)
+      if (arr[arr.length - 1] !== tri(t).join()) arr.push([a, b, c])
+    }
+  }
+  let worst = 0
+  let attached = 0
+  for (const a of fR.stats.fruitAttach) {
+    let best = Infinity
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+      const cell = grid.get(gk(a[0] + dx * CELL, a[1] + dy * CELL, a[2] + dz * CELL))
+      if (!cell) continue
+      for (const t of cell) {
+        const d = distPointTri(a, t[0], t[1], t[2])
+        if (d < best) best = d
+      }
+    }
+    if (best <= 0.02) attached++
+    if (best > worst) worst = best
+  }
+  const total = fR.stats.fruitAttach.length
+  console.log('      挂果点 ' + total + ' 个, 贴面 ' + attached + ' 个, 最远 ' + worst.toFixed(4) + 'm')
+  return total > 0 && attached === total && worst <= 0.02
+})())
+
 check('果实计入面数且不超预算', fR.stats.barkTriangles > oakR.stats.barkTriangles, `${fR.stats.barkTriangles} vs ${oakR.stats.barkTriangles}`)
 const pineP = composeTree('pine', 'mature', 'summer', 4242)
 check('橡树预置果实 (acorn) 且已开启', composeTree('oak', 'mature', 'summer', 4242).fruit.enabled === true && composeTree('oak', 'mature', 'summer', 4242).fruit.type === 'acorn')

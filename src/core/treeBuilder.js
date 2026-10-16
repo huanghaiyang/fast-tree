@@ -74,6 +74,7 @@ export function buildTree(params) {
   const leafRng = makeRng(P.seed, 'leaves')
   const fruitRng = makeRng(P.seed, 'fruit')
   let fruitCount = 0
+  const fruitAttach = []   // 挂果点 (自检用)
   const fruitAcc = new GeoAcc()
   const levelRng = {}
   for (let i = 1; i <= 5; i++) levelRng[i] = makeRng(P.seed, 'branch-level-' + i)
@@ -485,14 +486,15 @@ export function buildTree(params) {
       capColor: F.capColor,
       radial: F.radial,
     })
+    // 模板里果柄顶端在 +Y ≈ 0.56 -> 让果柄末端正好落在枝条表面 (略微插进去一点)
+    const stemHalf = 0.56
+    // 枝条总长: 用来把"簇内偏移"换算成曲线参数, 免得偏移到枝条外面去
+    const branchLen = Math.max(0.01, frames[frames.length - 1].pos.distanceTo(frames[0].pos))
     let fruitSlot = -1
     for (let k = 0; k < count; k++) {
       const tt = 0.35 + 0.65 * ((k + 0.5) / count) + rng.signed() * 0.06
-      const fr = sampleFrame(frames, Math.min(0.98, Math.max(0.05, tt)))
-      if (!fr) continue
-      const perp = anyPerp(fr.dir)
-      const az = rng.range(0, Math.PI * 2)
-      const side = perp.clone().applyAxisAngle(fr.dir, az)
+      const fr0 = sampleFrame(frames, Math.min(0.98, Math.max(0.05, tt)))
+      if (!fr0) continue
       if (fruitSlot < 0) {
         levelFruitCounter[level] = (levelFruitCounter[level] || 0) + 1
         fruitSlot = addSlot({
@@ -505,28 +507,39 @@ export function buildTree(params) {
         })
       }
       for (let j = 0; j < per; j++) {
-        const off = side.clone().multiplyScalar(rng.range(-F.clusterRadius, F.clusterRadius))
-        off.addScaledVector(perp.clone().applyAxisAngle(fr.dir, rng.range(0, Math.PI * 2)), rng.range(0, F.clusterRadius))
-        // 果实沿枝条方向朝下挂 (橡果挂在枝下)
-        const dir = fr.dir.clone()
-        rotateTowardUp(dir, F.droop * rng.range(0.7, 1.2))
-        dir.negate()
+        // 同簇果实沿**枝长参数**散开 (不是在世界坐标里平移) -> 永远贴在枝条表面上
+        const dT = (rng.range(-F.clusterRadius, F.clusterRadius) * 1.4) / branchLen
+        const t = Math.min(0.995, Math.max(0.02, tt + dT))
+        const fr = sampleFrame(frames, t)
+        if (!fr) continue
+        // 挂果方位: 绕枝轴随机, 以"枝条下表面"为主
+        const az = Math.PI + rng.range(-0.9, 0.9)
+        const radial = azimuthPerp(fr.dir, az, new THREE.Vector3())
+        if (radial.dot(UP) > 0) radial.negate()      // 指向下方 = 枝条下表面
+        const surface = fr.pos.clone().addScaledVector(radial, Math.max(0.004, fr.radius) * 0.9)
         const scale = Math.max(0.01, F.size * rng.vary(F.sizeVariance))
-        const tint = new THREE.Color(1, 1, 1).multiplyScalar(Math.max(0.2, 1 + rng.signed() * F.colorVariance))
+        const scaleY = scale * 1.25
+        // 果柄方向: 从果实指向枝条 (主要朝上, 略沿枝轴) -> 果实自然垂在枝下
+        const stemDir = UP.clone().lerp(fr.dir, F.droop * 0.35 * rng.range(0.5, 1.3)).normalize()
+        // 果柄末端贴着枝条表面 -> 果实中心 = 表面点 - 果柄方向 × 果柄长度
+        const pos = surface.clone().addScaledVector(stemDir, -stemHalf * scaleY * 0.92)
         if (fruitCount >= Math.max(0, Math.round(F.maxCount === undefined ? 420 : F.maxCount))) continue
         if (fruitCount > 0 && !rng.chance(F.chance === undefined ? 0.5 : F.chance)) continue
+        const tint = new THREE.Color(1, 1, 1).multiplyScalar(Math.max(0.2, 1 + rng.signed() * F.colorVariance))
         pushFruitInstance(fruitAcc, fruitTpl, {
-          pos: fr.pos.clone().add(off),
-          dir,
+          pos,
+          dir: stemDir,
           roll: rng.range(0, Math.PI * 2),
-          scale: new THREE.Vector3(scale, scale * 1.25, scale),
+          scale: new THREE.Vector3(scale, scaleY, scale),
           colorTint: tint,
           wind: Math.min(1, branchWind + 0.05),
           phase: rng.range(0, Math.PI * 2),
           grow: Math.min(1, LEVEL_GROW[Math.min(level, LEVEL_GROW.length - 1)][1] + 0.06),
-          origin: fr.pos.clone(),
+          origin: surface.clone(),
           nodeId: fruitSlot,
         })
+        // 记录挂果点 (自检用来验证"真的挂在枝条上")
+        fruitAttach.push([surface.x, surface.y, surface.z])
         fruitCount++
       }
     }
@@ -610,6 +623,7 @@ export function buildTree(params) {
       branches: branchCount,
       leaves: leafCount,
     fruit: fruitCount,
+    fruitAttach,
       barkTriangles: barkGeometry.index ? barkGeometry.index.count / 3 : 0,
       leafTriangles: leafGeometry && leafGeometry.index ? leafGeometry.index.count / 3 : 0,
       barkVertices: barkGeometry.attributes.position ? barkGeometry.attributes.position.count : 0,

@@ -104,9 +104,18 @@
           state.params.fruit.enabled = true
           win.__fastTreeSceneApi.rebuildNow(false)
           await sleep(150)
-          const leafY = st.height * 0.62
-          sc.controls.target.set(0, leafY, 0)
-          sc.camera.position.set(3.0, leafY + 1.2, 4.2)
+          // 先临时关掉叶子, 让"果实挂枝"一眼可见
+          state.params.leaves.enabled = false
+          win.__fastTreeSceneApi.rebuildNow(false)
+          await sleep(150)
+          // 直接对准一个"挂果点" -> 不靠运气
+          const att = (state.stats.fruitAttach || [])
+          // 选离主干最远的一个挂果点 (外圈枝条, 不会被主干挡住)
+          let a = [0, st.height * 0.7, 0]
+          let bestR = -1
+          for (const p of att) { const r = Math.hypot(p[0], p[2]); if (r > bestR) { bestR = r; a = p } }
+          sc.controls.target.set(a[0], a[1], a[2])
+          sc.camera.position.set(a[0] + 0.5, a[1] + 0.22, a[2] + 0.75)
           sc.camera.lookAt(sc.controls.target)
           await shot('oak-acorn-closeup')
           // 线框模式
