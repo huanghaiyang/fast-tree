@@ -3,7 +3,7 @@
  * 运行: npm run selftest
  */
 import { buildTree, selectionRanges } from '../src/core/treeBuilder.js'
-import { defaultParams, normalizeParams, MAX_LEVELS } from '../src/core/params.js'
+import { defaultParams, normalizeParams, MAX_LEVELS, GROUP_KEYS } from '../src/core/params.js'
 import { autoGenerate, autoWind, applyPreset, PRESETS } from '../src/core/presets.js'
 import {
   SPECIES, GROWTH_STAGES, SEASONS, composeTree, classificationName, allCombinations,
@@ -671,6 +671,16 @@ check('果实真的挂在枝条上 (挂果点到枝条三角面距离 <= 2cm)', 
   return total > 0 && attached === total && worst <= 0.02
 })())
 
+check('果实没有挂反 (果柄端贴着枝条, 坚果底朝外)', (() => {
+  const o = fR.stats.fruitOrient || []
+  const bad = o.filter((x) => !(x[0] < x[1])).length
+  const maxStem = o.length ? Math.max(...o.map((x) => x[0])) : 99
+  const minNut = o.length ? Math.min(...o.map((x) => x[1])) : 0
+  console.log('      果柄端距枝条 最大 ' + maxStem.toFixed(3) + 'm, 坚果底距枝条 最小 ' + minNut.toFixed(3) + 'm, 挂反 ' + bad + ' 个')
+  return o.length > 0 && bad === 0 && maxStem <= 0.05
+})())
+check('果实参数属于几何变更组 (改参数会实时重建)', GROUP_KEYS.geometry.includes('fruit'),
+  JSON.stringify(GROUP_KEYS.geometry))
 check('果实节点没有空槽, 每个都带三角面', (() => {
   const fn = fR.nodes.filter((n) => n.type === 'fruit')
   const empty = fn.filter((n) => !n.stats.vertices || !n.stats.triangles)

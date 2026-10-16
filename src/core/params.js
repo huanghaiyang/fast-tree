@@ -322,7 +322,7 @@ export function normalizeParams(p) {
   return out
 }
 
-const GEOMETRY_KEYS = ['seed', 'auto', 'trunk', 'roots', 'branches', 'leaves', 'lod']
+const GEOMETRY_KEYS = ['seed', 'auto', 'trunk', 'roots', 'branches', 'leaves', 'fruit', 'lod']
 const MATERIAL_KEYS = ['bark', 'leafMat', 'custom']
 const WIND_KEYS = ['wind']
 const SCENE_KEYS = ['scene', 'growth']

@@ -67,6 +67,30 @@
             }
             bar(`画面中暖色(果实/树皮)像素占比 = ${(100 * warm / total).toFixed(1)}%`)
           } else bar('!! 没有带几何的果实节点')
+          // 实时生效验证: 只改参数 (不手动重建), 看是否自动排队重建
+          state.params.leaves.enabled = true
+          win.__fastTreeSceneApi.rebuildNow(false)
+          await sleep(500)
+          const fnodeExtent = () => {
+            const n = (sc.nodes || []).find((x) => x.type === 'fruit' && x.bbox)
+            if (!n) return -1
+            return Math.max(n.bbox.max[0] - n.bbox.min[0], n.bbox.max[1] - n.bbox.min[1], n.bbox.max[2] - n.bbox.min[2])
+          }
+          const e0 = fnodeExtent()
+          state.params.fruit.size = 0.35          // 只改参数, 不手动重建
+          await sleep(250)
+          const queued = win.__fastTree.busy === true
+          await sleep(1600)
+          win.__fastTreeSceneApi.rebuildNow(false)   // 本无头窗口 rAF 被暂停, 同步重建以隔离验证"参数->几何"
+          const e1 = fnodeExtent()
+          bar('实时生效(果实大小 0.22->0.35): 自动重建=' + queued + ' 果实簇尺寸 ' + e0.toFixed(3) + ' -> ' + e1.toFixed(3) + ' 变化=' + (Math.abs(e1 - e0) > 0.01))
+          const f0 = state.stats.fruit
+          state.params.fruit.enabled = false
+          await sleep(250)
+          const q2 = win.__fastTree.busy === true
+          win.__fastTreeSceneApi.rebuildNow(false)
+          await sleep(300)
+          bar('实时生效(关掉果实): 自动重建=' + q2 + ' 果实数 ' + f0 + ' -> ' + state.stats.fruit)
           bar('errs=' + (errs.length ? errs.slice(0, 2).join(' ;; ') : 'none'))
           document.title = 'FRUITCHECK-OK :: ' + lines.join(' || ').slice(0, 1700)
         } catch (e) {

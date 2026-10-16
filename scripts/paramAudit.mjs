@@ -96,6 +96,23 @@ export const CONDITIONS = {
   'trunk.fork.gravity': { 'trunk.fork.enabled': true },
   'trunk.fork.trunkShrink': { 'trunk.fork.enabled': true },
   'lod.leafRatio': null, // 由双向扰动覆盖 (1 -> 0.35)
+  // 开关本身要能看出效果: 先把挂果层级放到探针树有效的层级上
+  'fruit.enabled': { 'fruit.levels': [false, true, true, false, false] },
+}
+// 果实子参数只有在"启用果实 + 指定挂果层级"时才有效果
+// 注意: fruit.enabled 不加条件 (它本身就是要被扰动的开关);
+// 探针小树只有 L1/L2, 挂果层级必须落在有效层级上, 否则怎么改都看不到效果
+for (const k of ['type', 'levels', 'perBranch', 'clusterCount', 'clusterRadius', 'size', 'sizeVariance',
+  'droop', 'color', 'capColor', 'colorVariance', 'radial', 'maxCount', 'chance']) {
+  const path = 'fruit.' + k
+  if (!Object.prototype.hasOwnProperty.call(CONDITIONS, path)) {
+    CONDITIONS[path] = {
+      'fruit.enabled': true,
+      'fruit.levels': [false, true, true, false, false],
+      'fruit.maxCount': 200,
+      'fruit.chance': 1,
+    }
+  }
 }
 
 /** 需要 canvas/ImageLoader, Node 下无法判定 -> 在浏览器审计页里验证 */

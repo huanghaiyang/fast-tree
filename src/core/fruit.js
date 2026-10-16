@@ -47,11 +47,12 @@ export function buildFruitTemplate(o = {}) {
   const capColor = new THREE.Color(o.capColor || '#8a6f45')
 
   // 每种果实的母线 (r, y): 高度约 0..1, 果柄可忽略
+  // 坚果: 底部圆钝(带小尖), 上部收窄插进壳斗帽; 顶部 y=+0.15 被帽子盖住
   const nutProfile = {
-    acorn: [[0.0, -0.52], [0.14, -0.5], [0.28, -0.42], [0.34, -0.26], [0.35, -0.08], [0.31, 0.12], [0.22, 0.31], [0.10, 0.44], [0.0, 0.5]],
+    acorn: [[0.0, -0.55], [0.10, -0.53], [0.22, -0.47], [0.30, -0.36], [0.34, -0.18], [0.33, 0.0], [0.28, 0.14], [0.20, 0.22], [0.0, 0.26]],
     berry: [[0.0, -0.5], [0.16, -0.46], [0.30, -0.34], [0.36, -0.14], [0.35, 0.1], [0.27, 0.32], [0.13, 0.46], [0.0, 0.5]],
     cone: [[0.0, -0.5], [0.30, -0.44], [0.26, -0.30], [0.32, -0.24], [0.22, -0.08], [0.27, -0.02], [0.16, 0.14], [0.19, 0.2], [0.08, 0.36], [0.0, 0.5]],
-    nut: [[0.0, -0.5], [0.20, -0.46], [0.32, -0.32], [0.36, -0.10], [0.33, 0.14], [0.24, 0.34], [0.11, 0.46], [0.0, 0.5]],
+    nut: [[0.0, -0.5], [0.20, -0.46], [0.32, -0.32], [0.36, -0.10], [0.33, 0.14], [0.24, 0.30], [0.0, 0.34]],
   }[type]
 
   const nut = lathe(nutProfile, radial)
@@ -60,27 +61,35 @@ export function buildFruitTemplate(o = {}) {
 
   // 壳斗帽: 只给橡果/坚果 (顶部一小段包裹)
   if (type === 'acorn' || type === 'nut') {
-    const capTop = type === 'acorn' ? 0.2 : 0.06
-    const capR = type === 'acorn' ? 0.40 : 0.34
-    // 帽沿做一点起伏, 像参考图那样粗糙
-    const capProfile = []
-    const capRings = 4
-    for (let i = 0; i < capRings; i++) {
-      const t = i / (capRings - 1)
-      const y = capTop - t * (capTop + 0.34)
-      const wobble = 1 + 0.06 * Math.cos(t * Math.PI * 3)
-      const r = capR * (0.55 + 0.65 * Math.sin(Math.PI * (0.15 + 0.85 * t))) * wobble
-      capProfile.push([Math.max(0.02, r), y])
-    }
-    capProfile.push([0.0, capTop - 0.34 - 0.02])
+    // 壳斗帽: 只包住**顶部约 1/3**, 下沿略宽于坚果 -> 一眼能看出"帽子在顶上"
+    const capTop = type === 'acorn' ? 0.34 : 0.2
+    const capBottom = type === 'acorn' ? 0.0 : -0.02
+    const capRim = type === 'acorn' ? 0.395 : 0.35
+    const capProfile = [
+      [0.0, capTop + 0.02],
+      [0.14, capTop],
+      [0.26, capTop - 0.06],
+      [capRim, capTop - 0.14],
+      [capRim * 0.96, capBottom],        // 帽沿 (最宽处略鼓, 有粗糙感)
+      [capRim * 0.88, capBottom - 0.05],
+      [capRim * 0.6, capBottom - 0.07],
+    ]
     parts.push(lathe(capProfile, radial, 2))
     colorOf.push(capColor)
-    // 果柄
-    const stem = lathe([[0.0, 0.18], [0.05, 0.22], [0.045, 0.5], [0.0, 0.56]], Math.max(4, radial >> 1))
+    // 果柄: 从帽顶向上伸出 (果实就是靠它挂在枝上)
+    const stem = lathe([[0.0, capTop], [0.055, capTop + 0.04], [0.05, capTop + 0.16], [0.0, capTop + 0.2]], Math.max(4, radial >> 1))
     parts.push(stem)
     colorOf.push(capColor)
   }
 
+  let partTop = -Infinity
+  let partBottom = Infinity
+  for (const part of parts) {
+    for (let i = 1; i < part.positions.length; i += 3) {
+      if (part.positions[i] > partTop) partTop = part.positions[i]
+      if (part.positions[i] < partBottom) partBottom = part.positions[i]
+    }
+  }
   const positions = []
   const normals = []
   const uvs = []
@@ -113,6 +122,9 @@ export function buildFruitTemplate(o = {}) {
     colors,
     index,
     vertexCount: positions.length / 3,
+    // 模板的上下端 (沿 +Y): 果柄末端 / 坚果底 -> 供挂果定位使用
+    top: partTop,
+    bottom: partBottom,
     centerY: 0,
   }
 }

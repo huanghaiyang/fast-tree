@@ -75,6 +75,7 @@ export function buildTree(params) {
   const fruitRng = makeRng(P.seed, 'fruit')
   let fruitCount = 0
   const fruitAttach = []   // 挂果点 (自检用)
+  const fruitOrient = []   // [果柄端到挂果点距离, 坚果底到挂果点距离] (自检用)
   const fruitAcc = new GeoAcc()
   const levelRng = {}
   for (let i = 1; i <= 5; i++) levelRng[i] = makeRng(P.seed, 'branch-level-' + i)
@@ -486,8 +487,8 @@ export function buildTree(params) {
       capColor: F.capColor,
       radial: F.radial,
     })
-    // 模板里果柄顶端在 +Y ≈ 0.56 -> 让果柄末端正好落在枝条表面 (略微插进去一点)
-    const stemHalf = 0.56
+    // 模板的 +Y 上端就是果柄末端 -> 让它正好落在枝条表面
+    const stemHalf = fruitTpl.top
     // 枝条总长: 用来把"簇内偏移"换算成曲线参数, 免得偏移到枝条外面去
     const branchLen = Math.max(0.01, frames[frames.length - 1].pos.distanceTo(frames[0].pos))
     let fruitSlot = -1
@@ -539,8 +540,12 @@ export function buildTree(params) {
           origin: surface.clone(),
           nodeId: fruitSlot,
         })
-        // 记录挂果点 (自检用来验证"真的挂在枝条上")
+        // 记录挂果点 + 朝向证据 (自检用来验证"真的挂在枝条上"且"没有挂反")
         fruitAttach.push([surface.x, surface.y, surface.z])
+        fruitOrient.push([
+          Math.abs(fruitTpl.top * scaleY * 0.08) + pos.clone().addScaledVector(stemDir, fruitTpl.top * scaleY).distanceTo(surface),
+          pos.clone().addScaledVector(stemDir, fruitTpl.bottom * scaleY).distanceTo(surface),
+        ])
         fruitCount++
       }
     }
@@ -625,6 +630,7 @@ export function buildTree(params) {
       leaves: leafCount,
     fruit: fruitCount,
     fruitAttach,
+    fruitOrient,
       barkTriangles: barkGeometry.index ? barkGeometry.index.count / 3 : 0,
       leafTriangles: leafGeometry && leafGeometry.index ? leafGeometry.index.count / 3 : 0,
       barkVertices: barkGeometry.attributes.position ? barkGeometry.attributes.position.count : 0,
