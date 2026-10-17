@@ -279,6 +279,9 @@ export function defaultParams() {
       scatterPower: 2.0,       // 边缘锐度 (越大越贴边)
       emissive: 0.0,
       emissiveColor: '#ffffff',   // 自发光底色 (与季节叶色解耦)
+      // 从颜色贴图自动生成法线贴图 (亮度当高度场 -> Sobel 梯度); 0 = 关闭
+      normalFromAlbedo: 0.8,
+      normalScale: 1.0,           // 法线强度 (normalMap 缩放)
       texture: '',
       normalTexture: '',
     },

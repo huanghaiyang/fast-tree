@@ -13,6 +13,7 @@ import { createSharedUniforms, createLeafMaterial, createBarkMaterial, updateMat
 import { sampleEmitPositions, buildParticleSeeds, createParticleMaterial, PARTICLE_VERT, PARTICLE_FRAG } from '../src/core/particles.js'
 import { buildFallingLeaves, fallRebuildKey, FALL_FRAG } from '../src/core/fallingLeaves.js'
 import { buildLeafLitter, litterRebuildKey } from '../src/core/litter.js'
+import { normalFromLuminance } from '../src/core/normalFromAlbedo.js'
 import { ellipseLeafTexture, resolveEffectTexture, resolveEffectAspect } from '../src/core/leafTexture.js'
 import { LEAF_CARDS } from '../src/core/leafCards.generated.js'
 import { motionMetrics, swayEnvelope } from '../src/core/windModel.js'
@@ -1036,6 +1037,69 @@ console.log('\n[20] 落叶/堆积 跟随贴图同步 + 输出色彩管线')
   check('落叶片元着色器走 three 的输出变换 (色调映射 + sRGB 编码)',
     /#include <tonemapping_fragment>/.test(FALL_FRAG) && /#include <colorspace_fragment>/.test(FALL_FRAG))
   check('粒子片元着色器同样', /#include <colorspace_fragment>/.test(PARTICLE_FRAG))
+}
+
+/* 21. 从 albedo 自动生成法线贴图 */
+console.log('\n[21] 从贴图自动生成法线贴图')
+{
+  // 构造一张"中间亮、两侧暗"的图 (模拟半片叶子)
+  const w = 32, h = 32
+  const px = new Uint8ClampedArray(w * h * 4)
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4
+      // 横向 + 纵向都有梯度, 这样 flipY 才有可翻转的分量
+      const v = Math.max(0, Math.min(255, 200 - Math.abs(x - w / 2) * 8 - Math.abs(y - h / 2) * 6))
+      px[i] = v; px[i + 1] = v; px[i + 2] = v; px[i + 3] = 255
+    }
+  }
+  const n0 = normalFromLuminance(px, w, h, 0)
+  check('强度=0 -> 全平法线 (128,128,255)', (() => {
+    for (let i = 0; i < n0.length; i += 3) {
+      if (n0[i] !== 128 || n0[i + 1] !== 128 || n0[i + 2] !== 255) return false
+    }
+    return true
+  })())
+  const n1 = normalFromLuminance(px, w, h, 2)
+  check('强度>0 -> 产生真实梯度 (法线有横/纵向变化)', (() => {
+    const set = new Set()
+    for (let i = 0; i < n1.length; i += 3) set.add(n1[i])
+    console.log('      R 通道不同取值数=' + set.size)
+    return set.size > 3
+  })())
+  check('法线全部被归一化 (长度≈1)', (() => {
+    for (let i = 0; i < n1.length; i += 3) {
+      const nx = n1[i] / 255 * 2 - 1, ny = n1[i + 1] / 255 * 2 - 1, nz = n1[i + 2] / 255 * 2 - 1
+      const len = Math.sqrt(nx * nx + ny * ny + nz * nz)
+      if (Math.abs(len - 1) > 0.06) return false
+    }
+    return true
+  })())
+  check('flipY 会翻转 Y 分量', (() => {
+    const a1 = normalFromLuminance(px, w, h, 2, false)
+    const a2 = normalFromLuminance(px, w, h, 2, true)
+    let diff = 0
+    let sum = 0
+    for (let i = 0; i < a1.length; i += 3) {
+      if (a1[i + 1] !== a2[i + 1]) diff++
+      sum += a1[i + 1]
+    }
+    const flipped = Math.abs(sum / (a1.length / 3) - 128) > 0.5
+    console.log('      Y 分量不同的像素=' + diff + ', 均值偏离 128=' + flipped)
+    return diff > 0
+  })())
+  check('透明像素不参与起伏 (不会在 alpha 边缘造假法线)', (() => {
+    const p2 = new Uint8ClampedArray(w * h * 4)
+    for (let i = 0; i < w * h; i++) { p2[i * 4] = 255; p2[i * 4 + 1] = 255; p2[i * 4 + 2] = 255; p2[i * 4 + 3] = 0 }
+    const nn = normalFromLuminance(p2, w, h, 3)
+    for (let i = 0; i < nn.length; i += 3) if (nn[i] !== 128 || nn[i + 1] !== 128) return false
+    return true
+  })())
+  check('叶片材质默认开启自动法线 (从贴图生成)', (() => {
+    const L = composeTree('oak', 'mature', 'summer', 4242).leafMat
+    console.log('      normalFromAlbedo=' + L.normalFromAlbedo + ' normalScale=' + L.normalScale)
+    return L.normalFromAlbedo > 0
+  })())
 }
 
 /* 汇总 */

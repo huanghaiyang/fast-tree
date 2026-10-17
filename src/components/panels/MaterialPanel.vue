@@ -28,6 +28,9 @@
       hint="0 = 贴图原色, 1 = 完全用季节叶色染色" />
     <SliderRow label="粗糙度" v-model="lm.roughness" :min="0" :max="1" :step="0.01" />
     <SliderRow label="金属度" v-model="lm.metalness" :min="0" :max="1" :step="0.01" />
+    <SliderRow label="自动生成法线" v-model="lm.normalFromAlbedo" :min="0" :max="3" :step="0.05"
+      hint="0 = 关闭。从颜色贴图的亮度起伏自动生成法线贴图 (叶脉/叶面起伏变成光照细节), 任何贴图都适用" />
+    <SliderRow v-if="lm.normalFromAlbedo > 0" label="法线强度" v-model="lm.normalScale" :min="0" :max="3" :step="0.05" />
     <ColorRow label="自发光颜色" v-model="lm.emissiveColor" />
     <SliderRow label="自发光强度" v-model="lm.emissive" :min="0" :max="1" :step="0.01"
       hint="用叶色做底的自发光: 让背光/阴影里的叶片不发黑" />

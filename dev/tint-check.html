@@ -128,6 +128,27 @@
           const cv2 = doc.querySelector('canvas')
           await fetch('http://127.0.0.1:5274/shot?name=fall-color', { method: 'POST', body: cv2.toDataURL('image/png') })
           bar('shot fall-color')
+          // ===== 自动法线贴图 =====
+          state.params.leafMat.texture = ''
+          state.params.leaves.cardMode = true
+          state.params.fall.enabled = false
+          state.params.litter.enabled = false
+          win.__fastTreeApi.applyLeafCard(mod.LEAF_CARDS[0].id)
+          state.params.leafMat.normalFromAlbedo = 1.2
+          win.__fastTreeSceneApi.rebuildNow(true)
+          await sleep(900)
+          sc.updateMaterialParams(state.params)
+          await sleep(600)
+          const nm = sc.materials.leaf.normalMap
+          bar('自动法线: 开启=' + state.params.leafMat.normalFromAlbedo + ' 材质有法线图=' + !!nm +
+              ' 尺寸=' + (nm && nm.image ? nm.image.width + 'x' + nm.image.height : '-') +
+              ' 是DataTexture=' + (nm ? !!nm.isDataTexture : false))
+          bar('法线强度 normalScale=' + JSON.stringify(sc.materials.leaf.normalScale.toArray().map((v) => +v.toFixed(2))))
+          // 与显式法线互斥: 关掉自动后应移除
+          state.params.leafMat.normalFromAlbedo = 0
+          sc.updateMaterialParams(state.params)
+          await sleep(400)
+          bar('关掉自动法线后 材质还有法线图=' + !!sc.materials.leaf.normalMap)
           bar('errs=' + (errs.length ? errs.slice(0, 3).join(' ;; ') : 'none'))
           document.title = 'TINTCHECK-OK :: ' + L.join(' || ').slice(0, 1500)
         } catch (e) {

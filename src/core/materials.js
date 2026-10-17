@@ -12,6 +12,7 @@
  *               存放在 material.userData.uniforms, 编译前后都能安全更新
  */
 import * as THREE from 'three'
+import { albedoNormalTexture } from './normalFromAlbedo.js'
 import { makeBarkTextures, makeLeafTexture, loadTexture, setTextureRepeat, disposeTexture } from './textures.js'
 
 const VERTEX_HEADER = /* glsl */`
@@ -223,6 +224,41 @@ export function resolveTintMix(m, hasTexture) {
   return m.vertexColorMix === undefined ? 0.5 : m.vertexColorMix
 }
 
+/** 若没有显式法线贴图且开启了自动生成, 就从 albedo 生成一张 */
+function applyAutoNormal(mat, p) {
+  const strength = p.normalFromAlbedo === undefined ? 0 : p.normalFromAlbedo
+  if (p.normalTexture || strength <= 0 || !p.texture) {
+    if (mat.normalMap && mat.userData.autoNormal) {
+      mat.normalMap = null
+      mat.userData.autoNormal = false
+      mat.needsUpdate = true
+    }
+    return
+  }
+  const map = mat.map
+  const tex = albedoNormalTexture(map, strength, p.texture)
+  if (!tex) {
+    // 贴图还没解码完 -> 等它 update 后重试一次
+    if (map && !map.userData.__autoNormalHooked) {
+      map.userData.__autoNormalHooked = true
+      map.onUpdate = () => {
+        const t = albedoNormalTexture(map, strength, p.texture)
+        if (t) {
+          mat.normalMap = t
+          mat.userData.autoNormal = true
+          mat.normalScale.set(p.normalScale || 1, p.normalScale || 1)
+          mat.needsUpdate = true
+        }
+      }
+    }
+    return
+  }
+  mat.normalMap = tex
+  mat.userData.autoNormal = true
+  mat.normalScale.set(p.normalScale === undefined ? 1 : p.normalScale, p.normalScale === undefined ? 1 : p.normalScale)
+  mat.needsUpdate = true
+}
+
 function hashCode(s) {
   let h = 2166136261
   for (let i = 0; i < s.length; i++) {
@@ -352,6 +388,10 @@ export function createLeafMaterial(params, sharedUniforms) {
     vertexColors: true,
     side: p.doubleSided ? THREE.DoubleSide : THREE.FrontSide,
     alphaTest: p.alphaTest,
+    normalScale: new THREE.Vector2(
+      p.normalScale === undefined ? 1 : p.normalScale,
+      p.normalScale === undefined ? 1 : p.normalScale,
+    ),
     transparent: false,
   })
   mat.userData.kind = 'leaf'
@@ -442,6 +482,9 @@ export function updateLeafMaterial(mat, params, sharedUniforms) {
   mat.side = p.doubleSided ? THREE.DoubleSide : THREE.FrontSide
   mat.color.set(0xffffff)
   // 叶片自发光: 用叶色做底, 强度由滑杆控制 (让背光/阴影里的叶子不至于死黑)
+  // ---- 从颜色贴图自动生成法线贴图 (没有显式法线贴图时) ----
+  applyAutoNormal(mat, p)
+
   // 自发光用独立颜色: 不再隐式拿季节叶色当底色 (否则选了贴图也会被染色)
   mat.emissive.set(p.emissiveColor || '#ffffff')
   mat.emissiveIntensity = p.emissive || 0
