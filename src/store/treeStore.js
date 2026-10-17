@@ -9,7 +9,8 @@ import { LEAF_CARDS, LEAF_CARD_BY_ID, leafCardsFor, leafCardRows, LEAF_CARD_BATC
 import { selectionRanges } from '../core/treeBuilder.js'
 
 export const state = reactive({
-  params: defaultParams(),
+  // 初始参数 = 默认树种 (oak) 的成熟/夏季预设 -> 一进页面就是带果实的橡树
+  params: normalizeParams(applyPreset(defaultParams(), 'oak', 'mature', 'summer')),
   stats: {
     branches: 0, leaves: 0, barkTriangles: 0, leafTriangles: 0,
     barkVertices: 0, leafVertices: 0, buildMs: 0, height: 0, spread: 0, nodeCount: 0,

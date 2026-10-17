@@ -696,6 +696,19 @@ check('果实三角面数与果实数匹配 (索引未错位)', (() => {
 })())
 check('果实计入面数且不超预算', fR.stats.barkTriangles > oakR.stats.barkTriangles, `${fR.stats.barkTriangles} vs ${oakR.stats.barkTriangles}`)
 const pineP = composeTree('pine', 'mature', 'summer', 4242)
+check('挂果层级不存在时自动回退 (打开开关一定有果)', (() => {
+  const d = defaultParams()
+  d.fruit = { ...d.fruit, enabled: true, levels: [false, false, false, false, true] }  // 勾了不存在的 L5
+  const r = buildTree(d)
+  console.log('      3 层枝 + 勾不存在的 L5 -> 果实 ' + r.stats.fruit + ' 个 (回退到最深可用层)')
+  return r.stats.fruit > 0
+})())
+check('页面初始参数即橡树预设 (默认树带果实)', (() => {
+  const init = normalizeParams(applyPreset(defaultParams(), 'oak', 'mature', 'summer'))
+  const r = buildTree(init)
+  console.log('      初始树: 果实 ' + r.stats.fruit + ', 枝 ' + r.stats.branches)
+  return init.fruit.enabled === true && r.stats.fruit > 0
+})())
 check('橡树预置果实 (acorn) 且已开启', composeTree('oak', 'mature', 'summer', 4242).fruit.enabled === true && composeTree('oak', 'mature', 'summer', 4242).fruit.type === 'acorn')
 check('其他树种默认不结果实 (松树)', buildTree(pineP).stats.fruit === 0)
 // 叶形混合

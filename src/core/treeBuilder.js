@@ -51,6 +51,17 @@ export function buildTree(params) {
   const branchParams = P.branches
   const L = P.leaves
   const F = P.fruit || { enabled: false, levels: [] }
+  // 挂果层级回退: 如果设置里勾选的层级在这棵树上一级都没有 (比如默认树只有 3 层枝,
+  // 而果实勾的是 L4), 就退到最深的可用层级 —— 否则"打开果实开关"会毫无反应。
+  const effFruitLevels = (() => {
+    const lv = Array.isArray(F.levels) ? F.levels : []
+    const maxLv = Math.max(1, Math.round(P.branches.levels || 1))
+    if (lv.some((on, i) => on && i < maxLv)) return lv
+    const out = lv.slice(0, 5)
+    while (out.length < maxLv) out.push(false)
+    out[maxLv - 1] = true
+    return out
+  })()
 
   const barkParts = []
   const leafAcc = new GeoAcc()
@@ -312,7 +323,7 @@ export function buildTree(params) {
     if (level < branchParams.levels) spawnChildren(frames, level, length, rng, wind0, wind1, mySlot)
     const leafIdx = level - 1
     if (L.enabled && L.levels[leafIdx]) spawnLeaves(frames, level, wind1, mySlot)
-    if (F.enabled && F.levels[leafIdx]) spawnFruit(frames, level, wind1, mySlot)
+    if (F.enabled && effFruitLevels[leafIdx]) spawnFruit(frames, level, wind1, mySlot)
   }
 
   /* ------------------------------------------------------------------ */

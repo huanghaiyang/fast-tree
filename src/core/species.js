@@ -196,7 +196,7 @@ export const SPECIES = [
         enabled: true, type: 'acorn',
         levels: [false, false, true, true, false],
         perBranch: 2, clusterCount: 2, clusterRadius: 0.07,
-        size: 0.22, sizeVariance: 0.2, droop: 0.55,
+        size: 0.15, sizeVariance: 0.22, droop: 0.55,
         color: '#c9a86b', capColor: '#8a6f45', colorVariance: 0.16, maxCount: 380, chance: 0.5, radial: 8,
       },
       leafMat: { roughness: 0.72, metalness: 0.0, translucency: 0.5, emissive: 0.02 },

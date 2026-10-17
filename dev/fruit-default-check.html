@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><title>fruit-default: booting</title></head>
+  <body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+    <iframe id="f" src="/" style="width:1500px;height:900px;border:0"></iframe>
+    <pre id="out">…</pre>
+    <script type="module">
+      document.title = 'STEP0-module-start'
+      const RECV = 'http://127.0.0.1:5274/shot'
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const lines = []
+      const bar = (l) => { lines.push(l); document.getElementById('out').textContent = lines.join('\n') }
+      let win, doc, state, sc
+      const errs = []
+      f.addEventListener('load', () => {
+        win = f.contentWindow; doc = f.contentDocument; state = win.__fastTree; sc = win.__fastTreeScene
+        win.addEventListener('error', (e) => errs.push('ERR:' + String(e.message).slice(0, 120)))
+        const oe = win.console.error
+        win.console.error = function (...a) { errs.push('CERR:' + a.map(String).join(' ').slice(0, 150)); oe.apply(win.console, a) }
+      })
+      async function shot(name) {
+        const cv = doc.querySelector('canvas')
+        for (let i = 0; i < 8; i++) { sc.renderer.render(sc.scene, sc.camera); await sleep(120) }
+        await fetch(`${RECV}?name=${name}`, { method: 'POST', body: cv.toDataURL('image/png') })
+        bar('shot ' + name)
+      }
+      document.title = 'STEP1-listener-ready'
+      setTimeout(async () => {
+        document.title = 'STEP2-timer-fired'
+        try {
+          document.title = 'STEP3-check-app: win=' + !!win + ' state=' + !!state + ' sc=' + !!sc
+          for (let i = 0; i < 60 && !(state && state.stats && sc && sc.barkMesh); i++) await sleep(150)
+          document.title = 'STEP4-app-ready state=' + !!state
+          // ===== 1) 一进页面 (未做任何操作) 就应该有果实 =====
+          bar(`首屏: 果实=${state.stats.fruit} 枝=${state.stats.branches} 叶=${state.stats.leaves} 果实开关=${state.params.fruit.enabled} 挂果层级=${JSON.stringify(state.params.fruit.levels)}`)
+          await shot('fruit-default-load')
+          // ===== 2) 面板: 果实页的开关 =====
+          const tab = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('果实'))
+          bar('果实标签页存在: ' + !!tab)
+          tab?.click(); await sleep(400)
+          const sw = [...doc.querySelectorAll('input[type=checkbox]')][0]
+          bar('第一个开关(启用果实) 勾选状态: ' + (sw ? sw.checked : '未找到'))
+          // 关掉 -> 应无果实
+          if (sw) { sw.click(); await sleep(150) }
+          win.__fastTreeSceneApi.rebuildNow(false)
+          await sleep(200)
+          bar(`关掉后: 果实=${state.stats.fruit} (期望 0)`)
+          // 再打开 -> 应重新结果
+          if (sw) { sw.click(); await sleep(150) }
+          win.__fastTreeSceneApi.rebuildNow(false)
+          await sleep(200)
+          bar(`再打开: 果实=${state.stats.fruit} (期望 >0)`)
+          // ===== 3) 果实特写 =====
+          state.params.leaves.enabled = false
+          win.__fastTreeSceneApi.rebuildNow(false)
+          await sleep(200)
+          const att = state.stats.fruitAttach || []
+          let a = [0, state.stats.height * 0.6, 0], bestR = -1
+          for (const p of att) { const r = Math.hypot(p[0], p[2]); if (r > bestR) { bestR = r; a = p } }
+          sc.controls.target.set(a[0], a[1], a[2])
+          const outw = Math.hypot(a[0], a[2]) || 1
+          sc.camera.position.set(a[0] + (a[0] / outw) * 0.8, a[1] + 0.2, a[2] + (a[2] / outw) * 0.8)
+          sc.camera.lookAt(sc.controls.target)
+          await shot('fruit-default-closeup')
+          bar('errs=' + (errs.length ? errs.slice(0, 3).join(' ;; ') : 'none'))
+          document.title = 'FRUITDEFAULT-OK :: ' + lines.join(' || ').slice(0, 1600)
+        } catch (e) {
+          document.title = 'FRUITDEFAULT-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 600)
+        }
+      }, 4000)
+    </script>
+  </body>
+</html>
