@@ -2,80 +2,127 @@ import * as THREE from 'three'
 import { createSharedUniforms, createBarkMaterial, createLeafMaterial } from './materials.js'
 
 /**
- * 材质球预览 (Material Preview)
+ * 材质球预览 (实时 + 可拖动旋转)
  * ------------------------------------------------------------
- * 一个独立的小 WebGL 渲染器 + 球体, 用**当前参数**烘焙出一张材质球图片 (dataURL),
- * 由 <MaterialPreview> 组件以 <img> 显示。这样:
- *   - 不干扰主渲染器 (独立 canvas / 独立材质实例)
- *   - 不需要每帧渲染 (只在参数变化时重画一次)
- * 用途: 直观看到树皮/树叶材质在没有光照环境干扰时长什么样。
+ * 每个实例一个独立 WebGLRenderer + 球体, 画到传入的 <canvas> 上。
+ * - setParams(params): 用当前参数重建材质并重绘 (贴图异步加载完会自动补画)
+ * - 鼠标拖动: 相机绕球体旋转 (光照固定 -> 从各角度看高光/法线/贴图)
+ * - 只在需要时渲染, 没有常驻 rAF 循环
  */
 
-const SIZE = 128
-let ctx = null
+const RETRY_MS = [120, 350, 800, 1600]
 
-function ensure() {
-  if (ctx) return ctx
-  if (typeof document === 'undefined') return null
-  const canvas = document.createElement('canvas')
-  canvas.width = SIZE
-  canvas.height = SIZE
+export function createMaterialPreview(canvas, kind = 'bark') {
+  if (!canvas || typeof document === 'undefined') return null
+  const size = 96
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true })
-  renderer.setPixelRatio(1)
-  renderer.setSize(SIZE, SIZE, false)
+  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1))
+  renderer.setSize(size, size, false)
   renderer.outputColorSpace = THREE.SRGBColorSpace
   renderer.toneMapping = THREE.ACESFilmicToneMapping
-  renderer.toneMappingExposure = 1.0
 
   const scene = new THREE.Scene()
-  const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 20)
-  camera.position.set(0, 0, 3.1)
-  camera.lookAt(0, 0, 0)
+  const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 20)
+  const light = new THREE.Group()
+  const key = new THREE.DirectionalLight(0xffffff, 2.8)
+  key.position.set(2.4, 2.8, 3.2)
+  const fill = new THREE.DirectionalLight(0x9fc4ff, 0.75)
+  fill.position.set(-2.8, 0.5, 1.6)
+  const rim = new THREE.DirectionalLight(0xffe2b8, 1.0)
+  rim.position.set(-1.0, -1.8, -2.6)
+  light.add(key, fill, rim)
+  scene.add(light, new THREE.AmbientLight(0xffffff, 0.3))
 
-  // 三点光: 主光 + 补光 + 轮廓光 (看清法线/高光细节)
-  const key = new THREE.DirectionalLight(0xffffff, 2.6)
-  key.position.set(2.2, 2.6, 3.0)
-  const fill = new THREE.DirectionalLight(0x9fc4ff, 0.7)
-  fill.position.set(-2.6, 0.6, 1.4)
-  const rim = new THREE.DirectionalLight(0xffe6c0, 0.9)
-  rim.position.set(-1.2, -1.6, -2.4)
-  scene.add(key, fill, rim, new THREE.AmbientLight(0xffffff, 0.28))
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 40), null)
+  scene.add(mesh)
 
-  // 球体 + 立方体 (立方体便于看平铺/扭曲)
-  const sphere = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), null)
-  scene.add(sphere)
+  let mat = null
+  let yaw = 0.55
+  let pitch = 0.28
+  let drag = null
+  let retryTimers = []
 
-  ctx = { canvas, renderer, scene, camera, sphere, uniforms: null }
-  return ctx
-}
+  function placeCamera() {
+    const r = 3.05
+    camera.position.set(
+      Math.sin(yaw) * Math.cos(pitch) * r,
+      Math.sin(pitch) * r,
+      Math.cos(yaw) * Math.cos(pitch) * r,
+    )
+    camera.lookAt(0, 0, 0)
+  }
 
-/**
- * 渲染材质球
- * @param {object} params 全量参数 (用到 params.bark / params.leafMat / params.leaves)
- * @returns {{bark: string, leaf: string, back?: string}|null} dataURL
- */
-export function renderMaterialPreview(params) {
-  const c = ensure()
-  if (!c) return null
-  try {
+  function render() {
+    if (!mat) return
+    placeCamera()
+    renderer.setRenderTarget(null)
+    renderer.setClearColor(0x000000, 0)
+    renderer.clear(true, true, true)
+    renderer.render(scene, camera)
+  }
+
+  /** 贴图可能还没解码完 -> 过一会儿补画几次, 保证纹理真的出现在球上 */
+  function scheduleRetries() {
+    retryTimers.forEach(clearTimeout)
+    retryTimers = RETRY_MS.map((ms) => setTimeout(render, ms))
+  }
+
+  function setParams(params) {
     const uniforms = createSharedUniforms(params)
-    c.uniforms = uniforms
-    const bark = createBarkMaterial(params, uniforms)
-    const leaf = createLeafMaterial(params, uniforms)
-    // 预览球上不需要风场/生长动画
-    const out = {}
-    for (const [name, mat] of [['bark', bark], ['leaf', leaf]]) {
-      c.sphere.material = mat
-      c.renderer.setRenderTarget(null)
-      c.renderer.setClearColor(0x000000, 0)
-      c.renderer.clear(true, true, true)
-      c.renderer.render(c.scene, c.camera)
-      out[name] = c.canvas.toDataURL('image/png')
-      // 释放预览用材质 (纹理是缓存的, 不在这里释放)
-      mat.dispose()
+    if (mat) mat.dispose()
+    mat = kind === 'leaf' ? createLeafMaterial(params, uniforms) : createBarkMaterial(params, uniforms)
+    mesh.material = mat
+    // 贴图 onUpdate -> 立刻补画 (比定时重试更快)
+    for (const t of [mat.map, mat.normalMap, mat.roughnessMap]) {
+      if (t) t.userData.__mpHook = true
     }
-    return out
-  } catch (e) {
-    return null
+    render()
+    scheduleRetries()
+  }
+
+  function onDown(e) {
+    drag = { x: e.clientX, y: e.clientY }
+    canvas.setPointerCapture?.(e.pointerId)
+    e.preventDefault()
+  }
+  function onMove(e) {
+    if (!drag) return
+    const dx = e.clientX - drag.x
+    const dy = e.clientY - drag.y
+    drag = { x: e.clientX, y: e.clientY }
+    yaw -= dx * 0.012                  // 左右拖 -> 绕 Y 轴
+    pitch = Math.max(-1.45, Math.min(1.45, pitch + dy * 0.012))  // 上下拖 -> 俯仰
+    render()
+  }
+  function onUp(e) {
+    drag = null
+    canvas.releasePointerCapture?.(e.pointerId)
+  }
+  canvas.addEventListener('pointerdown', onDown)
+  canvas.addEventListener('pointermove', onMove)
+  canvas.addEventListener('pointerup', onUp)
+  canvas.addEventListener('pointercancel', onUp)
+  canvas.style.cursor = 'grab'
+
+  return {
+    setParams,
+    render,
+    dispose() {
+      retryTimers.forEach(clearTimeout)
+      canvas.removeEventListener('pointerdown', onDown)
+      canvas.removeEventListener('pointermove', onMove)
+      canvas.removeEventListener('pointerup', onUp)
+      canvas.removeEventListener('pointercancel', onUp)
+      if (mat) mat.dispose()
+      mesh.geometry.dispose()
+      renderer.dispose()
+    },
+    // 便于测试/外部控制
+    getCamera: () => camera,
+    rotateBy(dx, dy) {
+      yaw -= dx * 0.012
+      pitch = Math.max(-1.45, Math.min(1.45, pitch + dy * 0.012))
+      render()
+    },
   }
 }

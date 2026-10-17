@@ -1,52 +1,46 @@
 <!doctype html>
-<html lang="zh-CN">
-  <head><meta charset="UTF-8" /><title>matprev: booting</title></head>
-  <body style="margin:0;background:#111;color:#ddd;font:12px monospace">
-    <iframe id="f" src="/" style="width:1100px;height:700px;border:0"></iframe>
-    <pre id="out">…</pre>
-    <script type="module">
-      const f = document.getElementById('f')
-      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-      const L = []
-      const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
-      let win, doc, sc, state
-      f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
-      setTimeout(async () => {
-        try {
-          sc = win.__fastTreeScene; state = win.__fastTree
-          win.__fastTreeSceneApi.rebuildNow(true)
-          await sleep(600)
-          // 切换到「材质」页, 否则面板未挂载 (0 张图就是没切页)
-          const tabMat = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('材质'))
-          if (tabMat) { tabMat.click() }
-          await sleep(1600)
-          // ① 材质球预览组件是否渲染出图片
-          const imgs = [...doc.querySelectorAll('.mat-preview img')]
-          bar('① 材质球图片数=' + imgs.length + ' 尺寸=' + imgs.map((i) => i.naturalWidth + 'x' + i.naturalHeight).join(','))
-          bar('① 是非空 PNG=' + imgs.every((i) => i.src.startsWith('data:image/png') && i.src.length > 5000))
-          // ② 贴图扭曲: 开启后主树皮材质应编译成功且 uniform 生效
-          state.params.bark.texture = '/bark/bark_batch2/bark2_r01_c01.png'
-          state.params.bark.uvWarp = 0.12
-          state.params.bark.uvWarpScale = 12
-          sc.updateMaterialParams(state.params)
-          await sleep(1200)
-          const u = sc.materials.bark.userData.uniforms
-          bar('② 扭曲 uniform: uUvWarp=' + u.uUvWarp.value + ' 频率=' + u.uUvWarpScale.value)
-          let bad = 0
-          for (const p of (sc.renderer.info.programs || [])) if (p.diagnostics && (p.diagnostics.vertexShader || p.diagnostics.fragmentShader || p.diagnostics.programLog)) { bad++; bar('  编译失败: ' + String(p.diagnostics.programLog || p.diagnostics.vertexShader).slice(0, 160)) }
-          bar('② 着色器编译失败数=' + bad)
-          // ③ 改扭曲强度后材质球应重画 (dataURL 变化)
-          const before = [...doc.querySelectorAll('.mat-preview img')].map((i) => i.src.length).join(',')
-          state.params.bark.uvWarp = 0.3
-          await sleep(700)
-          const after = [...doc.querySelectorAll('.mat-preview img')].map((i) => i.src.length).join(',')
-          bar('③ 材质球重画: 前=' + before + ' 后=' + after + ' 变化=' + (before !== after))
-          bar('errs=none')
-          document.title = 'MATPREV-OK :: ' + L.join(' || ').slice(0, 1300)
-        } catch (e) {
-          document.title = 'MATPREV-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 500)
-        }
-      }, 3200)
-    </script>
-  </body>
-</html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>mp2: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1100px;height:700px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, sc, state
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    sc = win.__fastTreeScene; state = win.__fastTree
+    win.__fastTreeSceneApi.rebuildNow(true)
+    await sleep(600)
+    const tabMat = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('材质'))
+    tabMat.click(); await sleep(1800)
+    const cvs = [...doc.querySelectorAll('.mp-canvas')]
+    const pix = (cv) => { const c2 = doc.createElement('canvas'); c2.width = 64; c2.height = 64; const cx = c2.getContext('2d'); cx.drawImage(cv, 0, 0, 64, 64); return cx.getImageData(0, 0, 64, 64).data }
+    const nonEmpty = (d) => { let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] + d[i+1] + d[i+2] > 24) n++; return n }
+    bar('① 材质球 canvas 数=' + cvs.length + ' 有内容像素=' + cvs.map((c) => nonEmpty(pix(c))).join(','))
+    // ② 选一张预置树皮 -> 材质球应显示这张贴图 (画面平均色接近贴图)
+    state.params.bark.texture = '/bark/bark_batch2/bark2_r02_c01.png'
+    await sleep(2500)
+    const d2 = pix(cvs[0])
+    let r = 0, g = 0, b = 0, n = 0
+    for (let i = 0; i < d2.length; i += 4) { if (d2[i+3] > 10) { r += d2[i]; g += d2[i+1]; b += d2[i+2]; n++ } }
+    bar('② 选贴图后材质球平均色=[' + (r/n).toFixed(0) + ',' + (g/n).toFixed(0) + ',' + (b/n).toFixed(0) + '] 不透明像素=' + n)
+    bar('② 材质球有贴图纹理(红色分量明显)=' + (r / n) > 60)
+    // ③ 拖动旋转: 派发 pointer 事件 -> 球面内容应变化
+    const cv = cvs[0]
+    const before = Array.from(pix(cv).slice(0, 4000)).join(',')
+    const r0 = cv.getBoundingClientRect()
+    const pd = (type, x, y) => cv.dispatchEvent(new win.PointerEvent(type, { clientX: r0.left + x, clientY: r0.top + y, bubbles: true, pointerId: 1 }))
+    pd('pointerdown', 44, 44); await sleep(60)
+    pd('pointermove', 78, 60); await sleep(60)
+    pd('pointermove', 90, 76); await sleep(60)
+    pd('pointerup', 90, 76); await sleep(120)
+    const after = Array.from(pix(cv).slice(0, 4000)).join(',')
+    bar('③ 拖动后画面变化=' + (before !== after))
+    bar('errs=none')
+    document.title = 'MP2-OK :: ' + L.join(' || ').slice(0, 1200)
+  } catch (e) { document.title = 'MP2-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 400) }
+}, 3200)
+</script></body></html>

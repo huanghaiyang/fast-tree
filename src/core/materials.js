@@ -460,8 +460,8 @@ export function updateBarkMaterial(mat, params, sharedUniforms) {
 
   if (p.texture) {
     const key = 'user:' + p.texture.slice(-48) + ':' + (p.normalTexture || '').slice(-24)
-    if (key !== barkTextureCacheKey) {
-      barkTextureCacheKey = key
+    if (key !== mat.userData.__texKey) {
+      mat.userData.__texKey = key
       clearAutoBarkTextures(mat)
       mat.map = loadTexture(p.texture)
       if (p.normalTexture) mat.normalMap = loadTexture(p.normalTexture, { srgb: false, normal: true })
@@ -472,8 +472,8 @@ export function updateBarkMaterial(mat, params, sharedUniforms) {
   } else {
     const proc = p.procedural || {}
     const key = `proc:${proc.style}:${proc.scale}:${proc.contrast}:${p.bump}:${p.color}:${p.color2}`
-    if (key !== barkTextureCacheKey) {
-      barkTextureCacheKey = key
+    if (key !== mat.userData.__texKey) {
+      mat.userData.__texKey = key
       clearAutoBarkTextures(mat)
       const tex = makeBarkTextures({
         style: proc.style, scale: proc.scale, contrast: proc.contrast,
@@ -545,8 +545,8 @@ export function updateLeafMaterial(mat, params, sharedUniforms) {
   u.uLeafTwist.value = params.wind.leafTwist
 
   const key = p.texture ? 'user:' + p.texture.slice(-48) : 'auto:' + params.leaves.shape
-  if (key !== leafTextureCacheKey) {
-    leafTextureCacheKey = key
+  if (key !== mat.userData.__texKey) {
+    mat.userData.__texKey = key
     const old = mat.map
     const hadAuto = mat.userData.autoLeafMap
     if (p.texture) {

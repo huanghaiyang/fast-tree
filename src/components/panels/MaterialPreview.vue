@@ -2,49 +2,54 @@
   <Section title="材质球预览" hint="Preview">
     <div class="mat-preview">
       <div class="mp-item">
-        <img v-if="barkSrc" :src="barkSrc" alt="bark" />
-        <div v-else class="mp-empty">…</div>
+        <canvas ref="barkCanvas" class="mp-canvas" title="拖动可旋转" />
         <span>树皮</span>
       </div>
       <div class="mp-item">
-        <img v-if="leafSrc" :src="leafSrc" alt="leaf" />
-        <div v-else class="mp-empty">…</div>
+        <canvas ref="leafCanvas" class="mp-canvas" title="拖动可旋转" />
         <span>树叶</span>
       </div>
     </div>
-    <p class="mp-tip">用当前参数实时烘焙 (独立光照: 主光+补光+轮廓光)，看材质本身的效果</p>
+    <p class="mp-tip">拖动材质球可四方旋转 · 显示当前参数与所选贴图</p>
   </Section>
 </template>
 
 <script setup>
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import Section from '../ui/Section.vue'
 import { state } from '../../store/treeStore.js'
-import { renderMaterialPreview } from '../../core/materialPreview.js'
+import { createMaterialPreview } from '../../core/materialPreview.js'
 
-const barkSrc = ref('')
-const leafSrc = ref('')
+const barkCanvas = ref(null)
+const leafCanvas = ref(null)
+let barkPv = null
+let leafPv = null
 let timer = 0
 
 function refresh() {
-  const out = renderMaterialPreview(state.params)
-  if (out) {
-    barkSrc.value = out.bark
-    leafSrc.value = out.leaf
-  }
+  if (!barkPv) return
+  barkPv.setParams(state.params)
+  leafPv?.setParams(state.params)
 }
 
 function schedule() {
   clearTimeout(timer)
-  timer = setTimeout(refresh, 120)
+  timer = setTimeout(refresh, 100)
 }
 
 onMounted(() => {
-  // 等主场景把贴图/材质准备好再画
-  setTimeout(refresh, 300)
+  barkPv = createMaterialPreview(barkCanvas.value, 'bark')
+  leafPv = createMaterialPreview(leafCanvas.value, 'leaf')
+  // 主场景先完成首帧再画 (贴图缓存已就绪时纹理能立刻显示)
+  setTimeout(refresh, 350)
 })
 
-// 材质组任一参数变化就重画 (不重建树)
+onBeforeUnmount(() => {
+  clearTimeout(timer)
+  barkPv?.dispose()
+  leafPv?.dispose()
+})
+
 watch(
   () => JSON.stringify({
     bark: state.params.bark,
@@ -58,10 +63,12 @@ watch(
 </script>
 
 <style scoped>
-.mat-preview { display: flex; gap: 10px; justify-content: center; padding: 2px 0 6px; }
-.mp-item { display: flex; flex-direction: column; align-items: center; gap: 3px; }
-.mp-item img { width: 76px; height: 76px; border-radius: 50%; background: #0b0e13; border: 1px solid var(--line); }
-.mp-empty { width: 76px; height: 76px; border-radius: 50%; background: #0b0e13; border: 1px solid var(--line); }
+.mat-preview { display: flex; gap: 14px; justify-content: center; padding: 4px 0 6px; }
+.mp-item { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.mp-canvas {
+  width: 88px; height: 88px; border-radius: 50%; background: #0b0e13;
+  border: 1px solid var(--line); touch-action: none; display: block;
+}
 .mp-item span { font-size: 10.5px; color: var(--text-2); }
 .mp-tip { margin: 0; font-size: 10.5px; color: var(--text-2); }
 </style>

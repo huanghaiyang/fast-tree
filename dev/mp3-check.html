@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>mp3: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1100px;height:700px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    state = win.__fastTree
+    win.__fastTreeSceneApi.rebuildNow(true)
+    await sleep(600)
+    const tabMat = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('材质'))
+    tabMat.click(); await sleep(1800)
+    const cvs = [...doc.querySelectorAll('.mp-canvas')]
+    const snap = (cv) => { const c = doc.createElement('canvas'); c.width = 48; c.height = 48; const x = c.getContext('2d'); x.drawImage(cv, 0, 0, 48, 48); const d = x.getImageData(0, 0, 48, 48).data; let s = 0; for (let i = 0; i < d.length; i += 4) s += d[i] * 3 + d[i+1] * 5 + d[i+2] * 7; return s }
+    const mod = await import('/src/core/barkTextures.js')
+    const a = snap(cvs[0])
+    // 逐个换 3 张预置树皮, 材质球应有变化
+    const seen = []
+    for (const idx of [0, 7, 20]) {
+      state.params.bark.texture = mod.BARK_TEXTURES[idx].url
+      await sleep(2200)
+      seen.push(snap(cvs[0]))
+    }
+    bar('① 换 3 张贴图后的材质球指纹=' + seen.join(','))
+    bar('① 三次都不同=' + (new Set(seen).size === 3) + ' 且与初始不同=' + (seen.every((v) => v !== a)))
+    // ② 主树皮材质也应该跟着换 (同一个材质实例)
+    bar('② 主树皮 map 已挂=' + !!win.__fastTreeScene.materials.bark.map + ' 尺寸=' + (win.__fastTreeScene.materials.bark.map && win.__fastTreeScene.materials.bark.map.image ? win.__fastTreeScene.materials.bark.map.image.width + 'x' + win.__fastTreeScene.materials.bark.map.image.height : '-'))
+    // ③ 叶片卡片: 材质球(树叶)也应更新
+    const cardMod = await import('/src/core/leafCards.generated.js')
+    const before2 = snap(cvs[1])
+    win.__fastTreeApi.applyLeafCard(cardMod.LEAF_CARDS[3].id)
+    await sleep(2400)
+    const after2 = snap(cvs[1])
+    bar('③ 换叶片卡片后树叶球变化=' + (before2 !== after2))
+    bar('errs=none')
+    document.title = 'MP3-OK :: ' + L.join(' || ').slice(0, 1200)
+  } catch (e) { document.title = 'MP3-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 400) }
+}, 3200)
+</script></body></html>
