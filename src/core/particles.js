@@ -119,6 +119,8 @@ void main() {
   float a = core * vAlpha * uOpacity;
   if (a < 0.01) discard;
   gl_FragColor = vec4(uColor * (0.5 + 0.9 * vGlow), a);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
 }
 `
 

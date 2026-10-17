@@ -92,6 +92,42 @@
           bar('秋季(原色)=' + JSON.stringify(autumnTex) + '  差异=' + dist(summer, autumnTex).toFixed(2))
           bar('秋季(跟随季节)=' + JSON.stringify(autumnSeason) + '  差异 vs 原色=' + dist(autumnTex, autumnSeason).toFixed(2))
           bar('结论: 原色模式季节无关=' + (dist(summer, autumnTex) < 6) + ' / 跟随季节确实变色=' + (dist(autumnTex, autumnSeason) > 6))
+          // ===== 跟随贴图同步 + 落叶输出变换 =====
+          state.params.leafMat.texture = ''
+          state.params.leaves.cardMode = true
+          state.params.fall = { ...state.params.fall, enabled: true, cardId: '', count: 120, size: 0.6 }
+          state.params.litter = { ...state.params.litter, enabled: true, cardId: '', count: 300 }
+          win.__fastTreeApi.applyLeafCard(mod.LEAF_CARDS[0].id)
+          win.__fastTreeSceneApi.rebuildNow(false)
+          await sleep(400)
+          sc.updateFall(state.params); sc.updateLitter(state.params)
+          await sleep(300)
+          const mapA = sc.fallMesh && sc.fallMesh.material.uniforms.uMap.value
+          const lmapA = sc.materials.leaf.map
+          const litterA = sc.litterMesh && sc.litterMesh.material.map
+          // 换另一张卡片 (落叶/堆积都是"跟随树叶")
+          const cardB = mod.LEAF_CARDS.find((c) => c.batch !== mod.LEAF_CARDS[0].batch) || mod.LEAF_CARDS[5]
+          win.__fastTreeApi.applyLeafCard(cardB.id)
+          win.__fastTreeSceneApi.rebuildNow(false)
+          await sleep(400)
+          sc.updateFall(state.params); sc.updateLitter(state.params)
+          await sleep(400)
+          const mapB = sc.fallMesh && sc.fallMesh.material.uniforms.uMap.value
+          const lmapB = sc.materials.leaf.map
+          const litterB = sc.litterMesh && sc.litterMesh.material.map
+          bar('换贴图前: 落叶map=树叶map ' + (mapA === lmapA) + ' / 堆积map=树叶map ' + (litterA === lmapA))
+          bar('换贴图后: 落叶map 已更新=' + (mapB !== mapA) + ' 且=新树叶map ' + (mapB === lmapB) + ' / 堆积已更新=' + (litterB !== litterA) + ' 且=新贴图 ' + (litterB === lmapB))
+          bar('落叶卡贴图尺寸=' + (mapB && mapB.image ? mapB.image.width + 'x' + mapB.image.height : '?'))
+          let bad4 = 0
+          for (const p of (sc.renderer.info.programs || [])) if (p.diagnostics && (p.diagnostics.vertexShader || p.diagnostics.fragmentShader || p.diagnostics.programLog)) { bad4++; bar('✗ 编译失败: ' + String(p.diagnostics.programLog || '').replace(/\n/g, ' ').slice(0, 200)) }
+          bar('含落叶/堆积的 program 编译失败=' + bad4)
+          // 拍一张落叶特写
+          state.params.leaves.enabled = true
+          setPose(); await sleep(200)
+          for (let i = 0; i < 8; i++) { sc.renderer.render(sc.scene, sc.camera); await sleep(120) }
+          const cv2 = doc.querySelector('canvas')
+          await fetch('http://127.0.0.1:5274/shot?name=fall-color', { method: 'POST', body: cv2.toDataURL('image/png') })
+          bar('shot fall-color')
           bar('errs=' + (errs.length ? errs.slice(0, 3).join(' ;; ') : 'none'))
           document.title = 'TINTCHECK-OK :: ' + L.join(' || ').slice(0, 1500)
         } catch (e) {

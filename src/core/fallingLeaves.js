@@ -86,7 +86,7 @@ void main() {
 }
 `
 
-const FALL_FRAG = /* glsl */`
+export const FALL_FRAG = /* glsl */`
 uniform sampler2D uMap;
 uniform float uHasMap;
 uniform vec3 uColor;
@@ -103,11 +103,28 @@ void main() {
     if (length(vec2(d.x * 1.6, d.y)) > 0.5) discard;
   }
   if (uHasMap > 0.5 && tex.a < uAlphaTest) discard;
+  // 贴图是 sRGB 纹理, 采样后已是线性值; 输出必须和主树叶材质走同一套变换,
+  // 否则同一张贴图在"树上"和"落叶上"颜色会不一致。
   vec3 col = (uHasMap > 0.5 ? tex.rgb : uColor) * vShade;
-  gl_FragColor = vec4(col, (uHasMap > 0.5 ? 1.0 : uOpacity));
-  if (vShade < 0.02) discard;
+  float alpha = (uHasMap > 0.5 ? 1.0 : uOpacity) * vShade;
+  if (alpha < 0.01) discard;
+  gl_FragColor = vec4(col, alpha);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
 }
 `
+
+/** 落叶需要重建的判据: 任一变化都要重新生成几何/材质 */
+export function fallRebuildKey(params) {
+  const F = params.fall || {}
+  return [
+    F.cardId || '',
+    Math.round(F.count === undefined ? 80 : F.count),
+    // 跟随树叶时, 树叶贴图变了也必须重建 (否则跟随的落叶不会换贴图)
+    params.leafMat && params.leafMat.texture ? params.leafMat.texture : '',
+    params.leaves && params.leaves.cardAspect,
+  ].join('|')
+}
 
 /**
  * 构建落叶网格

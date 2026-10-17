@@ -10,8 +10,8 @@ import {
 } from './materials.js'
 import { exportGLB, exportOBJ, exportScreenshot } from './exporter.js'
 import { buildParticlePoints, updateParticleMaterial } from './particles.js'
-import { buildFallingLeaves, updateFallingLeaves } from './fallingLeaves.js'
-import { buildLeafLitter } from './litter.js'
+import { buildFallingLeaves, updateFallingLeaves, fallRebuildKey } from './fallingLeaves.js'
+import { buildLeafLitter, litterRebuildKey } from './litter.js'
 import { boxInfo } from './mathUtils.js'
 
 const SKY_VERT = /* glsl */`
@@ -531,7 +531,7 @@ export class TreeScene {
       return
     }
     // 贴图卡片/数量/宽高比变化时必须重建 (否则换贴图不生效 -> 看起来像"跟随树叶失效")
-    const key = [F.cardId || '', Math.round(F.count === undefined ? 80 : F.count), params.leaves && params.leaves.cardAspect].join('|')
+    const key = fallRebuildKey(params)
     if (!this.fallMesh || key !== this._fallKey) {
       this._fallKey = key
       this.rebuildFall(params)
@@ -567,14 +567,7 @@ export class TreeScene {
       if (this.litterMesh) this.litterMesh.visible = false
       return
     }
-    const key = [
-      L.cardId || '', Math.round(L.count === undefined ? 260 : L.count),
-      Math.round((L.radius === undefined ? 1 : L.radius) * 100),
-      Math.round((L.size === undefined ? 0.55 : L.size) * 100),
-      Math.round((L.thickness === undefined ? 0.06 : L.thickness) * 1000),
-      Math.round((L.colorVariance === undefined ? 0.45 : L.colorVariance) * 100),
-      params.leaves && params.leaves.cardAspect,
-    ].join('|')
+    const key = litterRebuildKey(params)
     if (!this.litterMesh || key !== this._litterKey) {
       this._litterKey = key
       this.rebuildLitter(params)

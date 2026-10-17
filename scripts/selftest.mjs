@@ -11,8 +11,8 @@ import {
 import { buildLeafTemplate, LEAF_SHAPE_KEYS } from '../src/core/leaf.js'
 import { createSharedUniforms, createLeafMaterial, createBarkMaterial, updateMaterials, internalShaderSources, resolveTintMix } from '../src/core/materials.js'
 import { sampleEmitPositions, buildParticleSeeds, createParticleMaterial, PARTICLE_VERT, PARTICLE_FRAG } from '../src/core/particles.js'
-import { buildFallingLeaves } from '../src/core/fallingLeaves.js'
-import { buildLeafLitter } from '../src/core/litter.js'
+import { buildFallingLeaves, fallRebuildKey, FALL_FRAG } from '../src/core/fallingLeaves.js'
+import { buildLeafLitter, litterRebuildKey } from '../src/core/litter.js'
 import { ellipseLeafTexture, resolveEffectTexture, resolveEffectAspect } from '../src/core/leafTexture.js'
 import { LEAF_CARDS } from '../src/core/leafCards.generated.js'
 import { motionMetrics, swayEnvelope } from '../src/core/windModel.js'
@@ -1015,6 +1015,27 @@ console.log('\n[19] 贴图原色模式不被季节染色')
   check('默认染色模式 = 跟随季节 (程序化叶形默认有颜色)', composeTree('oak', 'mature', 'summer', 4242).leafMat.tintMode === 'season')
   check('原色模式下: mix=0 + tint=白 + 无自发光 -> 季节色无处参与',
     resolveTintMix(p0.leafMat, true) === 0 && p0.leafMat.tint === '#ffffff' && p0.leafMat.emissive === 0)
+}
+
+/* 20. 落叶/堆积的"跟随贴图"同步 */
+console.log('\n[20] 落叶/堆积 跟随贴图同步 + 输出色彩管线')
+{
+  const base = composeTree('oak', 'mature', 'summer', 4242)
+  base.fall = { ...base.fall, enabled: true }
+  base.litter = { ...base.litter, enabled: true }
+  const k0 = fallRebuildKey(base)
+  const l0 = litterRebuildKey(base)
+  const withTex = { ...base, leafMat: { ...base.leafMat, texture: '/leaves/a.png' } }
+  check('跟随树叶时: 换树叶贴图会触发落叶重建', fallRebuildKey(withTex) !== k0,
+    fallRebuildKey(withTex) + ' vs ' + k0)
+  check('跟随树叶时: 换树叶贴图会触发堆积重建', litterRebuildKey(withTex) !== l0)
+  check('换落叶自己的卡片也会触发重建',
+    fallRebuildKey({ ...base, fall: { ...base.fall, cardId: 'batch1-r01-c01' } }) !== k0)
+  check('参数不变 -> 键不变 (不抖动重建)', fallRebuildKey({ ...base }) === k0 && litterRebuildKey({ ...base }) === l0)
+  // 色彩管线: 自定义 ShaderMaterial 必须自己做色调映射 + 色彩空间输出
+  check('落叶片元着色器走 three 的输出变换 (色调映射 + sRGB 编码)',
+    /#include <tonemapping_fragment>/.test(FALL_FRAG) && /#include <colorspace_fragment>/.test(FALL_FRAG))
+  check('粒子片元着色器同样', /#include <colorspace_fragment>/.test(PARTICLE_FRAG))
 }
 
 /* 汇总 */

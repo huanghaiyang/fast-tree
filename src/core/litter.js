@@ -2,6 +2,21 @@ import * as THREE from 'three'
 import { makeRng } from './rng.js'
 import { resolveEffectTexture, resolveEffectAspect } from './leafTexture.js'
 
+/** 堆积需要重建的判据 (同样包含"跟随的树叶贴图") */
+export function litterRebuildKey(params) {
+  const L = params.litter || {}
+  return [
+    L.cardId || '',
+    Math.round(L.count === undefined ? 260 : L.count),
+    Math.round((L.radius === undefined ? 1 : L.radius) * 100),
+    Math.round((L.size === undefined ? 0.55 : L.size) * 100),
+    Math.round((L.thickness === undefined ? 0.06 : L.thickness) * 1000),
+    Math.round((L.colorVariance === undefined ? 0.45 : L.colorVariance) * 100),
+    params.leafMat && params.leafMat.texture ? params.leafMat.texture : '',
+    params.leaves && params.leaves.cardAspect,
+  ].join('|')
+}
+
 /**
  * 地面落叶堆积
  * ------------------------------------------------------------
