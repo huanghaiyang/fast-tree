@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><title>fx-check: booting</title></head>
+  <body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+    <iframe id="f" src="/" style="width:1500px;height:900px;border:0"></iframe>
+    <pre id="out">…</pre>
+    <script type="module">
+      document.title = 'P0'
+      const RECV = 'http://127.0.0.1:5274/shot'
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const lines = []
+      const bar = (l) => { lines.push(l); document.getElementById('out').textContent = lines.join('\n') }
+      let win, doc, state, sc
+      const errs = []
+      f.addEventListener('load', () => {
+        win = f.contentWindow; doc = f.contentDocument; state = win.__fastTree; sc = win.__fastTreeScene
+        win.addEventListener('error', (e) => errs.push('ERR:' + String(e.message).slice(0, 160)))
+        const oe = win.console.error
+        win.console.error = function (...a) { errs.push('CERR:' + a.map(String).join(' ').slice(0, 220)); oe.apply(win.console, a) }
+      })
+      async function shot(name) {
+        const cv = doc.querySelector('canvas')
+        for (let i = 0; i < 8; i++) { sc.renderer.render(sc.scene, sc.camera); await sleep(120) }
+        await fetch(`${RECV}?name=${name}`, { method: 'POST', body: cv.toDataURL('image/png') })
+        bar('shot ' + name)
+      }
+      const progOK = () => {
+        const mats = []
+        sc.treeGroup?.traverse((o) => { if (o.isMesh || o.isPoints) mats.push(o) })
+        let compiled = 0, failed = 0
+        for (const o of mats) {
+          const p = sc.renderer.properties.get(o.material)?.currentProgram
+          if (p === undefined) failed++
+          else if (p) compiled++
+        }
+        return { meshes: mats.length, compiled, failed }
+      }
+      document.title = 'P1'
+      setTimeout(async () => {
+        document.title = 'P2-timer'
+        try {
+          for (let i = 0; i < 60 && !(state && state.stats && sc && sc.barkMesh); i++) await sleep(150)
+          document.title = 'P3-app-ready:' + !!state + ',' + !!sc
+          const base = { ...state.stats }
+          bar(`基线: 叶面=${base.leafTriangles} 果=${base.fruit}`)
+          // ===== 1) 反光 + 散光 =====
+          state.params.leafMat.specular = 1.6
+          state.params.leafMat.specularShininess = 70
+          state.params.leafMat.scatter = 1.0
+          state.params.leafMat.scatterPower = 3.0
+          state.params.leafMat.translucency = 0.9
+          await sleep(300)
+          if (sc) sc.renderer.render(sc.scene, sc.camera)
+          await sleep(200)
+          const u = sc.materials.leaf.userData.uniforms
+          bar(`uniform: spec=${u.uSpecular.value} shin=${u.uSpecularShininess.value} scatter=${u.uScatter.value} pow=${u.uScatterPower.value}`)
+          // 着色器编译状态
+          const st1 = progOK()
+          bar(`着色器: 物体=${st1.meshes} 已编译=${st1.compiled} 未就绪=${st1.failed}`)
+          // 逆光看叶缘 (散光最明显): 相机转到光源对面
+          sc.controls.target.set(0, state.stats.height * 0.62, 0)
+          sc.camera.position.set(-6, state.stats.height * 0.72, -7)
+          sc.camera.lookAt(sc.controls.target)
+          await shot('leaf-reflection')
+          // ===== 2) 粒子发射 =====
+          state.params.particles.enabled = true
+          state.params.particles.count = 600
+          state.params.particles.size = 0.09
+          state.params.particles.glow = 1.4
+          state.params.particles.color = '#ffe9a8'
+          await sleep(400)
+          if (sc) sc.renderer.render(sc.scene, sc.camera)
+          await sleep(200)
+          bar(`粒子对象: ${!!sc.particles} 可见=${sc.particles ? sc.particles.visible : '-'} 数量=${sc.particles ? sc.particles.geometry.attributes.position.count : '-'}`)
+          const st2 = progOK()
+          bar(`着色器(含粒子): 物体=${st2.meshes} 已编译=${st2.compiled} 未就绪=${st2.failed}`)
+          // 粒子改动不重建整树
+          const tri0 = state.stats.leafTriangles
+          state.params.particles.count = 1200
+          await sleep(400)
+          if (sc) sc.renderer.render(sc.scene, sc.camera)
+          bar(`改粒子数: 数量=${sc.particles ? sc.particles.geometry.attributes.position.count : '-'} 叶面是否重建=${state.stats.leafTriangles !== tri0}`)
+          // 关掉粒子
+          state.params.particles.enabled = false
+          await sleep(400)
+          bar(`关粒子: 可见=${sc.particles ? sc.particles.visible : '-'}`)
+          state.params.particles.enabled = true
+          state.params.particles.count = 500
+          await sleep(400)
+          sc.controls.target.set(0, state.stats.height * 0.55, 0)
+          sc.camera.position.set(9, state.stats.height * 0.75, 11)
+          sc.camera.lookAt(sc.controls.target)
+          await shot('leaf-particles')
+          bar('errs=' + (errs.length ? errs.slice(0, 4).join(' ;; ') : 'none'))
+          document.title = 'FXCHECK-OK :: ' + lines.join(' || ').slice(0, 1800)
+        } catch (e) {
+          document.title = 'FXCHECK-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 600)
+        }
+      }, 4200)
+    </script>
+  </body>
+</html>

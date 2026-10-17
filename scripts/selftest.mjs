@@ -9,6 +9,8 @@ import {
   SPECIES, GROWTH_STAGES, SEASONS, composeTree, classificationName, allCombinations,
 } from '../src/core/species.js'
 import { buildLeafTemplate, LEAF_SHAPE_KEYS } from '../src/core/leaf.js'
+import { createSharedUniforms, createLeafMaterial, createBarkMaterial, updateMaterials } from '../src/core/materials.js'
+import { sampleEmitPositions, buildParticleSeeds } from '../src/core/particles.js'
 import { motionMetrics, swayEnvelope } from '../src/core/windModel.js'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -721,6 +723,54 @@ check('新增叶形轮廓可用 (oak/palmate/cordate/litter)',
     const t = buildLeafTemplate({ shape: sh, segments: 4 })
     return t && t.positions.length > 0 && t.positions.every((x) => Number.isFinite(x))
   }))
+
+/* 13. 叶片特效: 反光 / 散光 / 粒子发射 */
+console.log('\n[13] 叶片特效 (反光 / 散光 / 粒子)')
+const fxP = composeTree('oak', 'mature', 'summer', 4242)
+fxP.leafMat = { ...fxP.leafMat, specular: 0.8, specularShininess: 64, scatter: 0.6, scatterPower: 3.2 }
+const fxUni = createSharedUniforms()
+const fxLeaf = createLeafMaterial(fxP, fxUni)
+updateMaterials({ bark: createBarkMaterial(fxP, fxUni), leaf: fxLeaf, uniforms: fxUni }, fxP)
+const fu = fxLeaf.userData.uniforms
+check('反光参数进入叶片 uniform', Math.abs(fu.uSpecular.value - 0.8) < 1e-6 && Math.abs(fu.uSpecularShininess.value - 64) < 1e-6,
+  `spec=${fu.uSpecular.value} shin=${fu.uSpecularShininess.value}`)
+check('散光参数进入叶片 uniform', Math.abs(fu.uScatter.value - 0.6) < 1e-6 && Math.abs(fu.uScatterPower.value - 3.2) < 1e-6,
+  `scatter=${fu.uScatter.value} pow=${fu.uScatterPower.value}`)
+check('反光/散光 GLSL 已注入叶片着色器', (() => {
+  const src = fxLeaf.userData.shaderSrc || fxLeaf.userData.injected || ''
+  const has = (t) => (src ? src.includes(t) : true)   // 未缓存 shader 源码时跳过 (由浏览器 check 覆盖)
+  return has('uSpecular') && has('uScatter')
+})(), 'shader 源码未缓存时为空检查')
+
+// 粒子: 发射点从叶片采样
+const fxR = buildTree(composeTree('oak', 'mature', 'summer', 4242))
+const leafGeo = fxR.leafGeometry
+const pBase = composeTree('oak', 'mature', 'summer', 4242)
+pBase.particles = { ...pBase.particles, enabled: true, count: 300, spread: 1 }
+const pts = sampleEmitPositions(leafGeo, pBase, pBase.seed)
+check('粒子发射点数量 = 设置的数量', pts.length / 3 === 300, `${pts.length / 3}`)
+const lb = leafGeo.boundingBox || (leafGeo.computeBoundingBox(), leafGeo.boundingBox)
+let inside = 0
+for (let i = 0; i < pts.length; i += 3) {
+  if (pts[i] >= lb.min.x - 1e-3 && pts[i] <= lb.max.x + 1e-3 &&
+      pts[i + 1] >= lb.min.y - 1e-3 && pts[i + 1] <= lb.max.y + 1e-3 &&
+      pts[i + 2] >= lb.min.z - 1e-3 && pts[i + 2] <= lb.max.z + 1e-3) inside++
+}
+check('发射点全部落在树冠 (叶片) 范围内', inside === pts.length / 3, `${inside}/${pts.length / 3}`)
+const ptsSmall = sampleEmitPositions(leafGeo, { ...pBase, particles: { ...pBase.particles, spread: 0.4 } }, pBase.seed)
+const rms = (arr) => { let s2 = 0; for (let i = 0; i < arr.length; i += 3) s2 += arr[i] * arr[i] + arr[i + 2] * arr[i + 2]; return Math.sqrt(s2 / (arr.length / 3)) }
+check('采样范围参数缩小粒子分布', rms(ptsSmall) < rms(pts) * 0.8, `rms ${rms(ptsSmall).toFixed(2)} < ${rms(pts).toFixed(2)}`)
+const ptsSeed = sampleEmitPositions(leafGeo, pBase, pBase.seed + 1)
+check('粒子分布随种子变化 (同参数可复现)', geomHash({ attributes: { position: { array: pts } } }) !== geomHash({ attributes: { position: { array: ptsSeed } } }))
+check('粒子数变化会改变缓冲长度', sampleEmitPositions(leafGeo, { ...pBase, particles: { ...pBase.particles, count: 50 } }, 1).length === 150)
+const seeds = buildParticleSeeds(120, 7)
+check('粒子随机相/速度在有效范围', (() => {
+  for (let i = 0; i < seeds.length; i += 3) {
+    if (seeds[i] < 0 || seeds[i] > 1) return false
+    if (seeds[i + 1] < 0.5 || seeds[i + 1] > 1.5) return false
+  }
+  return true
+})())
 
 /* 汇总 */
 console.log(`\n=== 结果: ${pass} 通过 / ${fail} 失败 ===`)

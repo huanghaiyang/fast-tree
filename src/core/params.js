@@ -175,6 +175,21 @@ export function defaultParams() {
       cardFold: 0.12,      // 卡片沿中脉的折叠
     },
 
+    // ---------------- 粒子发射 (从叶片位置发射) ----------------
+    particles: {
+      enabled: false,
+      count: 240,          // 粒子数
+      size: 0.05,          // 粒子大小(米, 世界尺度)
+      speed: 0.35,         // 生命循环速度 (每秒循环比例)
+      fall: 1.0,           // 下落距离倍率
+      sway: 1.0,           // 横向飘动幅度倍率
+      swirl: 0.6,          // 打旋
+      color: '#fff0b8',    // 粒子颜色 (花粉末/光点)
+      opacity: 0.85,
+      glow: 0.8,           // 自发光强度 (叠加模式更亮)
+      spread: 1.0,         // 采样范围 = 树冠半径 × 该值
+    },
+
     // ---------------- 果实 ----------------
     fruit: {
       enabled: false,
@@ -220,6 +235,13 @@ export function defaultParams() {
       alphaTest: 0.4,
       doubleSided: true,
       translucency: 0.45,
+      // ---- 反光 (叶面高光: 湿叶/蜡质叶面) ----
+      specular: 0.25,          // 高光强度
+      specularShininess: 28,   // 高光锐度 (越大越集中)
+      specularColor: '#ffffff',
+      // ---- 散光 (叶肉散射: 边缘/逆光处发亮) ----
+      scatter: 0.0,            // 边缘散射强度
+      scatterPower: 2.0,       // 边缘锐度 (越大越贴边)
       emissive: 0.0,
       texture: '',
       normalTexture: '',
@@ -328,7 +350,7 @@ export function normalizeParams(p) {
 }
 
 const GEOMETRY_KEYS = ['seed', 'auto', 'trunk', 'roots', 'branches', 'leaves', 'fruit', 'lod']
-const MATERIAL_KEYS = ['bark', 'leafMat', 'custom']
+const MATERIAL_KEYS = ['bark', 'leafMat', 'custom', 'particles']
 const WIND_KEYS = ['wind']
 const SCENE_KEYS = ['scene', 'growth']
 

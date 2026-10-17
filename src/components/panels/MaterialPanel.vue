@@ -31,9 +31,39 @@
     <SliderRow label="Alpha 裁剪" v-model="lm.alphaTest" :min="0" :max="1" :step="0.01" />
     <SliderRow label="透光度 (背光)" v-model="lm.translucency" :min="0" :max="1.5" :step="0.01"
       hint="树叶逆光时的半透效果" />
+    <SliderRow label="反光强度" v-model="lm.specular" :min="0" :max="2" :step="0.01"
+      hint="叶面高光 (湿叶/蜡质叶面那种反光)" />
+    <SliderRow label="反光锐度" v-model="lm.specularShininess" :min="2" :max="120" :step="1"
+      hint="越大高光越集中、越像镜面" />
+    <ColorRow label="反光颜色" v-model="lm.specularColor" />
+    <SliderRow label="散光强度" v-model="lm.scatter" :min="0" :max="1.5" :step="0.01"
+      hint="叶肉透射散射: 叶缘/逆光处发亮 (0 = 关闭)" />
+    <SliderRow label="散光边缘锐度" v-model="lm.scatterPower" :min="0.5" :max="8" :step="0.1"
+      hint="越大散射越集中在叶缘" />
     <ToggleRow label="双面渲染" v-model="lm.doubleSided" />
     <TextureRow label="自定义叶片贴图 (含 alpha)" v-model="lm.texture" />
     <TextureRow label="自定义法线贴图" v-model="lm.normalTexture" />
+  </Section>
+
+  <Section title="叶片粒子发射" hint="Foliage Particles" :default-collapsed="true">
+    <ToggleRow label="启用粒子" v-model="pt.enabled"
+      hint="从叶片位置发射飘动的光点/花粉 (顶点着色器动画, CPU 零开销)" />
+    <template v-if="pt.enabled">
+      <SliderRow label="粒子数量" v-model="pt.count" :min="10" :max="2000" :step="10" />
+      <SliderRow label="粒子大小" v-model="pt.size" :min="0.005" :max="0.3" :step="0.005" unit="m" />
+      <SliderRow label="循环速度" v-model="pt.speed" :min="0.02" :max="2" :step="0.01" />
+      <SliderRow label="下落距离" v-model="pt.fall" :min="0" :max="2" :step="0.05" />
+      <SliderRow label="横向飘动" v-model="pt.sway" :min="0" :max="3" :step="0.05" />
+      <SliderRow label="打旋" v-model="pt.swirl" :min="0" :max="3" :step="0.05" />
+      <SliderRow label="采样范围" v-model="pt.spread" :min="0.2" :max="1.5" :step="0.01"
+        hint="发射点取树冠的哪一部分 (1 = 整个树冠)" />
+      <SliderRow label="粒子亮度" v-model="pt.glow" :min="0.1" :max="3" :step="0.05" />
+      <SliderRow label="粒子不透明度" v-model="pt.opacity" :min="0.05" :max="1" :step="0.01" />
+      <ColorRow label="粒子颜色" v-model="pt.color" />
+      <p class="muted" style="margin: 0">
+        发射点从叶片顶点采样, 粒子用叠加混合绘制 —— 适合做花粉、光尘、孢子飘散。
+      </p>
+    </template>
   </Section>
 
   <Section title="内置叶片卡片" hint="Leaf Cards" :default-collapsed="true">
@@ -99,6 +129,7 @@ import { computed, ref } from 'vue'
 const b = state.params.bark
 const lm = state.params.leafMat
 const lv = state.params.leaves
+const pt = state.params.particles
 const c = state.params.custom
 const shaderError = computed(() => state.shaderError)
 

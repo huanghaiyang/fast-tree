@@ -125,6 +125,12 @@ uniform float uSeed;
 uniform float uVertexColorMix;
 uniform vec3 uTint;
 uniform float uTranslucency;
+// --- 叶片反光 / 散光 ---
+uniform float uSpecular;
+uniform float uSpecularShininess;
+uniform vec3 uSpecularColor;
+uniform float uScatter;
+uniform float uScatterPower;
 uniform vec3 uSunDir;
 uniform vec3 uSunColor;
 // --- 模型节点选中 ---
@@ -167,6 +173,30 @@ const TRANSLUCENCY = /* glsl */`
   #ifndef FLAT_SHADED
     float treeBack = pow(max(dot(normalize(vNormal), normalize(-uSunDir)), 0.0), 1.4);
     totalEmissiveRadiance += diffuseColor.rgb * uTranslucency * treeBack * uSunColor * (0.4 + 0.6 * vTreeWind);
+  #endif
+`
+
+/** 叶片反光 (叶面高光) + 散光 (叶肉散射/边缘透亮) */
+const LEAF_REFLECTION = /* glsl */`
+  #ifndef FLAT_SHADED
+  {
+    vec3 treeN = normalize(vNormal);
+    vec3 treeV = normalize(vViewPosition);        // 视空间视线方向
+    vec3 treeL = normalize(uSunDir);
+    // 反光: Blinn-Phong 高光 + 菲涅尔增亮 -> 湿叶/蜡质叶面的那种反光
+    if (uSpecular > 0.001) {
+      vec3 treeH = normalize(treeL + treeV);
+      float treeSpec = pow(max(dot(treeN, treeH), 0.0), max(1.0, uSpecularShininess));
+      float treeFres = 0.35 + 0.65 * pow(1.0 - max(dot(treeN, treeV), 0.0), 3.0);
+      totalEmissiveRadiance += uSpecularColor * (uSpecular * 3.0 * treeSpec * treeFres) * uSunColor;
+    }
+    // 散光: 视线与法线接近垂直时叶肉最薄 -> 边缘散射发亮 (逆光尤其明显)
+    if (uScatter > 0.001) {
+      float treeRim = pow(1.0 - abs(dot(treeN, treeV)), max(1.0, uScatterPower));
+      float treeLit = 0.35 + 0.65 * max(dot(treeN, treeL), 0.0);
+      totalEmissiveRadiance += diffuseColor.rgb * (uScatter * treeRim * treeLit) * uSunColor;
+    }
+  }
   #endif
 `
 
@@ -220,6 +250,11 @@ export function perMaterialUniforms(params, isLeaf) {
     uVertexColorMix: { value: m.vertexColorMix === undefined ? 1 : m.vertexColorMix },
     uTint: { value: new THREE.Color(m.tint || '#ffffff') },
     uTranslucency: { value: isLeaf ? (m.translucency || 0) : 0 },
+    uSpecular: { value: isLeaf ? (m.specular === undefined ? 0 : m.specular) : 0 },
+    uSpecularShininess: { value: (m.specularShininess === undefined ? 28 : m.specularShininess) },
+    uSpecularColor: { value: new THREE.Color(m.specularColor || '#ffffff') },
+    uScatter: { value: isLeaf ? (m.scatter || 0) : 0 },
+    uScatterPower: { value: (m.scatterPower === undefined ? 2 : m.scatterPower) },
     uLeafFlutter: { value: w.leafFlutter },
     uLeafTwist: { value: w.leafTwist },
   }
@@ -245,7 +280,7 @@ function applyTreeShader(material, shaderUniforms, opts) {
     )
     // 选中高亮 (自发光) 必须在 totalEmissiveRadiance 声明之后注入
     const emissiveInjection = '#include <emissivemap_fragment>\n' + SELECTION_GLOW +
-      (opts.translucency ? TRANSLUCENCY : '')
+      (opts.translucency ? TRANSLUCENCY + LEAF_REFLECTION : '')
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <emissivemap_fragment>',
       emissiveInjection,
@@ -387,6 +422,12 @@ export function updateLeafMaterial(mat, params, sharedUniforms) {
   u.uVertexColorMix.value = p.vertexColorMix
   u.uTint.value.set(p.tint || '#ffffff')
   u.uTranslucency.value = p.translucency
+  // 反光 / 散光
+  u.uSpecular.value = p.specular === undefined ? 0 : p.specular
+  u.uSpecularShininess.value = p.specularShininess === undefined ? 28 : p.specularShininess
+  u.uSpecularColor.value.set(p.specularColor || '#ffffff')
+  u.uScatter.value = p.scatter === undefined ? 0 : p.scatter
+  u.uScatterPower.value = p.scatterPower === undefined ? 2 : p.scatterPower
   u.uLeafFlutter.value = params.wind.leafFlutter
   u.uLeafTwist.value = params.wind.leafTwist
 

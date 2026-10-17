@@ -9,6 +9,7 @@ import {
   updateMaterials, updateWindUniforms, updateGrowthUniforms, rebindCustomShader,
 } from './materials.js'
 import { exportGLB, exportOBJ, exportScreenshot } from './exporter.js'
+import { buildParticlePoints, updateParticleMaterial } from './particles.js'
 import { boxInfo } from './mathUtils.js'
 
 const SKY_VERT = /* glsl */`
@@ -172,6 +173,7 @@ export class TreeScene {
   }
 
   updateMaterialParams(params) {
+    this.updateParticles(params)
     const mats = this.ensureMaterials(params)
     updateMaterials(mats, params)
     if (this.barkMesh) this.barkMesh.material = mats.bark
@@ -228,6 +230,9 @@ export class TreeScene {
       this.treeGroup.add(this.leafMesh)
     }
     this.applyShadowFlags()
+    // 叶片粒子发射 (从叶片位置采样发射点)
+    this.rebuildParticles(params)
+
     if (this.wireBark || this.wireLeaf || (params.scene && params.scene.wireframe && params.scene.wireframe !== 'off')) {
       this.applyWireframe(params.scene && params.scene.wireframe)
     }
@@ -453,6 +458,41 @@ export class TreeScene {
       this.wireLeaf = mk(this.leafMesh.geometry, 0xffd166)
       this.treeGroup.add(this.wireLeaf)
     }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 叶片粒子发射                                                        */
+  /* ------------------------------------------------------------------ */
+  rebuildParticles(params) {
+    if (!this.treeGroup) return
+    if (this.particles) {
+      this.treeGroup.remove(this.particles)
+      this.particles.geometry.dispose()
+      this.particles.material.dispose()
+      this.particles = null
+    }
+    const P = params.particles || {}
+    if (!P.enabled || !this.leafMesh) return
+    this.particles = buildParticlePoints(this.leafMesh.geometry, params, this.uniforms, params.seed)
+    this.particles.renderOrder = 3
+    this.treeGroup.add(this.particles)
+  }
+
+  /** 只改粒子参数 (不重建整树): 数量变化才重新采样, 其余只更新 uniform */
+  updateParticles(params) {
+    const P = params.particles || {}
+    if (!this.particles) {
+      if (P.enabled) this.rebuildParticles(params)
+      return
+    }
+    this.particles.visible = !!P.enabled
+    const want = Math.max(0, Math.round(P.count === undefined ? 240 : P.count))
+    const have = this.particles.geometry.attributes.position.count
+    if (want !== have) {
+      this.rebuildParticles(params)
+      return
+    }
+    updateParticleMaterial(this.particles.material, params, this.leafMesh ? this.leafMesh.geometry.boundingBox : null)
   }
 
   /* ------------------------------------------------------------------ */

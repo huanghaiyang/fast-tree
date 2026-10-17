@@ -125,6 +125,10 @@ export const DOM_DEPENDENT = new Set([
   'bark.procedural.enabled', 'bark.procedural.style', 'bark.procedural.scale', 'bark.procedural.contrast',
   'bark.texture', 'bark.normalTexture',
   'leafMat.texture', 'leafMat.normalTexture',
+  // 粒子是场景级效果 (Points + 顶点着色器动画, 需要渲染器), Node 侧无法比较
+  'particles.enabled', 'particles.count', 'particles.size', 'particles.speed', 'particles.fall',
+  'particles.sway', 'particles.swirl', 'particles.color', 'particles.opacity', 'particles.glow',
+  'particles.spread',
 ])
 
 /** 由 store / 场景循环消费, 不直接进 uniform */
@@ -294,6 +298,11 @@ function materialSignature(params) {
     un(m, 'uVertexColorMix'),
     un(m, 'uTint'),
     un(m, 'uTranslucency'),
+    un(m, 'uSpecular'),
+    un(m, 'uSpecularShininess'),
+    un(m, 'uSpecularColor'),
+    un(m, 'uScatter'),
+    un(m, 'uScatterPower'),
     un(m, 'uSway'),
     un(m, 'uLeafFlutter'),
     un(m, 'uLeafTwist'),
