@@ -405,3 +405,10 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 12px;
 }
+
+/* 属性搜索结果跳转后的高亮闪烁 */
+.prop-flash { animation: propFlash 1.6s ease-out; }
+@keyframes propFlash {
+  0% { background: rgba(80, 220, 170, 0.30); }
+  100% { background: transparent; }
+}

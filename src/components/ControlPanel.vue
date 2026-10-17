@@ -1,23 +1,26 @@
 <template>
   <div class="tabs">
-    <div v-for="t in tabs" :key="t.id" class="tab" :class="{ active: active === t.id }" @click="active = t.id">
+    <div v-for="t in tabs" :key="t.id" class="tab" :class="{ active: activeTab === t.id }" @click="setActiveTab(t.id)">
       {{ t.icon }} {{ t.name }}
     </div>
   </div>
 
-  <AutoPanel v-if="active === 'auto'" />
-  <TrunkPanel v-else-if="active === 'trunk'" />
-  <BranchPanel v-else-if="active === 'branch'" />
-  <LeafPanel v-else-if="active === 'leaf'" />
-  <FruitPanel v-else-if="active === 'fruit'" />
-  <WindPanel v-else-if="active === 'wind'" />
-  <MaterialPanel v-else-if="active === 'material'" />
-  <ScenePanel v-else-if="active === 'scene'" />
-  <ExportPanel v-else-if="active === 'export'" />
+  <AutoPanel v-if="activeTab === 'auto'" />
+  <TrunkPanel v-else-if="activeTab === 'trunk'" />
+  <BranchPanel v-else-if="activeTab === 'branch'" />
+  <LeafPanel v-else-if="activeTab === 'leaf'" />
+  <FruitPanel v-else-if="activeTab === 'fruit'" />
+  <WindPanel v-else-if="activeTab === 'wind'" />
+  <MaterialPanel v-else-if="activeTab === 'material'" />
+  <ScenePanel v-else-if="activeTab === 'scene'" />
+  <ExportPanel v-else-if="activeTab === 'export'" />
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { computed } from 'vue'
+import { state, setActiveTab } from '../store/treeStore.js'
+
+const activeTab = computed(() => state.activeTab)
 import AutoPanel from './panels/AutoPanel.vue'
 import TrunkPanel from './panels/TrunkPanel.vue'
 import BranchPanel from './panels/BranchPanel.vue'
@@ -28,7 +31,6 @@ import MaterialPanel from './panels/MaterialPanel.vue'
 import ScenePanel from './panels/ScenePanel.vue'
 import ExportPanel from './panels/ExportPanel.vue'
 
-const active = ref('auto')
 const tabs = [
   { id: 'auto', name: '种子', icon: '🎲' },
   { id: 'trunk', name: '树干', icon: '🪵' },

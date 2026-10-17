@@ -24,6 +24,7 @@ export const state = reactive({
   busy: false,
   ready: false,
   playing: true,
+  activeTab: 'auto',        // 当前参数标签页 (属性搜索跳转会改它)
   archetype: 'oak',
   autoType: null,      // 强制树种 (null = 随机)
   timeScale: 1,
@@ -384,6 +385,11 @@ export function doGenerateImpostor(opts = {}) {
 }
 
 /** 下载伪装卡 PNG (+ 可选元信息 JSON) */
+/** 切换参数标签页 (属性搜索跳转会用到) */
+export function setActiveTab(tab) {
+  if (tab) state.activeTab = tab
+}
+
 export function setImpostorPreview(on) {
   state.impostorPreview = !!on
   // 3D 预览: 把伪装卡作为一个 impostor 面片放进场景 (可以像模型一样环绕观察)
