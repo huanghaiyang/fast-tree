@@ -261,13 +261,19 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
   padding: 4px 9px;
   border-radius: 6px;
   font-size: 11.5px;
+  /* 固定字重: active 不再加粗 -> 按钮宽度不随选中状态变化, 避免换行错位 */
+  font-weight: 500;
   color: var(--fg-dim);
   cursor: pointer;
-  border: 1px solid transparent;
+  border: 1px solid transparent;   /* 预留边框位, active 只换颜色不改尺寸 */
   user-select: none;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  text-align: center;
 }
 .tab:hover { color: var(--fg); background: #171d27; }
-.tab.active { color: #06120e; background: var(--accent); border-color: var(--accent); font-weight: 600; }
+/* 只改颜色/背景, 绝不改尺寸相关属性 (font-weight/border-width/padding) */
+.tab.active { color: #06120e; background: var(--accent); border-color: var(--accent); }
 
 /* ---------------------------- 覆盖层 ---------------------------- */
 .overlay {

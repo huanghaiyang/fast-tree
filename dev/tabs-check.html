@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><title>tabs: booting</title></head>
+  <body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+    <iframe id="f" src="/" style="width:1000px;height:640px;border:0"></iframe>
+    <pre id="out">…</pre>
+    <script type="module">
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const L = []
+      const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+      let win, doc
+      f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+      const boxes = () => [...doc.querySelectorAll('.tab')].map((t) => {
+        const r = t.getBoundingClientRect()
+        return { n: t.textContent.trim(), x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width) }
+      })
+      const snap = (b) => b.map((t) => `${t.n}@${t.x},${t.y}w${t.w}`).join(' ')
+      setTimeout(async () => {
+        try {
+          await sleep(1200)
+          const tabs = [...doc.querySelectorAll('.tab')]
+          bar('tab 数量=' + tabs.length)
+          const states = []
+          // 依次激活每个 tab, 记录所有 tab 的几何
+          for (const t of tabs) {
+            t.click()
+            await sleep(220)
+            states.push({ name: t.textContent.trim(), boxes: boxes() })
+          }
+          const base = snap(states[0].boxes)
+          let same = 0
+          for (const s of states) if (snap(s.boxes) === base) same++
+          bar('切换 ' + states.length + ' 个标签, 几何完全一致的状态数=' + same + '/' + states.length)
+          // 找出第一个不一致的, 报差异
+          for (const s of states) {
+            const cur = snap(s.boxes)
+            if (cur !== base) {
+              const a = base.split(' '), b = cur.split(' ')
+              const diff = a.map((v, i) => (v === b[i] ? null : v + ' -> ' + b[i])).filter(Boolean)
+              bar('✗ ' + s.name + ' 激活时错位: ' + diff.slice(0, 4).join(' | '))
+              break
+            }
+          }
+          bar('当前几何: ' + base.slice(0, 220))
+          document.title = 'TABS-OK :: ' + L.join(' || ').slice(0, 1300)
+        } catch (e) {
+          document.title = 'TABS-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 400)
+        }
+      }, 2500)
+    </script>
+  </body>
+</html>

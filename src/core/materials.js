@@ -238,24 +238,29 @@ function applyAutoNormal(mat, p) {
   const map = mat.map
   const tex = albedoNormalTexture(map, strength, p.texture)
   if (!tex) {
-    // 贴图还没解码完 -> 等它 update 后重试一次
-    if (map && !map.userData.__autoNormalHooked) {
-      map.userData.__autoNormalHooked = true
-      map.onUpdate = () => {
-        const t = albedoNormalTexture(map, strength, p.texture)
-        if (t) {
-          mat.normalMap = t
-          mat.userData.autoNormal = true
-          mat.normalScale.set(p.normalScale || 1, p.normalScale || 1)
-          mat.needsUpdate = true
+    // 贴图还没解码完 -> 等它 update 后重试 (只挂一次)
+    if (map && typeof map.onUpdate !== 'function' || (map && !map.userData.__autoNormalHooked)) {
+      if (map) {
+        map.userData.__autoNormalHooked = true
+        const prev = map.onUpdate
+        map.onUpdate = () => {
+          if (typeof prev === 'function') prev()
+          const t = albedoNormalTexture(map, strength, p.texture)
+          if (t && !mat.normalMap) {
+            mat.normalMap = t
+            mat.userData.autoNormal = true
+            mat.needsUpdate = true
+          }
         }
       }
     }
     return
   }
+  // 已经是这张图了就不重复赋值 (避免每次更新材质都触发重编译)
+  if (mat.normalMap === tex) return
+  if (mat.userData.autoNormal && mat.normalMap) disposeTexture(mat.normalMap)
   mat.normalMap = tex
   mat.userData.autoNormal = true
-  mat.normalScale.set(p.normalScale === undefined ? 1 : p.normalScale, p.normalScale === undefined ? 1 : p.normalScale)
   mat.needsUpdate = true
 }
 
@@ -482,9 +487,6 @@ export function updateLeafMaterial(mat, params, sharedUniforms) {
   mat.side = p.doubleSided ? THREE.DoubleSide : THREE.FrontSide
   mat.color.set(0xffffff)
   // 叶片自发光: 用叶色做底, 强度由滑杆控制 (让背光/阴影里的叶子不至于死黑)
-  // ---- 从颜色贴图自动生成法线贴图 (没有显式法线贴图时) ----
-  applyAutoNormal(mat, p)
-
   // 自发光用独立颜色: 不再隐式拿季节叶色当底色 (否则选了贴图也会被染色)
   mat.emissive.set(p.emissiveColor || '#ffffff')
   mat.emissiveIntensity = p.emissive || 0
@@ -520,16 +522,20 @@ export function updateLeafMaterial(mat, params, sharedUniforms) {
     if (hadAuto && hadAuto !== mat.map) disposeTexture(hadAuto)
     mat.needsUpdate = true
   }
+  // ---- 法线贴图: 显式贴图优先, 否则从 albedo 自动生成 ----
+  // 注意: 必须放在 mat.map 赋值之后, 否则第一次更新时 map 还是 null, 生成不出法线
   if (p.normalTexture) {
-    if (!mat.normalMap) {
+    if (!mat.normalMap || mat.userData.autoNormal) {
+      if (mat.userData.autoNormal && mat.normalMap) disposeTexture(mat.normalMap)
       mat.normalMap = loadTexture(p.normalTexture, { srgb: false, normal: true })
+      mat.userData.autoNormal = false
       mat.needsUpdate = true
     }
-  } else if (mat.normalMap) {
-    disposeTexture(mat.normalMap)
-    mat.normalMap = null
-    mat.needsUpdate = true
+  } else {
+    applyAutoNormal(mat, p)
   }
+  const ns = p.normalScale === undefined ? 1 : p.normalScale
+  mat.normalScale.set(ns, ns)
   return mat
 }
 

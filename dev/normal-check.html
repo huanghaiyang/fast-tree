@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><title>normal: booting</title></head>
+  <body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+    <iframe id="f" src="/" style="width:1000px;height:640px;border:0"></iframe>
+    <pre id="out">…</pre>
+    <script type="module">
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const L = []
+      const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+      let win, sc, state
+      f.addEventListener('load', () => { win = f.contentWindow })
+      setTimeout(async () => {
+        try {
+          sc = win.__fastTreeScene; state = win.__fastTree
+          const mod = await import('/src/core/leafCards.generated.js')
+          win.__fastTreeApi.applyLeafCard(mod.LEAF_CARDS[0].id)
+          state.params.leafMat.normalFromAlbedo = 1.5
+          win.__fastTreeSceneApi.rebuildNow(true)
+          await sleep(900)
+          sc.updateMaterialParams(state.params)
+          await sleep(800)
+          const leaf = sc.materials.leaf
+          const nm1 = leaf.normalMap
+          bar('① 应用卡片+自动法线1.5: map=' + !!leaf.map + ' normalMap=' + !!nm1 +
+            (nm1 && nm1.image ? ' (' + nm1.image.width + 'x' + nm1.image.height + ')' : '') +
+            ' DataTexture=' + (nm1 ? !!nm1.isDataTexture : false))
+          bar('   normalScale=' + leaf.normalScale.x.toFixed(2))
+          // ② 换强度 -> 应重新生成 (缓存键含强度)
+          state.params.leafMat.normalFromAlbedo = 2.6
+          sc.updateMaterialParams(state.params)
+          await sleep(700)
+          const nm2 = leaf.normalMap
+          bar('② 强度 1.5->2.6: normalMap 变了=' + (nm2 !== nm1) + ' 仍存在=' + !!nm2)
+          // ③ 法线强度
+          state.params.leafMat.normalScale = 2.2
+          sc.updateMaterialParams(state.params)
+          await sleep(400)
+          bar('③ normalScale 改成 2.2 -> 材质值=' + leaf.normalScale.x.toFixed(2))
+          // ④ 关掉自动法线 -> 应移除
+          state.params.leafMat.normalFromAlbedo = 0
+          sc.updateMaterialParams(state.params)
+          await sleep(500)
+          bar('④ 关闭自动法线: normalMap=' + !!leaf.normalMap)
+          bar('errs=none')
+          document.title = 'NORMAL-OK :: ' + L.join(' || ').slice(0, 1200)
+        } catch (e) {
+          document.title = 'NORMAL-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 500)
+        }
+      }, 3000)
+    </script>
+  </body>
+</html>
