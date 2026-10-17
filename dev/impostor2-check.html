@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><title>imp2: booting</title></head>
+  <body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+    <iframe id="f" src="/" style="width:1000px;height:640px;border:0"></iframe>
+    <pre id="out">…</pre>
+    <script type="module">
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const L = []
+      const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+      let win, doc, sc, state
+      f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+      setTimeout(async () => {
+        try {
+          sc = win.__fastTreeScene; state = win.__fastTree
+          win.__fastTreeSceneApi.rebuildNow(true)
+          await sleep(500)
+          // ① 导出页的生成器控件是否渲染出来
+          const tab = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('导出'))
+          tab.click(); await sleep(500)
+          const rows = [...doc.querySelectorAll('.row-head label')].map((e) => e.textContent.trim())
+          bar('① 导出页标签: ' + JSON.stringify(rows.filter((r) => /模式|视角|分辨率|张数/.test(r))))
+          const sel = [...doc.querySelectorAll('select')].filter((s) => (s.closest('.row') || {}).textContent?.includes('模式'))
+          bar('① 生成模式下拉=' + (sel.length ? [...sel[0].options].map((o) => o.textContent).join('/') : '未找到'))
+          // ② 生成 (8 方位 × 2 俯仰层) -> 场景里出现 impostor 面片 + 真树隐藏
+          const res = win.__fastTreeApi.doGenerateImpostor({ mode: 'atlas', views: 8, elevations: 2, size: 256 })
+          bar('② 生成: ' + res.width + 'x' + res.height + ' 帧数=' + res.meta.views + ' 列x行=' + res.meta.cols + 'x' + res.meta.rows + ' 仰角=' + JSON.stringify(res.meta.elevations) + ' 覆盖率=' + (res.coverage * 100).toFixed(1) + '%')
+          await sleep(600)
+          bar('② 场景 impostor 组=' + !!sc._impostorGroup + ' 真树可见=' + sc.barkMesh.visible + '/' + sc.leafMesh.visible + ' 预览开关=' + state.impostorPreview)
+          // ③ 环绕: 转相机 -> 图集帧应改变
+          const cell = () => sc._impostorAtlas ? sc._impostorAtlas.mat.uniforms.uCell.value.toArray().join(',') : 'none'
+          const before = cell()
+          const c = sc._impostorGroup.position
+          sc.camera.position.set(c.x + 30, c.y, c.z)
+          sc.camera.lookAt(c)
+          sc.updateImpostorPreview()
+          const mid = cell()
+          sc.camera.position.set(c.x, c.y, c.z + 30)
+          sc.camera.lookAt(c)
+          sc.updateImpostorPreview()
+          const after = cell()
+          bar('③ 环绕切帧: 前方=' + before + ' 侧面=' + mid + ' 后方=' + after + ' 有变化=' + (before !== mid || mid !== after))
+          // ③b 顶部按钮能否点 (DOM 点击)
+          const swBtns = [...doc.querySelectorAll('.preview-switch button')]
+          bar('③b 顶部按钮数=' + swBtns.length + ' 文案=' + JSON.stringify(swBtns.map((b) => b.textContent.trim())))
+          if (swBtns.length >= 2) {
+            const back3d = swBtns.find((b) => b.textContent.includes('3D'))
+            const beforeToggle = state.impostorPreview
+            back3d.click()
+            await sleep(700)
+            bar('③b 点「3D 模型」: 预览 ' + beforeToggle + ' -> ' + state.impostorPreview + ' 组存在=' + !!sc._impostorGroup)
+            swBtns[1].click()
+            await sleep(700)
+            bar('③b 点「伪装卡预览」: 预览=' + state.impostorPreview + ' 组存在=' + !!sc._impostorGroup)
+          }
+          // ③c 360°: 8 个方位角应取到 8 个不同单元格, 且面片朝向随之旋转 (无镜像)
+          const cellOf = () => sc._impostorAtlas.mat.uniforms.uCell.value.toArray().join(',')
+          const rotOf = () => sc._impostorAtlas.mesh.quaternion.toArray().map((v) => v.toFixed(3)).join(',')
+          const seen = new Set()
+          const rots = new Set()
+          for (let k = 0; k < 8; k++) {
+            const a2 = (k * 45 * Math.PI) / 180
+            sc.camera.position.set(c.x + Math.sin(a2) * 40, c.y, c.z + Math.cos(a2) * 40)
+            sc.camera.lookAt(c)
+            sc.updateImpostorPreview()
+            seen.add(cellOf()); rots.add(rotOf())
+          }
+          bar('③c 8 个方位: 不同单元格=' + seen.size + '/8  不同朝向=' + rots.size + '/8')
+          bar('③c 无镜像(朝向随之转)=' + (rots.size === 8))
+          // ③d 俯视层: 相机抬高 -> 应选到第 2 行, 且渲染无退化
+          sc.camera.position.set(c.x + 0.001, c.y + 60, c.z + 0.001)
+          sc.camera.lookAt(c)
+          sc.updateImpostorPreview()
+          bar('③d 俯视: 选中单元格=' + cellOf() + ' (第2行应为 y=0)')
+          // ③e 叠加检查: 生成后再触发一次重建, 统计场景里可见的非灯光对象
+          win.__fastTreeSceneApi.rebuildNow(false)
+          await sleep(500)
+          const visible = sc.scene.children.filter((o) => o.visible && !o.isLight)
+          bar('③e 重建后可见对象=' + visible.length + ' 其中真的是树=' + visible.filter((o) => o === sc.barkMesh || o === sc.leafMesh).length +
+              ' 是伪装卡组=' + visible.filter((o) => o === sc._impostorGroup).length)
+          const treeVisible = (m) => { let o = m; while (o) { if (!o.visible) return false; o = o.parent } return true }
+          bar('③e 无叠加(整棵树的可见链)=' + (!treeVisible(sc.barkMesh) && !treeVisible(sc.leafMesh)))
+          // ③f 连续生成两次: 第二次的图集不应把旧卡片拍进去
+          win.__fastTreeApi.setImpostorPreview(false)
+          await sleep(300)
+          const r1 = win.__fastTreeApi.doGenerateImpostor({ mode: 'atlas', views: 8, elevations: 1, size: 256 })
+          await sleep(400)
+          const r2 = win.__fastTreeApi.doGenerateImpostor({ mode: 'atlas', views: 8, elevations: 1, size: 256 })
+          await sleep(400)
+          bar('③f 第一次: ' + r1.width + 'x' + r1.height + ' 覆盖率=' + (r1.coverage * 100).toFixed(1) + '%')
+          bar('③f 第二次: ' + r2.width + 'x' + r2.height + ' 覆盖率=' + (r2.coverage * 100).toFixed(1) + '%')
+          bar('③f 两次覆盖率接近(说明没被旧卡片污染)=' + (Math.abs(r1.coverage - r2.coverage) < 0.02))
+          const groups = sc.scene.children.filter((o) => o === sc._impostorGroup || (o.type === 'Group' && o.children.some((c) => c.isMesh && c.material && c.material.uniforms && c.material.uniforms.uCell)))
+          bar('③f 场景里的伪装卡组数量=' + groups.length + ' (应为 1, 复数=叠加)')
+          // ④ 回 3D
+          win.__fastTreeApi.setImpostorPreview(false)
+          await sleep(500)
+          bar('④ 回 3D: impostor 组=' + !!sc._impostorGroup + ' 真树可见=' + sc.barkMesh.visible + '/' + sc.leafMesh.visible)
+          bar('errs=none')
+          document.title = 'IMP2-OK :: ' + L.join(' || ').slice(0, 1400)
+        } catch (e) {
+          document.title = 'IMP2-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 500)
+        }
+      }, 3000)
+    </script>
+  </body>
+</html>

@@ -24,6 +24,14 @@
 
     <WindCompass />
 
+    <!-- 预览切换: 3D 模型 <-> 伪装卡 -->
+    <div v-if="state.impostorResult" class="overlay preview-switch">
+      <button class="btn small" :class="{ active: !state.impostorPreview }" @click="setImpostorPreview(false)">3D 模型</button>
+      <button class="btn small" :class="{ active: state.impostorPreview }" @click="setImpostorPreview(true)">伪装卡预览</button>
+      <span class="tag" :class="{ on: state.impostorPreview }">{{ state.impostorPreview ? '伪装卡 (可环绕)' : '3D 模型' }}</span>
+    </div>
+
+
     <div v-if="state.selection.label" class="overlay selection">
       <span class="dot"></span>
       <b>{{ state.selection.label }}</b>
@@ -40,7 +48,7 @@ import { TreeScene } from '../core/sceneManager.js'
 import { serializeGroup } from '../core/params.js'
 import WindCompass from './WindCompass.vue'
 import {
-  state, sceneApi, totalTriangles, setNodeModel, selectionSignature,
+  state, sceneApi, totalTriangles, setNodeModel, selectionSignature, setImpostorPreview,
   clearSelection as clearSelectionAction, toggleNodePanel,
 } from '../store/treeStore.js'
 
@@ -78,6 +86,8 @@ onMounted(() => {
   sceneApi.frameCamera = () => scene.frameCamera()
   sceneApi.focusBox = (min, max) => scene.focusBox(min, max)
   sceneApi.getWindScreenBasis = () => scene.getWindScreenBasis()
+sceneApi.makeImpostor = (opts) => scene.makeImpostor(opts)
+sceneApi.setImpostorModel = (res) => scene.setImpostorPreview(res)
   // 验证/脚本用的同步重建 (应用内重建走 rAF, 后台标签页会被节流)
   sceneApi.rebuildNow = (frame = true) => {
     if (!scene) return null

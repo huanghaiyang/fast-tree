@@ -15,6 +15,33 @@
     </p>
   </Section>
 
+  <Section title="伪装卡生成器" hint="Impostor">
+    <SelectRow label="生成模式" v-model="impMode" :options="impModes"
+      hint="图集伪装卡 = 多视角拼成一张图, 远景替换整棵 3D 树; 交叉卡 = 2~4 张交叉面片, 用于中远景树冠" />
+    <SliderRow v-if="impMode === 'cross'" label="卡片张数" v-model="impViews" :min="2" :max="20" :step="1" />
+    <SliderRow v-else label="视角数" v-model="impViews" :min="1" :max="64" :step="1" />
+    <SliderRow v-if="impMode === 'atlas'" label="俯仰层数" v-model="impElev" :min="1" :max="3" :step="1"
+      hint="从几个高度拍: 1 = 仅水平; 2 = 水平 + 俯视 (俯视层就是从顶部往下看的伪装卡); 3 = 再加仰视" />
+    <SliderRow label="单视角分辨率" v-model="impSize" :min="128" :max="1024" :step="64" unit="px" />
+    <div class="inline">
+      <button class="btn small primary" :disabled="!!state.impostorBusy" @click="onImpostor">
+        {{ state.impostorBusy ? '生成中…' : '生成伪装卡' }}
+      </button>
+      <button class="btn small" :disabled="!state.impostorResult" @click="onDownloadImpostor">⬇ 下载 PNG</button>
+      <button class="btn small" :disabled="!state.impostorResult" @click="onTogglePreview">
+        {{ state.impostorPreview ? '回 3D 模型' : '在主预览区查看' }}
+      </button>
+    </div>
+    <p v-if="state.impostorResult" class="muted" style="margin: 0">
+      {{ state.impostorResult.meta.mode }} · {{ state.impostorResult.meta.views }} 视角 ·
+      {{ state.impostorResult.width }}×{{ state.impostorResult.height }} ·
+      alpha 覆盖率 {{ (state.impostorResult.coverage * 100).toFixed(1) }}% ·
+      距离 {{ state.impostorResult.meta.distance }}
+    </p>
+    <img v-if="state.impostorResult" :src="state.impostorResult.dataUrl" alt="impostor"
+      style="width: 100%; border: 1px solid var(--line); border-radius: 4px; background: #0b0e13" />
+  </Section>
+
   <Section title="统计" hint="Stats">
     <div class="kv"><span class="k">树枝数量</span><b>{{ stats.branches }}</b></div>
     <div class="kv"><span class="k">叶片数量</span><b>{{ stats.leaves }}</b></div>
@@ -39,13 +66,38 @@
 <script setup>
 import { ref, computed } from 'vue'
 import Section from '../ui/Section.vue'
-import { state, sceneApi, totalTriangles } from '../../store/treeStore.js'
+import SliderRow from '../ui/SliderRow.vue'
+import SelectRow from '../ui/SelectRow.vue'
+import { state, sceneApi, totalTriangles, doGenerateImpostor, downloadImpostor, setImpostorPreview } from '../../store/treeStore.js'
 import { exportParamsJSON, readTextFile } from '../../core/exporter.js'
 import { importParamsJSON } from '../../store/treeStore.js'
 
 const stats = computed(() => state.stats)
 const renderInfo = computed(() => state.renderInfo)
 const busy = ref(false)
+/* 伪装卡生成器 */
+const impMode = ref('atlas')
+const impViews = ref(8)
+const impSize = ref(512)
+const impElev = ref(2)   // 俯仰层数 (1 = 仅水平, 2 = 水平 + 俯视)
+const impModes = [
+  { value: 'atlas', label: '图集伪装卡 (多视角)' },
+  { value: 'cross', label: '交叉卡 (2~4 面片)' },
+]
+function onImpostor() {
+  try {
+    doGenerateImpostor({ mode: impMode.value, views: impViews.value, elevations: impElev.value, size: impSize.value })
+  } catch (e) {
+    status.value = '伪装卡生成失败: ' + (e && e.message ? e.message : e)
+  }
+}
+function onTogglePreview() {
+  setImpostorPreview(!state.impostorPreview)
+}
+function onDownloadImpostor() {
+  downloadImpostor(true)
+}
+
 const status = ref('')
 const fileInput = ref(null)
 

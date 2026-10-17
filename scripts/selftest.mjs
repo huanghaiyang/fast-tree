@@ -14,6 +14,7 @@ import { sampleEmitPositions, buildParticleSeeds, createParticleMaterial, PARTIC
 import { buildFallingLeaves, fallRebuildKey, FALL_FRAG } from '../src/core/fallingLeaves.js'
 import { buildLeafLitter, litterRebuildKey } from '../src/core/litter.js'
 import { normalFromLuminance } from '../src/core/normalFromAlbedo.js'
+import { viewAngles, atlasLayout, crossCardQuads, alphaCoverage, elevationAngles } from '../src/core/impostor.js'
 import { ellipseLeafTexture, resolveEffectTexture, resolveEffectAspect } from '../src/core/leafTexture.js'
 import { LEAF_CARDS } from '../src/core/leafCards.generated.js'
 import { motionMetrics, swayEnvelope } from '../src/core/windModel.js'
@@ -1099,6 +1100,34 @@ console.log('\n[21] 从贴图自动生成法线贴图')
     const L = composeTree('oak', 'mature', 'summer', 4242).leafMat
     console.log('      normalFromAlbedo=' + L.normalFromAlbedo + ' normalScale=' + L.normalScale)
     return L.normalFromAlbedo > 0
+  })())
+}
+
+/* 22. 伪装卡生成器 (纯数学部分; 渲染需浏览器) */
+console.log('\n[22] 伪装卡生成器')
+{
+  check('视角角度均分 360°', JSON.stringify(viewAngles(8)) === JSON.stringify([0, 45, 90, 135, 180, 225, 270, 315]))
+  check('视角数 1 时只有一个角度', JSON.stringify(viewAngles(1)) === JSON.stringify([0]))
+  check('图集排版尽量接近正方形', (() => {
+    const a = atlasLayout(8), b = atlasLayout(4), c = atlasLayout(12)
+    console.log('      8->' + a.cols + 'x' + a.rows + ' 4->' + b.cols + 'x' + b.rows + ' 12->' + c.cols + 'x' + c.rows)
+    return a.cols * a.rows >= 8 && b.cols === 2 && b.rows === 2 && c.cols * c.rows >= 12
+  })())
+  check('交叉卡布局: 2 张 -> 0°/90° 十字', (() => {
+    const q = crossCardQuads(2)
+    return q.length === 2 && q[0].angle === 0 && q[1].angle === 90
+  })())
+  check('交叉卡布局: 最多 20 张', crossCardQuads(50).length === 20)
+  check('俯仰层 -> 仰角列表 (1/2/3 层)', (() => {
+    const a = elevationAngles(1), b = elevationAngles(2), c = elevationAngles(3)
+    console.log('      1层=' + JSON.stringify(a) + ' 2层=' + JSON.stringify(b) + ' 3层=' + JSON.stringify(c))
+    return a.length === 1 && b.length === 2 && b[1] === 90 && c.length === 3
+  })())
+  check('alpha 覆盖率计算正确', (() => {
+    const w = 4, h = 4
+    const px = new Uint8Array(w * h * 4)
+    for (let i = 0; i < 8; i++) px[i * 4 + 3] = 255   // 前 8 个像素不透明
+    return Math.abs(alphaCoverage(px, w, h) - 0.5) < 1e-6
   })())
 }
 

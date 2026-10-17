@@ -275,6 +275,19 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 /* 只改颜色/背景, 绝不改尺寸相关属性 (font-weight/border-width/padding) */
 .tab.active { color: #06120e; background: var(--accent); border-color: var(--accent); }
 
+/* ------------------- 伪装卡预览 ------------------- */
+.preview-switch button { pointer-events: auto; }
+.preview-switch { top: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; align-items: center; z-index: 20; pointer-events: auto;
+  background: rgba(10, 13, 18, 0.86); padding: 5px 7px; border-radius: 8px; pointer-events: auto; }
+.impostor-preview {
+  position: absolute; inset: 0; z-index: 6; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 10px; cursor: pointer;
+  background: #0a0d12; /* 无法用棋盘格时用深色底, 透明区一眼能看出卡片形状 */
+}
+.impostor-preview img { max-width: 92%; max-height: 82%; object-fit: contain;
+  filter: drop-shadow(0 6px 24px rgba(0, 0, 0, 0.6)); }
+.impostor-tip { font-size: 11px; color: var(--fg-dim); }
+
 /* ---------------------------- 覆盖层 ---------------------------- */
 .overlay {
   position: absolute;

@@ -16,6 +16,10 @@ export const state = reactive({
     barkVertices: 0, leafVertices: 0, buildMs: 0, height: 0, spread: 0, nodeCount: 0,
   },
   renderInfo: { calls: 0, triangles: 0 },
+  // 伪装卡生成结果 + 预览开关 (主预览区显示 2D 卡片还是 3D 树)
+  impostorResult: null,
+  impostorBusy: false,
+  impostorPreview: false,
   shaderError: '',
   busy: false,
   ready: false,
@@ -216,6 +220,8 @@ export const sceneApi = {
   frameCamera: null,
   focusBox: null,
   getWindScreenBasis: null,
+  makeImpostor: null,
+  setImpostorModel: null,
   rebuildNow: null,
 }
 
@@ -364,6 +370,48 @@ export function applyLeafCard(cardId, opts = {}) {
 }
 
 /** 随机换一张内置叶片卡片 (可指定批次/叶形) */
+/** 生成伪装卡 (atlas = 图集伪装卡, cross = 交叉卡) */
+export function doGenerateImpostor(opts = {}) {
+  state.impostorBusy = true
+  try {
+    const res = sceneApi.makeImpostor(opts)
+    state.impostorResult = res
+    setImpostorPreview(true)        // 生成后自动在主预览区以 3D 面片展示 (可环绕)
+    return res
+  } finally {
+    state.impostorBusy = false
+  }
+}
+
+/** 下载伪装卡 PNG (+ 可选元信息 JSON) */
+export function setImpostorPreview(on) {
+  state.impostorPreview = !!on
+  // 3D 预览: 把伪装卡作为一个 impostor 面片放进场景 (可以像模型一样环绕观察)
+  if (on && state.impostorResult) {
+    sceneApi.setImpostorModel(state.impostorResult)
+  } else {
+    sceneApi.setImpostorModel(null)
+  }
+}
+
+export function downloadImpostor(withMeta = true) {
+  const res = state.impostorResult
+  if (!res) return false
+  const a = document.createElement('a')
+  a.href = res.dataUrl
+  a.download = `impostor-${res.meta.mode}-${res.meta.views}v-${res.meta.size}.png`
+  a.click()
+  if (withMeta) {
+    const blob = new Blob([JSON.stringify(res.meta, null, 2)], { type: 'application/json' })
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(blob)
+    link.download = `impostor-${res.meta.mode}-${res.meta.views}v.json`
+    link.click()
+    setTimeout(() => URL.revokeObjectURL(link.href), 2000)
+  }
+  return true
+}
+
 export function randomLeafCard(batch, row) {
   const pool = LEAF_CARDS.filter((c) => (!batch || c.batch === batch) && (!row || c.row === row))
   if (!pool.length) return null
@@ -438,6 +486,7 @@ if (typeof window !== 'undefined' && import.meta.env && import.meta.env.DEV) {
   window.__fastTree = state
   window.__fastTreeApi = {
     pushUndo, doAutoGenerate, doApplyPreset, setSeed, randomizeSeed,
+    doGenerateImpostor, downloadImpostor, setImpostorPreview,
     applyClassification, randomClassification, applyLeafCard, randomLeafCard,
   }
 }

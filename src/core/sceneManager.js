@@ -12,6 +12,7 @@ import { exportGLB, exportOBJ, exportScreenshot } from './exporter.js'
 import { buildParticlePoints, updateParticleMaterial } from './particles.js'
 import { buildFallingLeaves, updateFallingLeaves, fallRebuildKey } from './fallingLeaves.js'
 import { buildLeafLitter, litterRebuildKey } from './litter.js'
+import { generateImpostor } from './impostor.js'
 import { boxInfo } from './mathUtils.js'
 
 const SKY_VERT = /* glsl */`
@@ -244,6 +245,9 @@ export class TreeScene {
     if (this.wireBark || this.wireLeaf || (params.scene && params.scene.wireframe && params.scene.wireframe !== 'off')) {
       this.applyWireframe(params.scene && params.scene.wireframe)
     }
+
+    // 重建会新建/重新显示 mesh -> 伪装卡预览期间必须重新隐藏, 否则与真树叠加
+    this._rehideForImpostorPreview()
 
     this.stats = { ...result.stats, totalMs: performance.now() - t }
     const info = boxInfo(result.barkGeometry)
@@ -577,6 +581,169 @@ export class TreeScene {
   }
 
   /* ------------------------------------------------------------------ */
+  /* 伪装卡生成 (Impostor / Cross-card)                                  */
+  /* ------------------------------------------------------------------ */
+  makeImpostor(opts = {}) {
+    // 生成前先撤掉上一张伪装卡:
+    // 1) 它会让真树处于隐藏状态 -> 新图集拍不到树
+    // 2) 它本身也在场景里 -> 会被拍进新图集 (卡里套卡 = 叠加态)
+    if (this._impostorGroup) this.clearImpostorPreview()
+
+    const box = new THREE.Box3()
+    if (this.barkMesh) box.expandByObject(this.barkMesh)
+    if (this.leafMesh) box.expandByObject(this.leafMesh)
+    if (box.isEmpty()) throw new Error('还没有可用的树')
+    const bbox = { min: box.min, max: box.max }
+    const hide = [this.ground, this.grid, this.sky, this.particles, this.fallMesh, this.litterMesh, this._impostorGroup]
+    return generateImpostor({
+      renderer: this.renderer,
+      scene: this.scene,
+      bbox,
+      hide,
+      ...opts,
+    })
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 伪装卡 3D 预览 (可以像模型一样环绕 — 按相机方位角切图集帧)           */
+  /* ------------------------------------------------------------------ */
+  setImpostorPreview(result) {
+    this.clearImpostorPreview()
+    if (!result) return
+    const meta = result.meta || {}
+    const layout = meta.layout || { cols: 1, rows: 1 }
+    const views = Math.max(1, meta.views || 1)
+    const center = new THREE.Vector3(
+      meta.center ? meta.center[0] : 0,
+      meta.center ? meta.center[1] : 5,
+      meta.center ? meta.center[2] : 0,
+    )
+    const r = Math.max(1, meta.radius || 5)
+    const tex = new THREE.TextureLoader().load(result.dataUrl)
+    this._impostorTexture = tex
+    tex.colorSpace = THREE.SRGBColorSpace
+    tex.wrapS = THREE.ClampToEdgeWrapping
+    tex.wrapT = THREE.ClampToEdgeWrapping
+
+    const group = new THREE.Group()
+    group.position.copy(center)
+    const mkMat = (cell) => new THREE.ShaderMaterial({
+      uniforms: {
+        uMap: { value: tex },
+        uGrid: { value: new THREE.Vector2(layout.cols, layout.rows) },
+        uCell: { value: new THREE.Vector2(cell.x, cell.y) },
+      },
+      vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+      fragmentShader: `uniform sampler2D uMap; uniform vec2 uGrid; uniform vec2 uCell;
+        varying vec2 vUv;
+        void main(){
+          vec2 cell = 1.0 / uGrid;
+          vec2 uv = vec2((vUv.x + uCell.x) / uGrid.x, (vUv.y + uCell.y) / uGrid.y);
+          vec4 c = texture2D(uMap, uv);
+          if (c.a < 0.3) discard;
+          gl_FragColor = c;
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+        }`,
+      transparent: true,
+      side: THREE.DoubleSide,
+      depthWrite: true,
+    })
+    // 渲染用的视锥在树心处的半高 = dist * tan(fov/2); 面片应与之一致, 这样和真树同尺寸
+    const fov = (meta.fov || 18) * Math.PI / 180
+    const tile = 2 * (meta.distance || r * 3) * Math.tan(fov / 2)
+    const w = tile / 2
+    const h = tile / 2
+    if (meta.mode === 'cross') {
+      // 交叉卡: 每行是一张面片贴图, 按各自角度摆放 -> 真的"从各角度看都是树"
+      const angles = meta.angles || []
+      angles.forEach((ang, i) => {
+        const geo = new THREE.PlaneGeometry(w * 2, h * 2)
+        const mat = mkMat(new THREE.Vector2(0, layout.rows - 1 - i))
+        const mesh = new THREE.Mesh(geo, mat)
+        mesh.rotation.y = (ang * Math.PI) / 180
+        group.add(mesh)
+      })
+    } else {
+      // 图集: 一张面片 + 按相机方位角切帧
+      const geo = new THREE.PlaneGeometry(w * 2, h * 2)
+      const mat = mkMat(new THREE.Vector2(0, 0))
+      const mesh = new THREE.Mesh(geo, mat)
+      mesh.userData.atlasCell = true
+      group.add(mesh)
+      this._impostorAtlas = { mesh, mat, layout, views, angles: meta.angles || [], azCount: layout.cols, elevations: meta.elevations || [0] }
+    }
+    this._impostorGroup = group
+    this.scene.add(group)
+    // 隐藏除灯光与伪装卡以外的一切 (不依赖固定名单: 后续重建出来的新对象也会被藏起来,
+    // 否则真树和伪装卡会"叠加"显示)
+    this._impostorHidden = []
+    for (const obj of this.scene.children) {
+      if (!obj.visible) continue
+      if (obj === group) continue
+      if (obj.isLight) continue
+      this._impostorHidden.push(obj)
+      obj.visible = false
+    }
+  }
+
+  /** 重建后如果还在伪装卡预览状态, 把新对象重新藏起来 (否则会叠加真树) */
+  _rehideForImpostorPreview() {
+    if (!this._impostorGroup) return
+    for (const obj of this.scene.children) {
+      if (!obj.visible) continue
+      if (obj === this._impostorGroup) continue
+      if (obj.isLight) continue
+      if (!this._impostorHidden.includes(obj)) this._impostorHidden.push(obj)
+      obj.visible = false
+    }
+  }
+
+  /** 每帧更新: 图集模式下按相机方位角 + 俯仰角选帧 */
+  updateImpostorPreview() {
+    const a = this._impostorAtlas
+    if (!a || !this._impostorGroup) return
+    const c = this._impostorGroup.position
+    const cam = this.camera.position
+    const dx = cam.x - c.x, dy = cam.y - c.y, dz = cam.z - c.z
+    let ang = (Math.atan2(dx, dz) * 180) / Math.PI
+    if (ang < 0) ang += 360
+    // 俯仰角: 相机越高越接近俯视 (90 = 正俯视)
+    const horiz = Math.hypot(dx, dz)
+    const el = Math.abs(dy) < 1e-4 && horiz < 1e-4 ? 0 : (Math.atan2(dy, horiz) * 180) / Math.PI
+    const azStep = 360 / Math.max(1, a.azCount)
+    const col = Math.round(ang / azStep) % Math.max(1, a.azCount)
+    // 选最接近的仰角层
+    let row = 0
+    let best = Infinity
+    ;(a.elevations || [0]).forEach((e, i) => {
+      const dd = Math.abs(e - el)
+      if (dd < best) { best = dd; row = i }
+    })
+    a.mat.uniforms.uCell.value.set(col, a.layout.rows - 1 - row)
+    // 面片始终转向相机 (球面 billboard): 否则绕到背面看到的是同一张图的**镜像**,
+    // 看起来就像"只拍了 180°, 之后对称排列"。
+    const upVec = Math.abs(el) > 88 ? new THREE.Vector3(0, 0, -1) : new THREE.Vector3(0, 1, 0)
+    const mt = new THREE.Matrix4()
+    mt.lookAt(cam, c, upVec)
+    a.mesh.quaternion.setFromRotationMatrix(mt)
+  }
+
+  clearImpostorPreview() {
+    if (this._impostorAtlas && this._impostorAtlas.mat) this._impostorAtlas.mat.dispose()
+    if (this._impostorAtlas && this._impostorAtlas.mesh) this._impostorAtlas.mesh.geometry.dispose()
+    if (this._impostorGroup) {
+      this._impostorGroup.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose() } })
+      this.scene.remove(this._impostorGroup)
+    }
+    if (this._impostorTexture) { this._impostorTexture.dispose(); this._impostorTexture = null }
+    this._impostorGroup = null
+    this._impostorAtlas = null
+    for (const m of this._impostorHidden || []) m.visible = true
+    this._impostorHidden = []
+  }
+
+  /* ------------------------------------------------------------------ */
   /* 导出                                                                */
   /* ------------------------------------------------------------------ */
   exportGLB(name) {
@@ -598,6 +765,7 @@ export class TreeScene {
   tick() {
     if (this.disposed) return
     this._raf = requestAnimationFrame(this._loop)
+    this.updateImpostorPreview()
     const nowSec = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000
     const dt = Math.min(0.05, Math.max(0, nowSec - this.lastTime))
     this.lastTime = nowSec

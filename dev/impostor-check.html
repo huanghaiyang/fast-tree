@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><title>impostor: booting</title></head>
+  <body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+    <iframe id="f" src="/" style="width:1000px;height:640px;border:0"></iframe>
+    <pre id="out">…</pre>
+    <script type="module">
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const L = []
+      const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+      let win, doc, state, sc
+      f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+      setTimeout(async () => {
+        try {
+          sc = win.__fastTreeScene; state = win.__fastTree
+          win.__fastTreeSceneApi.rebuildNow(true)
+          await sleep(600)
+          // A. 图集伪装卡 (8 视角, 256px -> 快)
+          const a = win.__fastTreeApi.doGenerateImpostor({ mode: 'atlas', views: 8, size: 256 })
+          bar('A 图集: ' + a.width + 'x' + a.height + ' 视角=' + a.meta.views +
+              ' 排版=' + a.meta.layout.cols + 'x' + a.meta.layout.rows +
+              ' alpha覆盖率=' + (a.coverage * 100).toFixed(1) + '%' +
+              ' png=' + Math.round(a.dataUrl.length / 1024) + 'KB' +
+              ' 距离=' + a.meta.distance)
+          bar('A 角度列=' + JSON.stringify(a.meta.angles))
+          // B. 交叉卡 (2 面片)
+          const b = win.__fastTreeApi.doGenerateImpostor({ mode: 'cross', views: 2, size: 256 })
+          bar('B 交叉卡: ' + b.width + 'x' + b.height + ' 张数=' + b.meta.views +
+              ' 角度=' + JSON.stringify(b.meta.angles) +
+              ' 覆盖率=' + (b.coverage * 100).toFixed(1) + '%' +
+              ' png=' + Math.round(b.dataUrl.length / 1024) + 'KB')
+          // 装饰是否被正确隐藏: 生成前后 ground/grid 可见性应恢复
+          bar('生成后 地面可见=' + sc.ground.visible + ' 网格可见=' + sc.grid.visible + ' 天空可见=' + sc.sky.visible)
+          // 预览图是否非空 (取像素平均 alpha)
+          const img = await new Promise((res) => { const i = new win.Image(); i.onload = () => res(i); i.src = a.dataUrl })
+          if (img) {
+            const cv = doc.createElement('canvas')
+            cv.width = 64; cv.height = 64
+            const cx = cv.getContext('2d')
+            cx.drawImage(img, 0, 0, 64, 64)
+            const d = cx.getImageData(0, 0, 64, 64).data
+            let alpha = 0, n = 0
+            for (let i = 3; i < d.length; i += 4) { alpha += d[i]; n++ }
+            bar('预览图平均 alpha=' + (alpha / n).toFixed(1) + ' (0 = 全透明/渲染失败)')
+          }
+          // ===== 主预览区是否被破坏: 直接量画面内容占比 (用户看到"缩到左下角") =====
+          const measure = async () => {
+            sc.renderer.setRenderTarget(null)
+            sc.renderer.render(sc.scene, sc.camera)
+            const cv = doc.querySelector('canvas')
+            const url = cv.toDataURL('image/png')
+            const img = await new Promise((res) => { const i = new win.Image(); i.onload = () => res(i); i.error = () => res(null); i.src = url })
+            if (!img) return null
+            const c2 = doc.createElement('canvas'); c2.width = 200; c2.height = 130
+            const cx = c2.getContext('2d'); cx.drawImage(img, 0, 0, 200, 130)
+            const px = cx.getImageData(0, 0, 200, 130).data
+            let minX = 200, maxX = -1, minY = 130, maxY = -1
+            for (let y = 0; y < 130; y++) for (let x = 0; x < 200; x++) {
+              const i = (y * 200 + x) * 4
+              const lum = 0.3 * px[i] + 0.6 * px[i + 1] + 0.1 * px[i + 2]
+              if (lum > 40) { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y }
+            }
+            return { w: (maxX - minX + 1) / 200, h: (maxY - minY + 1) / 130, cx: (minX + maxX) / 2 / 200, cy: (minY + maxY) / 2 / 130 }
+          }
+          const after = await measure()
+          bar('生成伪装卡后画面内容: 宽占比=' + (after.w * 100).toFixed(0) + '% 高占比=' + (after.h * 100).toFixed(0) +
+              '% 中心=(' + (after.cx * 100).toFixed(0) + '%,' + (after.cy * 100).toFixed(0) + '%)')
+          bar('主预览未被挤到角落=' + (after.w > 0.35 && after.h > 0.35 && after.cx > 0.3 && after.cx < 0.7 && after.cy > 0.25 && after.cy < 0.75))
+          await sleep(400)
+          const overlay = doc.querySelector('.impostor-preview')
+          const sw = doc.querySelector('.preview-switch')
+          bar('伪装卡预览层=' + !!overlay + ' 切换按钮组=' + !!sw + ' 预览图=' + (overlay && overlay.querySelector('img') ? 'img 已挂载' : '无'))
+          const swBtns = sw ? [...sw.querySelectorAll('button')].map((b) => b.textContent.trim()) : []
+          bar('切换按钮=' + JSON.stringify(swBtns))
+          if (swBtns.length >= 2) {
+            [...sw.querySelectorAll('button')].find((b) => b.textContent.includes('3D')).click()
+            await sleep(800)
+            const back = await measure()
+            bar('点「3D 模型」后: 预览层=' + !!doc.querySelector('.impostor-preview') + ' 画面宽占比=' + (back.w * 100).toFixed(0) + '%')
+          }
+          bar('errs=none')
+          document.title = 'IMPOSTOR-OK :: ' + L.join(' || ').slice(0, 1300)
+        } catch (e) {
+          document.title = 'IMPOSTOR-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 500)
+        }
+      }, 3000)
+    </script>
+  </body>
+</html>
