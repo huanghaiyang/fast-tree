@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><title>bark: booting</title></head>
+  <body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+    <iframe id="f" src="/" style="width:1000px;height:640px;border:0"></iframe>
+    <pre id="out">…</pre>
+    <script type="module">
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const L = []
+      const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+      let win, doc, sc, state
+      f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+      setTimeout(async () => {
+        try {
+          sc = win.__fastTreeScene; state = win.__fastTree
+          const mod = await import('/src/core/barkTextures.js')
+          bar('贴图库条目=' + mod.BARK_TEXTURES.length + ' 批次=' + mod.BARK_BATCHES.map((b) => b.name).join('/'))
+          // ① 贴图 URL 是否可访问
+          const t0 = mod.BARK_TEXTURES[0]
+          const r = await fetch(t0.url)
+          bar('① ' + t0.url + ' -> HTTP ' + r.status)
+          let bad = 0
+          for (const bt of mod.BARK_TEXTURES) {
+            const rr = await fetch(bt.url, { method: 'HEAD' })
+            if (!rr.ok) { bad++; bar('  404: ' + bt.url) }
+          }
+          bar('① 全部 ' + mod.BARK_TEXTURES.length + ' 张可访问, 失败=' + bad)
+          // ② 应用一张树皮 -> 材质应有 map + 自动法线
+          win.__fastTreeSceneApi.rebuildNow(true)
+          await sleep(400)
+          state.params.bark.texture = t0.url
+          state.params.bark.normalFromAlbedo = 1.4
+          sc.updateMaterialParams(state.params)
+          await sleep(1200)
+          const bark = sc.materials.bark
+          bar('② 应用树皮: map=' + !!bark.map + ' normalMap=' + !!bark.normalMap +
+              (bark.normalMap && bark.normalMap.image ? ' (' + bark.normalMap.image.width + 'x' + bark.normalMap.image.height + ')' : '') +
+              ' DataTexture=' + (bark.normalMap ? !!bark.normalMap.isDataTexture : false))
+          bar('   normalScale=' + bark.normalScale.x.toFixed(2) + ' 自动法线标记=' + bark.userData.autoBarkNormal)
+          // ③ 关掉自动法线 -> 应移除
+          state.params.bark.normalFromAlbedo = 0
+          sc.updateMaterialParams(state.params)
+          await sleep(400)
+          sc.updateMaterialParams(state.params)
+          await sleep(400)
+          const bm = sc.materials.bark
+          // 直接调用 materials 模块, 绕开 store/场景的调用链, 判断问题在"函数逻辑"还是"参数路由"
+          const M = await import('/src/core/materials.js')
+          const probe = { ...state.params, bark: { ...state.params.bark, texture: state.params.bark.texture, normalFromAlbedo: 0 } }
+          M.updateBarkMaterial(bm, probe, sc.uniforms || {})
+          bar('③ 直接调用 updateBarkMaterial(normalFromAlbedo=0): normalMap=' + !!bm.normalMap + ' 标记=' + bm.userData.autoBarkNormal)
+          bar('③ 关闭自动法线: normalMap=' + !!bm.normalMap + ' 标记=' + bm.userData.autoBarkNormal +
+              ' 是Data=' + (bm.normalMap ? !!bm.normalMap.isDataTexture : '-') +
+              ' normalFromAlbedo=' + state.params.bark.normalFromAlbedo)
+          // ④ 换到程序化花纹 -> 程序化自带的法线应回来
+          state.params.bark.normalFromAlbedo = 1.4
+          state.params.bark.texture = ''
+          sc.updateMaterialParams(state.params)
+          await sleep(800)
+          const hasProcNormal = !!sc.materials.bark.normalMap
+          bar('④ 程序化花纹 normalMap=' + hasProcNormal + ' (程序化自带法线, 应为 true)')
+          bar('errs=none')
+          document.title = 'BARK-OK :: ' + L.join(' || ').slice(0, 1300)
+        } catch (e) {
+          document.title = 'BARK-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 500)
+        }
+      }, 3000)
+    </script>
+  </body>
+</html>

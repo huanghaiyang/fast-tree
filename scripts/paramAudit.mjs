@@ -127,7 +127,7 @@ for (const k of ['type', 'levels', 'perBranch', 'clusterCount', 'clusterRadius',
 export const DOM_DEPENDENT = new Set([
   'bark.color', 'bark.color2', 'bark.bump', 'bark.uvScaleU', 'bark.uvScaleV',
   'bark.procedural.enabled', 'bark.procedural.style', 'bark.procedural.scale', 'bark.procedural.contrast',
-  'bark.texture', 'bark.normalTexture',
+  'bark.texture', 'bark.normalTexture', 'bark.normalFromAlbedo',
   'leafMat.texture', 'leafMat.normalTexture', 'leafMat.normalFromAlbedo',
   // 粒子是场景级效果 (Points + 顶点着色器动画, 需要渲染器), Node 侧无法比较
   'particles.enabled', 'particles.count', 'particles.size', 'particles.speed', 'particles.fall',

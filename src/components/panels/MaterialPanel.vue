@@ -9,6 +9,8 @@
     <SliderRow label="粗糙度" v-model="b.roughness" :min="0" :max="1" :step="0.01" />
     <SliderRow label="金属度" v-model="b.metalness" :min="0" :max="1" :step="0.01" />
     <SliderRow label="法线强度" v-model="b.normalScale" :min="0" :max="3" :step="0.05" />
+    <SliderRow label="自动生成法线" v-model="b.normalFromAlbedo" :min="0" :max="3" :step="0.05"
+      hint="照片树皮专用: 0 = 关闭。从颜色贴图的裂纹/凹凸自动生成法线贴图 (程序化花纹本身已带法线)" />
     <SliderRow label="凹凸强度 (bump)" v-model="b.bump" :min="0" :max="2" :step="0.05" />
     <SliderRow label="顶点色混合" v-model="b.vertexColorMix" :min="0" :max="1" :step="0.01"
       hint="顶点色里烘焙了根部变暗 / 嫩枝偏绿" />
@@ -18,6 +20,26 @@
     </div>
     <TextureRow label="自定义树皮贴图" v-model="b.texture" />
     <TextureRow label="自定义法线贴图" v-model="b.normalTexture" />
+
+    <!-- 内置树皮贴图库 (来自 bark_batch1 / bark_batch2) -->
+    <div class="pick-label">内置树皮贴图 ({{ BARK_TEXTURES.length }} 张)</div>
+    <div class="chips">
+      <button class="chip nowrap" :class="{ active: !b.texture }" @click="b.texture = ''">程序化花纹</button>
+      <button v-for="bt in BARK_BATCHES" :key="bt.id" class="chip nowrap"
+        :class="{ active: barkBatch === bt.id }" @click="barkBatch = bt.id; barkRow = barkTextureRows(bt.id)[0]">{{ bt.name }}</button>
+    </div>
+    <div class="chips">
+      <span class="muted">款式</span>
+      <button v-for="r in barkTextureRows(barkBatch)" :key="r" class="chip" :class="{ active: barkRow === r }"
+        @click="barkRow = r">#{{ r }}</button>
+    </div>
+    <div class="chips">
+      <button v-for="bt in barkTexturesFor(barkBatch, barkRow)" :key="bt.id" class="chip dot"
+        :class="{ active: b.texture === bt.url }" :title="bt.name" @click="useBark(bt)">
+        <img :src="bt.url" alt="" />
+      </button>
+      <button class="btn small" title="随机一张树皮" @click="useBark(randomBarkTexture())">🎲</button>
+    </div>
   </Section>
 
   <Section title="树叶材质" hint="Leaf" :default-collapsed="true">
@@ -192,7 +214,30 @@ import SelectRow from '../ui/SelectRow.vue'
 import TextureRow from '../ui/TextureRow.vue'
 import { state, applyLeafCard, randomLeafCard } from '../../store/treeStore.js'
 import { LEAF_CARDS, LEAF_CARD_BATCHES, leafCardsFor, leafCardRows } from '../../core/leafCards.generated.js'
+import {
+  BARK_TEXTURES, BARK_BATCHES, barkTexturesFor, barkTextureRows,
+} from '../../core/barkTextures.js'
 import { computed, ref } from 'vue'
+
+/* ---------------- 内置树皮贴图 ---------------- */
+const barkBatch = ref('batch1')
+const barkRow = ref(1)
+function useBark(bt) {
+  if (!bt) return
+  // 只改材质贴图: 属于 material 变更组 -> 由材质 watcher 更新 map, 不重建树、不重新取景
+  b.texture = bt.url
+  // 照片树皮是 1m 左右的局部采样, 直接贴到几十米高的树干上会严重拉伸
+  // -> 给一组"接近真实树皮尺度"的平铺默认值 (之后可用 UV 重复滑杆微调)
+  if (b.uvScaleU === 1 && b.uvScaleV === 1) {
+    b.uvScaleU = 3
+    b.uvScaleV = 12
+  }
+}
+function randomBarkTexture() {
+  const pool = barkTexturesFor(barkBatch.value, barkRow.value)
+  const list = pool.length ? pool : BARK_TEXTURES
+  return list[Math.floor(Math.random() * list.length)]
+}
 
 const tintOptions = [
   { value: 'texture', label: '原色 (贴图不变色)' },
@@ -267,8 +312,9 @@ function applyCustom() {
   background: var(--bg-3); border: 1px solid var(--line); border-radius: 6px; cursor: pointer;
 }
 .chip.active { border-color: var(--accent); color: #eafff7; }
-.chip.dot { padding: 0; width: 30px; height: 30px; overflow: hidden; display: inline-flex; }
-.chip.dot img { width: 100%; height: 100%; object-fit: contain; }
+.chip.dot { padding: 0; width: 34px; height: 34px; overflow: hidden; display: inline-flex; border-radius: 3px; }
+/* 缩略图只显示贴图**中间部分**并裁掉圆角: object-fit: cover 会居中裁剪填满方块 */
+.chip.dot img { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; }
 .pick-label { font-size: 11px; color: var(--text-2); margin: 6px 0 3px; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .chips .chip { white-space: nowrap; }

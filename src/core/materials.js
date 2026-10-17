@@ -225,12 +225,19 @@ export function resolveTintMix(m, hasTexture) {
 }
 
 /** 若没有显式法线贴图且开启了自动生成, 就从 albedo 生成一张 */
-function applyAutoNormal(mat, p) {
+/**
+ * 从 albedo 自动生成法线贴图 (叶片/树皮通用)
+ * @param {THREE.Material} mat 目标材质
+ * @param {object} p 材质参数 (leafMat 或 bark)
+ * @param {string} flagKey userData 里的标记键名 —— 树皮已有 autoNormal 用来存程序化法线贴图,
+ *                         所以必须用不同的键, 否则会把程序化法线当成自动法线清掉
+ */
+function applyAutoNormal(mat, p, flagKey = 'autoNormal') {
   const strength = p.normalFromAlbedo === undefined ? 0 : p.normalFromAlbedo
   if (p.normalTexture || strength <= 0 || !p.texture) {
-    if (mat.normalMap && mat.userData.autoNormal) {
+    if (mat.normalMap && mat.userData[flagKey]) {
       mat.normalMap = null
-      mat.userData.autoNormal = false
+      mat.userData[flagKey] = false
       mat.needsUpdate = true
     }
     return
@@ -239,18 +246,16 @@ function applyAutoNormal(mat, p) {
   const tex = albedoNormalTexture(map, strength, p.texture)
   if (!tex) {
     // 贴图还没解码完 -> 等它 update 后重试 (只挂一次)
-    if (map && typeof map.onUpdate !== 'function' || (map && !map.userData.__autoNormalHooked)) {
-      if (map) {
-        map.userData.__autoNormalHooked = true
-        const prev = map.onUpdate
-        map.onUpdate = () => {
-          if (typeof prev === 'function') prev()
-          const t = albedoNormalTexture(map, strength, p.texture)
-          if (t && !mat.normalMap) {
-            mat.normalMap = t
-            mat.userData.autoNormal = true
-            mat.needsUpdate = true
-          }
+    if (map && !map.userData.__autoNormalHooked) {
+      map.userData.__autoNormalHooked = true
+      const prev = map.onUpdate
+      map.onUpdate = () => {
+        if (typeof prev === 'function') prev()
+        const t = albedoNormalTexture(map, strength, p.texture)
+        if (t && !mat.normalMap) {
+          mat.normalMap = t
+          mat.userData[flagKey] = true
+          mat.needsUpdate = true
         }
       }
     }
@@ -258,9 +263,9 @@ function applyAutoNormal(mat, p) {
   }
   // 已经是这张图了就不重复赋值 (避免每次更新材质都触发重编译)
   if (mat.normalMap === tex) return
-  if (mat.userData.autoNormal && mat.normalMap) disposeTexture(mat.normalMap)
+  if (mat.userData[flagKey] && mat.normalMap) disposeTexture(mat.normalMap)
   mat.normalMap = tex
-  mat.userData.autoNormal = true
+  mat.userData[flagKey] = true
   mat.needsUpdate = true
 }
 
@@ -462,6 +467,18 @@ export function updateBarkMaterial(mat, params, sharedUniforms) {
       mat.needsUpdate = true
     }
   }
+  // 照片树皮: 没有自带法线贴图时, 从颜色贴图自动生成 (裂纹/凹凸 -> 真实光照细节)
+  // 程序化树皮已经有 makeBarkTextures 生成的法线, 不走这里
+  const wantAutoNormal = !!p.texture && !p.normalTexture && (p.normalFromAlbedo || 0) > 0
+  if (wantAutoNormal) {
+    applyAutoNormal(mat, p, 'autoBarkNormal')
+  } else if (mat.userData.autoBarkNormal) {
+    // 显式关闭: 清掉自动生成的法线 (不然滑杆归零后仍然生效)
+    if (mat.normalMap) disposeTexture(mat.normalMap)
+    mat.normalMap = null
+    mat.userData.autoBarkNormal = false
+    mat.needsUpdate = true
+  }
   setTextureRepeat(mat.map, p.uvScaleU, p.uvScaleV)
   setTextureRepeat(mat.normalMap, p.uvScaleU, p.uvScaleV)
   setTextureRepeat(mat.roughnessMap, p.uvScaleU, p.uvScaleV)
@@ -469,11 +486,12 @@ export function updateBarkMaterial(mat, params, sharedUniforms) {
 }
 
 function clearAutoBarkTextures(mat) {
-  const auto = [mat.userData.autoMap, mat.userData.autoNormal, mat.userData.autoRough]
-  for (const t of auto) disposeTexture(t)
+  const auto = [mat.userData.autoMap, mat.userData.autoNormal, mat.userData.autoRough, mat.userData.autoBarkNormal]
+  for (const t of auto) if (t && t.isTexture) disposeTexture(t)
   mat.userData.autoMap = null
   mat.userData.autoNormal = null
   mat.userData.autoRough = null
+  mat.userData.autoBarkNormal = null
   if (auto.includes(mat.map)) mat.map = null
   if (auto.includes(mat.normalMap)) mat.normalMap = null
   if (auto.includes(mat.roughnessMap)) mat.roughnessMap = null

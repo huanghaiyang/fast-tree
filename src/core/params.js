@@ -250,6 +250,7 @@ export function defaultParams() {
       roughness: 0.88,
       metalness: 0.0,
       normalScale: 1.0,
+      normalFromAlbedo: 1.4,   // 照片树皮: 从颜色贴图自动生成法线 (0 = 关闭)
       uvScaleU: 1.0,
       uvScaleV: 1.0,
       bump: 1.0,

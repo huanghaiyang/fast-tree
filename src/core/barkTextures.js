@@ -1,0 +1,27 @@
+/**
+ * 内置橡树树皮贴图库 (由用户提供的 bark_batch1 / bark_batch2 生成)
+ * ------------------------------------------------------------
+ * 目录: public/bark/bark_batch1/bark1_rXX_cYY.png (19 张)
+ *       public/bark/bark_batch2/bark2_rXX_cYY.png (19 张)
+ * 结构: 每批次 4 种树皮款式(row) × 若干采样(col); 第 4 行只有 4 个采样
+ * 说明: 树皮为**可平铺**材质, 不做 alpha 裁边 (与叶片卡片不同),
+ *      平铺次数由 bark.uvScaleU / bark.uvScaleV 控制。
+ */
+export const BARK_TEXTURES = [{"id":"batch1-r01-c01","batch":"batch1","row":1,"col":1,"name":"灰褐裂隙 #1-1","url":"/bark/bark_batch1/bark1_r01_c01.png"},{"id":"batch1-r01-c02","batch":"batch1","row":1,"col":2,"name":"灰褐裂隙 #1-2","url":"/bark/bark_batch1/bark1_r01_c02.png"},{"id":"batch1-r01-c03","batch":"batch1","row":1,"col":3,"name":"灰褐裂隙 #1-3","url":"/bark/bark_batch1/bark1_r01_c03.png"},{"id":"batch1-r01-c04","batch":"batch1","row":1,"col":4,"name":"灰褐裂隙 #1-4","url":"/bark/bark_batch1/bark1_r01_c04.png"},{"id":"batch1-r01-c05","batch":"batch1","row":1,"col":5,"name":"灰褐裂隙 #1-5","url":"/bark/bark_batch1/bark1_r01_c05.png"},{"id":"batch1-r02-c01","batch":"batch1","row":2,"col":1,"name":"灰褐裂隙 #2-1","url":"/bark/bark_batch1/bark1_r02_c01.png"},{"id":"batch1-r02-c02","batch":"batch1","row":2,"col":2,"name":"灰褐裂隙 #2-2","url":"/bark/bark_batch1/bark1_r02_c02.png"},{"id":"batch1-r02-c03","batch":"batch1","row":2,"col":3,"name":"灰褐裂隙 #2-3","url":"/bark/bark_batch1/bark1_r02_c03.png"},{"id":"batch1-r02-c04","batch":"batch1","row":2,"col":4,"name":"灰褐裂隙 #2-4","url":"/bark/bark_batch1/bark1_r02_c04.png"},{"id":"batch1-r02-c05","batch":"batch1","row":2,"col":5,"name":"灰褐裂隙 #2-5","url":"/bark/bark_batch1/bark1_r02_c05.png"},{"id":"batch1-r03-c01","batch":"batch1","row":3,"col":1,"name":"灰褐裂隙 #3-1","url":"/bark/bark_batch1/bark1_r03_c01.png"},{"id":"batch1-r03-c02","batch":"batch1","row":3,"col":2,"name":"灰褐裂隙 #3-2","url":"/bark/bark_batch1/bark1_r03_c02.png"},{"id":"batch1-r03-c03","batch":"batch1","row":3,"col":3,"name":"灰褐裂隙 #3-3","url":"/bark/bark_batch1/bark1_r03_c03.png"},{"id":"batch1-r03-c04","batch":"batch1","row":3,"col":4,"name":"灰褐裂隙 #3-4","url":"/bark/bark_batch1/bark1_r03_c04.png"},{"id":"batch1-r03-c05","batch":"batch1","row":3,"col":5,"name":"灰褐裂隙 #3-5","url":"/bark/bark_batch1/bark1_r03_c05.png"},{"id":"batch1-r04-c01","batch":"batch1","row":4,"col":1,"name":"灰褐裂隙 #4-1","url":"/bark/bark_batch1/bark1_r04_c01.png"},{"id":"batch1-r04-c02","batch":"batch1","row":4,"col":2,"name":"灰褐裂隙 #4-2","url":"/bark/bark_batch1/bark1_r04_c02.png"},{"id":"batch1-r04-c03","batch":"batch1","row":4,"col":3,"name":"灰褐裂隙 #4-3","url":"/bark/bark_batch1/bark1_r04_c03.png"},{"id":"batch1-r04-c04","batch":"batch1","row":4,"col":4,"name":"灰褐裂隙 #4-4","url":"/bark/bark_batch1/bark1_r04_c04.png"},{"id":"batch2-r01-c01","batch":"batch2","row":1,"col":1,"name":"红褐块状 #1-1","url":"/bark/bark_batch2/bark2_r01_c01.png"},{"id":"batch2-r01-c02","batch":"batch2","row":1,"col":2,"name":"红褐块状 #1-2","url":"/bark/bark_batch2/bark2_r01_c02.png"},{"id":"batch2-r01-c03","batch":"batch2","row":1,"col":3,"name":"红褐块状 #1-3","url":"/bark/bark_batch2/bark2_r01_c03.png"},{"id":"batch2-r01-c04","batch":"batch2","row":1,"col":4,"name":"红褐块状 #1-4","url":"/bark/bark_batch2/bark2_r01_c04.png"},{"id":"batch2-r01-c05","batch":"batch2","row":1,"col":5,"name":"红褐块状 #1-5","url":"/bark/bark_batch2/bark2_r01_c05.png"},{"id":"batch2-r02-c01","batch":"batch2","row":2,"col":1,"name":"红褐块状 #2-1","url":"/bark/bark_batch2/bark2_r02_c01.png"},{"id":"batch2-r02-c02","batch":"batch2","row":2,"col":2,"name":"红褐块状 #2-2","url":"/bark/bark_batch2/bark2_r02_c02.png"},{"id":"batch2-r02-c03","batch":"batch2","row":2,"col":3,"name":"红褐块状 #2-3","url":"/bark/bark_batch2/bark2_r02_c03.png"},{"id":"batch2-r02-c04","batch":"batch2","row":2,"col":4,"name":"红褐块状 #2-4","url":"/bark/bark_batch2/bark2_r02_c04.png"},{"id":"batch2-r02-c05","batch":"batch2","row":2,"col":5,"name":"红褐块状 #2-5","url":"/bark/bark_batch2/bark2_r02_c05.png"},{"id":"batch2-r03-c01","batch":"batch2","row":3,"col":1,"name":"红褐块状 #3-1","url":"/bark/bark_batch2/bark2_r03_c01.png"},{"id":"batch2-r03-c02","batch":"batch2","row":3,"col":2,"name":"红褐块状 #3-2","url":"/bark/bark_batch2/bark2_r03_c02.png"},{"id":"batch2-r03-c03","batch":"batch2","row":3,"col":3,"name":"红褐块状 #3-3","url":"/bark/bark_batch2/bark2_r03_c03.png"},{"id":"batch2-r03-c04","batch":"batch2","row":3,"col":4,"name":"红褐块状 #3-4","url":"/bark/bark_batch2/bark2_r03_c04.png"},{"id":"batch2-r03-c05","batch":"batch2","row":3,"col":5,"name":"红褐块状 #3-5","url":"/bark/bark_batch2/bark2_r03_c05.png"},{"id":"batch2-r04-c01","batch":"batch2","row":4,"col":1,"name":"红褐块状 #4-1","url":"/bark/bark_batch2/bark2_r04_c01.png"},{"id":"batch2-r04-c02","batch":"batch2","row":4,"col":2,"name":"红褐块状 #4-2","url":"/bark/bark_batch2/bark2_r04_c02.png"},{"id":"batch2-r04-c03","batch":"batch2","row":4,"col":3,"name":"红褐块状 #4-3","url":"/bark/bark_batch2/bark2_r04_c03.png"},{"id":"batch2-r04-c04","batch":"batch2","row":4,"col":4,"name":"红褐块状 #4-4","url":"/bark/bark_batch2/bark2_r04_c04.png"}]
+
+export const BARK_TEXTURE_BY_ID = new Map(BARK_TEXTURES.map((t) => [t.id, t]))
+
+export const BARK_BATCHES = [
+  { id: 'batch1', name: '灰褐裂隙' },
+  { id: 'batch2', name: '红褐块状' },
+]
+
+/** 某批次/某个"树皮款式"(row) 下的所有采样 */
+export function barkTexturesFor(batch, row) {
+  return BARK_TEXTURES.filter((t) => t.batch === batch && t.row === row)
+}
+
+export function barkTextureRows(batch) {
+  const set = new Set(BARK_TEXTURES.filter((t) => t.batch === batch).map((t) => t.row))
+  return [...set].sort((a, b) => a - b)
+}
