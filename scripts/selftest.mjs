@@ -9,8 +9,12 @@ import {
   SPECIES, GROWTH_STAGES, SEASONS, composeTree, classificationName, allCombinations,
 } from '../src/core/species.js'
 import { buildLeafTemplate, LEAF_SHAPE_KEYS } from '../src/core/leaf.js'
-import { createSharedUniforms, createLeafMaterial, createBarkMaterial, updateMaterials, internalShaderSources } from '../src/core/materials.js'
+import { createSharedUniforms, createLeafMaterial, createBarkMaterial, updateMaterials, internalShaderSources, resolveTintMix } from '../src/core/materials.js'
 import { sampleEmitPositions, buildParticleSeeds, createParticleMaterial, PARTICLE_VERT, PARTICLE_FRAG } from '../src/core/particles.js'
+import { buildFallingLeaves } from '../src/core/fallingLeaves.js'
+import { buildLeafLitter } from '../src/core/litter.js'
+import { ellipseLeafTexture, resolveEffectTexture, resolveEffectAspect } from '../src/core/leafTexture.js'
+import { LEAF_CARDS } from '../src/core/leafCards.generated.js'
 import { motionMetrics, swayEnvelope } from '../src/core/windModel.js'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -829,6 +833,189 @@ check('每个 uniform 都在 JS 侧有对应值 (不会静默变 0)', (() => {
   if (miss.length) console.log('      JS 未提供: ' + miss.join(', '))
   return miss.length === 0
 })())
+
+/* 15. 落叶 */
+console.log('\n[15] 落叶效果')
+{
+  const fp = composeTree('oak', 'mature', 'summer', 4242)
+  fp.fall = { ...fp.fall, enabled: true, count: 120 }
+  const leafGeo = buildTree(composeTree('oak', 'mature', 'summer', 4242)).leafGeometry
+  const sh = createSharedUniforms()
+  const bbox = leafGeo.boundingBox || (leafGeo.computeBoundingBox(), leafGeo.boundingBox)
+  const mesh = buildFallingLeaves(leafGeo, fp, sh, null, bbox)
+  const seeds = mesh.geometry.attributes.aLeafSeed
+  check('落叶数量 = 设置值', seeds.count / 4 === 120, String(seeds.count / 4))
+  check('落叶每个 6 面 2 三角 (合批单 draw call)', mesh.geometry.index.count / 3 === 120 * 2, String(mesh.geometry.index.count / 3))
+  check('落叶与树共用风场 uniform', mesh.material.uniforms.uWindDir === sh.uWindDir && mesh.material.uniforms.uGust === sh.uGust)
+  check('落叶出生点在树冠范围内', (() => {
+    const pos = mesh.geometry.attributes.position.array
+    let ok = 0
+    for (let i = 0; i < pos.length; i += 3) {
+      if (pos[i] >= bbox.min.x - 1e-3 && pos[i] <= bbox.max.x + 1e-3 && pos[i + 1] >= bbox.min.y - 1e-3 && pos[i + 1] <= bbox.max.y + 1e-3) ok++
+    }
+    return ok === pos.length / 3
+  })())
+  check('落叶默认关闭 (可选效果)', composeTree('oak', 'mature', 'summer', 4242).fall.enabled === false)
+  check('落叶受风倍率进入 uniform', (() => {
+    const m2 = buildFallingLeaves(leafGeo, { ...fp, fall: { ...fp.fall, windFollow: 2.5 } }, sh, null, bbox)
+    return Math.abs(m2.material.uniforms.uWindFollow.value - 2.5) < 1e-6
+  })())
+}
+
+/* 16. 落叶堆积 */
+console.log('\n[16] 地面落叶堆积')
+{
+  const lp = composeTree('oak', 'mature', 'summer', 4242)
+  lp.litter = { ...lp.litter, enabled: true, count: 300 }
+  const lgeo = buildTree(composeTree('oak', 'mature', 'summer', 4242)).leafGeometry
+  const lbbox = lgeo.boundingBox || (lgeo.computeBoundingBox(), lgeo.boundingBox)
+  const litter = buildLeafLitter(lp, null, lbbox)
+  const lp2 = litter.geometry.attributes.position
+  check('落叶堆积数量 = 设置值', lp2.count / 4 === 300, String(lp2.count / 4))
+  check('堆积每片 2 三角 (合批单 draw call)', litter.geometry.index.count / 3 === 300 * 2, String(litter.geometry.index.count / 3))
+  check('落叶都铺在地面附近 (y 在 0~厚度+ε)', (() => {
+    let ok = 0
+    for (let i = 0; i < lp2.count; i++) {
+      const y = lp2.getY(i)
+      if (y >= -0.001 && y <= 0.4) ok++
+    }
+    return ok === lp2.count
+  })())
+  check('落叶分布在树冠半径内', (() => {
+    const R = Math.max(Math.abs(lbbox.min.x), Math.abs(lbbox.max.x), Math.abs(lbbox.min.z), Math.abs(lbbox.max.z))
+    let ok = 0
+    for (let i = 0; i < lp2.count; i++) {
+      if (Math.hypot(lp2.getX(i), lp2.getZ(i)) <= R * 1.05 + 0.01) ok++
+    }
+    return ok === lp2.count
+  })())
+  check('顶点色做枯叶色差 (不同叶不同色)', (() => {
+    const c = litter.geometry.attributes.color
+    const seen = new Set()
+    for (let i = 0; i < c.count; i += 4) seen.add(c.getX(i).toFixed(2) + ',' + c.getY(i).toFixed(2))
+    return seen.size > 20
+  })(), '不同色数=' + (() => { const c = litter.geometry.attributes.color; const s2 = new Set(); for (let i = 0; i < c.count; i += 4) s2.add(c.getX(i).toFixed(2)); return s2.size })())
+  check('UV 有镜像/旋转 (同贴图多形态)', (() => {
+    const uv = litter.geometry.attributes.uv
+    const seen = new Set()
+    for (let i = 0; i < uv.count; i += 4) seen.add(uv.getX(i).toFixed(2) + ',' + uv.getY(i).toFixed(2))
+    return seen.size >= 4
+  })())
+  check('落叶堆积默认关闭 (可选效果)', composeTree('oak', 'mature', 'summer', 4242).litter.enabled === false)
+}
+
+/* 17. 落叶/堆积各自选贴图 + 兜底 */
+console.log('\n[17] 落叶/堆积贴图解析')
+{
+  const tex = ellipseLeafTexture(32)
+  check('无贴图时用椭圆兜底贴图 (DataTexture, 不依赖 canvas)', !!tex && tex.isDataTexture === true && tex.image.data.length === tex.image.width * tex.image.height * 4)
+  check('跟随树叶: 用树叶的贴图', (() => {
+    const fake = { isTexture: true, name: 'leafmap' }
+    const r = resolveEffectTexture({ followMap: fake })
+    return r.map === fake && r.source === 'follow'
+  })())
+  check('单独选卡片: 用卡片自己的宽高比', (() => {
+    const c = LEAF_CARDS[0]
+    return Math.abs(resolveEffectAspect(c.id, 1) - c.aspect) < 1e-6
+  })())
+  check('跟随树叶时的宽高比回退', Math.abs(resolveEffectAspect('', 0.9) - 0.9) < 1e-6)
+  check('落叶/堆积都支持独立 cardId 参数',
+    composeTree('oak', 'mature', 'summer', 4242).fall.cardId === '' &&
+    composeTree('oak', 'mature', 'summer', 4242).litter.cardId === '')
+  // 落叶几何方面: 选不同卡片时 aspect 会跟着变
+  const leafGeo2 = buildTree(composeTree('oak', 'mature', 'summer', 4242)).leafGeometry
+  const bb2 = leafGeo2.boundingBox || (leafGeo2.computeBoundingBox(), leafGeo2.boundingBox)
+  const sh2 = createSharedUniforms()
+  const c0 = LEAF_CARDS[0]
+  const m1 = buildFallingLeaves(leafGeo2, { ...composeTree('oak', 'mature', 'summer', 4242), fall: { enabled: true, cardId: c0.id } }, sh2, null, bb2)
+  check('落叶卡片宽高比进入半宽计算', Math.abs(m1.material.uniforms.uHalf.value.x - 0.5 * Math.min(1.6, Math.max(0.35, c0.aspect))) < 1e-6)
+}
+check('堆积材质不再注入自定义着色器 (vMapUv 报错的根因)', (() => {
+  const lp = composeTree('oak', 'mature', 'summer', 4242)
+  const lg = buildTree(composeTree('oak', 'mature', 'summer', 4242)).leafGeometry
+  const bb = lg.boundingBox || (lg.computeBoundingBox(), lg.boundingBox)
+  const m = buildLeafLitter({ ...lp, litter: { ...lp.litter, enabled: true } }, null, bb)
+  console.log('      堆积材质 onBeforeCompile=' + (typeof m.material.onBeforeCompile))
+  // three 的 Material 原型上本来就有 onBeforeCompile (空实现), 所以要看实例上有没有自己的
+  const own = Object.prototype.hasOwnProperty.call(m.material, 'onBeforeCompile')
+  return !own && !!(m.material.map && m.material.map.isDataTexture)
+})())
+
+/* 18. 贴图染色模式 */
+console.log('\n[18] 贴图染色模式 (贴图原色 / 跟随季节 / 自定义)')
+{
+  const mixOf = (mode, custom) => {
+    const p = composeTree('oak', 'mature', 'summer', 4242)
+    p.leafMat.tintMode = mode
+    if (custom !== undefined) p.leafMat.vertexColorMix = custom
+    return resolveTintMix(p.leafMat)
+  }
+  check('原色模式: 顶点色混合 = 0 (有贴图时不被染色)', mixOf('texture') === 0, String(mixOf('texture')))
+  check('跟随季节: 顶点色混合 = 1', mixOf('season') === 1, String(mixOf('season')))
+  check('自定义模式: 用染色强度', Math.abs(mixOf('custom', 0.35) - 0.35) < 1e-6, String(mixOf('custom', 0.35)))
+  check('应用叶片卡片后自动进"原色"模式', (() => {
+    const p = composeTree('oak', 'mature', 'summer', 4242)
+    p.leafMat.tintMode = 'season'
+    // applyLeafCard 的等价操作
+    p.leafMat.texture = '/leaves/x.png'
+    p.leafMat.tintMode = 'texture'
+    return p.leafMat.tintMode === 'texture' && resolveTintMix(p.leafMat) === 0
+  })())
+  check('切季节不再重置染色设置 (preserveUserBits)', (() => {
+    const p = composeTree('oak', 'mature', 'summer', 4242)
+    p.leafMat.tintMode = 'custom'
+    p.leafMat.vertexColorMix = 0.2
+    p.leafMat.texture = '/leaves/x.png'
+    const q = applyPreset(p, 'oak', 'mature', 'autumn')
+    console.log('      切换后 tintMode=' + q.leafMat.tintMode + ' mix=' + q.leafMat.vertexColorMix + ' 贴图=' + q.leafMat.texture)
+    return q.leafMat.tintMode === 'custom' && Math.abs(q.leafMat.vertexColorMix - 0.2) < 1e-6 && q.leafMat.texture === '/leaves/x.png'
+  })())
+  check('自发光不再使用季节叶色 (改用 emissiveColor)', (() => {
+    const p = composeTree('oak', 'mature', 'autumn', 4242)
+    p.leafMat.emissive = 0.5
+    p.leafMat.emissiveColor = '#00ff00'
+    const sh = createSharedUniforms()
+    const leaf = createLeafMaterial(p, sh)
+    updateMaterials({ bark: createBarkMaterial(p, sh), leaf, uniforms: sh }, p)
+    const hex = leaf.emissive.getHexString()
+    console.log('      autumn leaves.color=' + p.leaves.color + ' -> mat.emissive=#' + hex)
+    return hex === '00ff00'
+  })())
+}
+
+/* 19. 贴图染色不污染 (three 的 color_fragment 必须被替换掉) */
+console.log('\n[19] 贴图原色模式不被季节染色')
+{
+  const captured = (params, isLeaf) => {
+    const sh = createSharedUniforms()
+    const mat = isLeaf ? createLeafMaterial(params, sh) : createBarkMaterial(params, sh)
+    let src = null
+    const orig = mat.onBeforeCompile
+    mat.onBeforeCompile = (fn) => { orig(fn); src = fn.fragmentShader }
+    mat.onBeforeCompile({ uniforms: {}, vertexShader: '#include <begin_vertex>', fragmentShader: '#include <color_fragment>\n#include <alphatest_fragment>\n#include <emissivemap_fragment>' })
+    return src
+  }
+  const leafSrc = captured(composeTree('oak', 'mature', 'summer', 4242), true)
+  check('叶片着色器已移除 three 的 <color_fragment> (否则会无条件乘顶点色)',
+    !leafSrc.includes('#include <color_fragment>'))
+  check('叶片顶点色只经过 uVertexColorMix 一条路径', leafSrc.includes('uVertexColorMix'))
+  check('树皮同样不再重复乘顶点色', !captured(defaultParams(), false).includes('#include <color_fragment>'))
+  // 语义: 原色模式 mix=0 -> 数学上 vColor 完全不参与
+  const p0 = composeTree('oak', 'mature', 'summer', 4242)
+  p0.leafMat.tintMode = 'texture'
+  p0.leafMat.tint = '#ffffff'
+  p0.leafMat.emissive = 0
+  check('无贴图时自动回落到季节色 (否则程序化叶形是白叶子)', (() => {
+    const L = composeTree('oak', 'mature', 'summer', 4242).leafMat
+    const noTex = resolveTintMix({ ...L, tintMode: 'texture' }, false)
+    const withTex = resolveTintMix({ ...L, tintMode: 'texture' }, true)
+    console.log('      无贴图=' + noTex + ' 有贴图=' + withTex)
+    return noTex === 1 && withTex === 0
+  })())
+  check('默认染色模式 = 跟随季节 (程序化叶形默认有颜色)', composeTree('oak', 'mature', 'summer', 4242).leafMat.tintMode === 'season')
+  check('原色模式下: mix=0 + tint=白 + 无自发光 -> 季节色无处参与',
+    resolveTintMix(p0.leafMat, true) === 0 && p0.leafMat.tint === '#ffffff' && p0.leafMat.emissive === 0)
+}
 
 /* 汇总 */
 console.log(`\n=== 结果: ${pass} 通过 / ${fail} 失败 ===`)

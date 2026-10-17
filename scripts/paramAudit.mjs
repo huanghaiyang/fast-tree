@@ -96,6 +96,10 @@ export const CONDITIONS = {
   'trunk.fork.gravity': { 'trunk.fork.enabled': true },
   'trunk.fork.trunkShrink': { 'trunk.fork.enabled': true },
   'lod.leafRatio': null, // 由双向扰动覆盖 (1 -> 0.35)
+  // 染色强度只在"自定义"模式下生效
+  'leafMat.vertexColorMix': { 'leafMat.tintMode': 'custom' },
+  // 无贴图时 texture/season 都会回落到 1, 靠 custom 模式 + 自定义强度体现差异
+  'leafMat.tintMode': { 'leafMat.vertexColorMix': 0.3 },
   // 卡片几何子参数只在"卡片模式"下生效
   'leaves.cardAspect': { 'leaves.cardMode': true },
   'leaves.cardCurl': { 'leaves.cardMode': true },
@@ -129,6 +133,12 @@ export const DOM_DEPENDENT = new Set([
   'particles.enabled', 'particles.count', 'particles.size', 'particles.speed', 'particles.fall',
   'particles.sway', 'particles.swirl', 'particles.color', 'particles.opacity', 'particles.glow',
   'particles.spread', 'particles.windFollow',
+  // 落叶是场景级效果 (合批几何 + 顶点着色器动画), Node 侧无法比较
+  'fall.enabled', 'fall.count', 'fall.speed', 'fall.size', 'fall.swirl', 'fall.spinSpeed',
+  'fall.cardId', 'fall.stagger', 'fall.spread', 'fall.windFollow', 'fall.color', 'fall.opacity', 'fall.alphaTest',
+  // 落叶堆积同样是场景级 (合批几何 + 地面贴图)
+  'litter.enabled', 'litter.cardId', 'litter.count', 'litter.radius', 'litter.size', 'litter.thickness',
+  'litter.color', 'litter.colorVariance', 'litter.alphaTest', 'litter.shade',
 ])
 
 /** 由 store / 场景循环消费, 不直接进 uniform */
@@ -181,6 +191,7 @@ const FRACTION_KEYS = /(ratio|variance|spread|mix|scale|strength|intensity|gust|
 /** 少数参数需要"定向"的扰动值才能生效 */
 const SPECIAL_PERTURB = {
   'lod.maxLeaves': [5, 30],        // 只有上限真的卡住时才看得出来
+  'leafMat.tintMode': ['custom', 'texture'],
   'leaves.shapeMix': [[{ shape: 'oak', weight: 2 }, { shape: 'needle', weight: 1 }]],
   'trunk.knots': [9],              // 0/1 附近不明显
   'roots.count': [11],
@@ -321,6 +332,9 @@ export function auditMaterial(baseParams = defaultParams()) {
     let how = ''
     for (const cand of perturbations(path, value)) {
       const p = cloneParams(baseParams)
+      // 前置条件: 某些参数只在特定模式下生效 (例如染色强度只在 tintMode=custom 时)
+      const condM = CONDITIONS[path]
+      if (condM) for (const [k, v] of Object.entries(condM)) setAt(p, k, v)
       setAt(p, path, cand)
       try {
         if (materialSignature(p) !== base) {

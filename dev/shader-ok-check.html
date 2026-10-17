@@ -9,10 +9,10 @@
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
       const L = []
       const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
-      let win, sc, state
+      let win, sc, state, doc
       const errs = []
       f.addEventListener('load', () => {
-        win = f.contentWindow
+        win = f.contentWindow; doc = f.contentDocument
         win.addEventListener('error', (e) => errs.push('ERR: ' + e.message))
         const oe = win.console.error, ow = win.console.warn
         win.console.error = function (...a) { errs.push('CERR: ' + a.map(String).join(' ').slice(0, 260)); oe.apply(win.console, a) }
@@ -50,6 +50,166 @@
           sc.renderer.render(sc.scene, sc.camera)
           bar('本帧 draw calls=' + sc.renderer.info.render.calls + ' points=' + sc.renderer.info.render.points)
           sc.renderer.info.autoReset = true
+          // ===== 落叶 =====
+          // 先应用一张叶片卡片, 落叶就会用同样的叶形贴图
+          try {
+            const mod = await import('/src/core/leafCards.generated.js')
+            win.__fastTreeApi.applyLeafCard(mod.LEAF_CARDS[0].id)
+            win.__fastTreeSceneApi.rebuildNow(false)
+            await sleep(300)
+          } catch (e) { bar('卡片应用失败: ' + e.message) }
+          state.params.fall.enabled = true
+          state.params.fall.count = 260
+          state.params.fall.size = 0.55
+          state.params.fall.speed = 0.6
+          sc.updateFall(state.params)
+          await sleep(400)
+          sc.renderer.render(sc.scene, sc.camera)
+          await sleep(200)
+          const fm = sc.fallMesh
+          bar('落叶网格: ' + !!fm + ' 可见=' + (fm ? fm.visible : '-') + ' 叶片数=' + (fm ? fm.geometry.attributes.aLeafSeed.count / 4 : '-') + ' 三角=' + (fm ? fm.geometry.index.count / 3 : '-'))
+          const progs2 = sc.renderer.info.programs || []
+          let bad2 = 0
+          for (const p of progs2) if (p.diagnostics && (p.diagnostics.vertexShader || p.diagnostics.fragmentShader || p.diagnostics.programLog)) { bad2++; bar('✗ ' + (p.name || '?') + ' : ' + String(p.diagnostics.programLog || '').replace(/\n/g, ' ').slice(0, 200)) }
+          bar('含落叶的 program 数=' + progs2.length + ' 编译失败=' + bad2)
+          sc.renderer.info.autoReset = false
+          sc.renderer.info.reset()
+          sc.renderer.render(sc.scene, sc.camera)
+          bar('本帧 draw calls=' + sc.renderer.info.render.calls + ' points=' + sc.renderer.info.render.points)
+          sc.renderer.info.autoReset = true
+          // 落叶数量变化 -> 只重采样, 不重建整树
+          const tri0 = state.stats.leafTriangles
+          state.params.fall.count = 500
+          sc.updateFall(state.params)
+          await sleep(300)
+          bar('改落叶数: 叶片数=' + (sc.fallMesh ? sc.fallMesh.geometry.attributes.aLeafSeed.count / 4 : '-') + ' 整树是否重建=' + (state.stats.leafTriangles !== tri0))
+          // 相机拉到树旁看落叶
+          sc.controls.target.set(0, state.stats.height * 0.35, 0)
+          sc.camera.position.set(12, state.stats.height * 0.45, 14)
+          sc.camera.lookAt(sc.controls.target)
+          for (let i = 0; i < 8; i++) { sc.renderer.render(sc.scene, sc.camera); await sleep(120) }
+          const cv = doc.querySelector('canvas')
+          await fetch('http://127.0.0.1:5274/shot?name=falling-leaves', { method: 'POST', body: cv.toDataURL('image/png') })
+          bar('shot falling-leaves')
+          // ===== 地面落叶堆积 =====
+          state.params.litter.enabled = true
+          state.params.litter.count = 400
+          state.params.litter.radius = 1.1
+          state.params.litter.size = 0.7
+          sc.updateLitter(state.params)
+          await sleep(400)
+          sc.renderer.render(sc.scene, sc.camera)
+          await sleep(200)
+          const lm = sc.litterMesh
+          bar('落叶堆积: ' + !!lm + ' 可见=' + (lm ? lm.visible : '-') + ' 片数=' + (lm ? lm.geometry.attributes.position.count / 4 : '-') + ' 三角=' + (lm ? lm.geometry.index.count / 3 : '-'))
+          let bad3 = 0
+          for (const p of (sc.renderer.info.programs || [])) if (p.diagnostics && (p.diagnostics.vertexShader || p.diagnostics.fragmentShader || p.diagnostics.programLog)) { bad3++; bar('✗ ' + (p.name || '?') + ' : ' + String(p.diagnostics.programLog || '').replace(/\n/g, ' ').slice(0, 200)) }
+          bar('含堆积的 program 编译失败=' + bad3)
+          sc.renderer.info.autoReset = false
+          sc.renderer.info.reset()
+          sc.renderer.render(sc.scene, sc.camera)
+          bar('本帧 draw calls=' + sc.renderer.info.render.calls)
+          sc.renderer.info.autoReset = true
+          const tri1 = state.stats.leafTriangles
+          state.params.litter.count = 900
+          sc.updateLitter(state.params)
+          await sleep(300)
+          bar('改堆积数量: 片数=' + (sc.litterMesh ? sc.litterMesh.geometry.attributes.position.count / 4 : '-') + ' 整树是否重建=' + (state.stats.leafTriangles !== tri1))
+          sc.controls.target.set(0, 1.2, 0)
+          sc.camera.position.set(16, 9, 19)
+          sc.camera.lookAt(sc.controls.target)
+          for (let i = 0; i < 8; i++) { sc.renderer.render(sc.scene, sc.camera); await sleep(120) }
+          const cv2 = doc.querySelector('canvas')
+          await fetch('http://127.0.0.1:5274/shot?name=leaf-litter', { method: 'POST', body: cv2.toDataURL('image/png') })
+          bar('shot leaf-litter')
+          // ===== 关键: 无贴图路径 (vMapUv 报错的场景) =====
+          state.params.leafMat.texture = ''            // 清掉树叶贴图 -> 落叶/堆积走椭圆兜底
+          win.__fastTreeSceneApi.rebuildNow(false)
+          await sleep(300)
+          state.params.fall.enabled = true
+          state.params.litter.enabled = true
+          state.params.litter.count = 300
+          state.params.fall.count = 200
+          sc.rebuildFall(state.params)
+          sc.rebuildLitter(state.params)
+          await sleep(300)
+          sc.renderer.render(sc.scene, sc.camera)
+          await sleep(300)
+          let badNoMap = 0
+          for (const p of (sc.renderer.info.programs || [])) if (p.diagnostics && (p.diagnostics.vertexShader || p.diagnostics.fragmentShader || p.diagnostics.programLog)) { badNoMap++; bar('✗ 无贴图路径编译失败: ' + String(p.diagnostics.programLog || '').replace(/\n/g, ' ').slice(0, 240)) }
+          bar('无贴图路径 program 数=' + (sc.renderer.info.programs || []).length + ' 编译失败=' + badNoMap + ' (期望 0)')
+          bar('堆积材质 map=' + (sc.litterMesh && sc.litterMesh.material.map ? (sc.litterMesh.material.map.isDataTexture ? 'DataTexture(椭圆兜底)' : 'Texture') : '无'))
+          // ===== 落叶/堆积各自选贴图 =====
+          try {
+            const mod2 = await import('/src/core/leafCards.generated.js')
+            const a1 = mod2.LEAF_CARDS[0].id
+            const a2 = mod2.LEAF_CARDS.find((c) => c.batch !== mod2.LEAF_CARDS[0].batch).id
+            state.params.fall.cardId = a1
+            state.params.litter.cardId = a2
+            state.params.leafMat.texture = mod2.LEAF_CARDS[2].url
+            win.__fastTreeSceneApi.rebuildNow(false)
+            await sleep(500)
+            bar('独立选贴图: 落叶=' + state.params.fall.cardId + ' 堆积=' + state.params.litter.cardId + ' 树叶=不同卡片')
+            bar('累积 program 数=' + (sc.renderer.info.programs || []).length)
+            let bad3b = 0
+            for (const p of (sc.renderer.info.programs || [])) if (p.diagnostics && (p.diagnostics.vertexShader || p.diagnostics.fragmentShader || p.diagnostics.programLog)) bad3b++
+            bar('独立贴图后编译失败=' + bad3b)
+          } catch (e) { bar('独立贴图测试异常: ' + e.message) }
+          // ===== UI: 贴图行布局 + 跟随树叶按钮 =====
+          const tabM = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('材质'))
+          tabM?.click(); await sleep(600)
+          // 展开两个分节 (默认收起时宽度为 0, 会误判)
+          for (const h of [...doc.querySelectorAll('.section-head')]) {
+            const t = h.textContent || ''
+            if (t.includes('落叶堆积') || (t.includes('落叶') && !t.includes('堆积'))) {
+              const body = h.parentElement.querySelector('.section-body')
+              if (body && body.style.display === 'none') h.click()
+            }
+          }
+          await sleep(500)
+          const labels = [...doc.querySelectorAll('.pick-label')].map((e) => e.textContent.trim())
+          bar('贴图行标签: ' + JSON.stringify(labels))
+          const chipRows = [...doc.querySelectorAll('.chips')]
+          bar('chips 容器数=' + chipRows.length + ' 每行按钮数=' + chipRows.map((r) => r.querySelectorAll('button').length).join(','))
+          const vbar = [...doc.querySelectorAll('.pick-label')].map((e) => {
+            const r = e.getBoundingClientRect()
+            return e.textContent.trim() + ':' + Math.round(r.width) + '×' + Math.round(r.height) + (r.width < 30 ? '(挤压)' : '')
+          })
+          bar('标签布局: ' + vbar.join(' | '))
+          const wrapInfo = [...doc.querySelectorAll('.chips')].map((r) => {
+            const br = r.getBoundingClientRect()
+            return Math.round(br.width) + '×' + Math.round(br.height) + (br.height > 40 ? '(已换行)' : '(单行)')
+          })
+          bar('缩略图行: ' + wrapInfo.join(' | '))
+          // 落叶分节: 先点一张缩略图, 再点"跟随树叶"
+          const folSection = [...doc.querySelectorAll('.row')].length // 仅报告
+          const thumbs = [...doc.querySelectorAll('.chip.dot')]
+          bar('缩略图总数=' + thumbs.length)
+          const followBtns = [...doc.querySelectorAll('.chip.nowrap')]
+          bar('跟随树叶按钮数=' + followBtns.length + ' 文案=' + followBtns.map((b) => b.textContent.trim()).join('|'))
+          const mapOf = () => (sc.fallMesh && sc.fallMesh.material.uniforms.uMap.value) || null
+          const leafMap = sc.materials.leaf.map
+          // 1) 选一张卡片
+          if (thumbs[0]) { thumbs[0].click(); await sleep(700) }
+          sc.updateFall(state.params); sc.updateLitter(state.params)
+          await sleep(300)
+          const mapOwn = mapOf()
+          bar('选卡片后: fall.cardId=' + state.params.fall.cardId + ' map=' + (mapOwn ? (mapOwn.isDataTexture ? '椭圆' : 'texture:' + (mapOwn.image ? mapOwn.image.width : '?')) : '无'))
+          // 2) 落叶分节的"跟随树叶"按钮 (第 2 个, 因为堆积在前)
+          const fallFollowBtn = followBtns[1]
+          if (fallFollowBtn) { fallFollowBtn.click(); await sleep(800) }
+          sc.updateFall(state.params)
+          await sleep(400)
+          const mapFollow = mapOf()
+          bar('点落叶的跟随树叶后: fall.cardId="' + state.params.fall.cardId + '" map 是否=树叶贴图: ' + (mapFollow === leafMap))
+          // 堆积也一样
+          const litterMap = () => (sc.litterMesh && sc.litterMesh.material.map) || null
+          bar('堆积当前是否跟随树叶: ' + (state.params.litter.cardId === '') + ' map 是否=树叶贴图: ' + (litterMap() === leafMap))
+          bar('两个跟随按钮 active 状态: ' + followBtns.map((b) => b.className.includes('active')).join(','))
+          // 再点一次缩略图 -> 应脱离跟随
+          if (thumbs[0]) { thumbs[0].click(); await sleep(700) }
+          sc.updateFall(state.params); await sleep(300)
+          bar('再选卡片后: fall.cardId=' + (state.params.fall.cardId || '(空)') + ' 是否仍跟随=' + (state.params.fall.cardId === ''))
           bar('errs=' + (errs.length ? errs.slice(0, 4).join(' ;; ') : 'none'))
           document.title = 'SHADER-OK :: ' + L.join(' || ').slice(0, 1600)
         } catch (e) {

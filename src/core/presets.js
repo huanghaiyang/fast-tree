@@ -63,6 +63,12 @@ export function preserveUserBits(next, prev) {
   if (prev.leafMat) {
     next.leafMat.texture = prev.leafMat.texture || ''
     next.leafMat.normalTexture = prev.leafMat.normalTexture || ''
+    // 染色相关是用户对"贴图怎么用"的选择, 切树种/季节时不应被重置
+    next.leafMat.tintMode = prev.leafMat.tintMode
+    next.leafMat.vertexColorMix = prev.leafMat.vertexColorMix
+    next.leafMat.alphaTest = prev.leafMat.alphaTest
+    next.leafMat.emissiveColor = prev.leafMat.emissiveColor
+    next.leafMat.tint = prev.leafMat.tint
   }
   if (prev.wind) {
     next.wind.enabled = prev.wind.enabled

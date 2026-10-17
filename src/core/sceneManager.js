@@ -10,6 +10,8 @@ import {
 } from './materials.js'
 import { exportGLB, exportOBJ, exportScreenshot } from './exporter.js'
 import { buildParticlePoints, updateParticleMaterial } from './particles.js'
+import { buildFallingLeaves, updateFallingLeaves } from './fallingLeaves.js'
+import { buildLeafLitter } from './litter.js'
 import { boxInfo } from './mathUtils.js'
 
 const SKY_VERT = /* glsl */`
@@ -174,6 +176,8 @@ export class TreeScene {
 
   updateMaterialParams(params) {
     this.updateParticles(params)
+    this.updateFall(params)
+    this.updateLitter(params)
     const mats = this.ensureMaterials(params)
     updateMaterials(mats, params)
     if (this.barkMesh) this.barkMesh.material = mats.bark
@@ -232,6 +236,10 @@ export class TreeScene {
     this.applyShadowFlags()
     // 叶片粒子发射 (从叶片位置采样发射点)
     this.rebuildParticles(params)
+    // 落叶 (真实叶片卡片, 从树冠落下)
+    this.rebuildFall(params)
+    // 地面落叶堆积
+    this.rebuildLitter(params)
 
     if (this.wireBark || this.wireLeaf || (params.scene && params.scene.wireframe && params.scene.wireframe !== 'off')) {
       this.applyWireframe(params.scene && params.scene.wireframe)
@@ -493,6 +501,86 @@ export class TreeScene {
       return
     }
     updateParticleMaterial(this.particles.material, params, this.leafMesh ? this.leafMesh.geometry.boundingBox : null)
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 落叶                                                                */
+  /* ------------------------------------------------------------------ */
+  rebuildFall(params) {
+    if (!this.treeGroup) return
+    if (this.fallMesh) {
+      this.treeGroup.remove(this.fallMesh)
+      this.fallMesh.geometry.dispose()
+      this.fallMesh.material.dispose()
+      this.fallMesh = null
+    }
+    const F = params.fall || {}
+    if (!F.enabled || !this.leafMesh) return
+    const geo = this.leafMesh.geometry
+    if (!geo.boundingBox) geo.computeBoundingBox()
+    const followMap = params.leafMat && params.leafMat.texture ? (this.materials.leaf.map || null) : null
+    this.fallMesh = buildFallingLeaves(geo, params, this.uniforms, followMap, geo.boundingBox)
+    this.fallMesh.renderOrder = 2
+    this.treeGroup.add(this.fallMesh)
+  }
+
+  updateFall(params) {
+    const F = params.fall || {}
+    if (!F.enabled) {
+      if (this.fallMesh) this.fallMesh.visible = false
+      return
+    }
+    // 贴图卡片/数量/宽高比变化时必须重建 (否则换贴图不生效 -> 看起来像"跟随树叶失效")
+    const key = [F.cardId || '', Math.round(F.count === undefined ? 80 : F.count), params.leaves && params.leaves.cardAspect].join('|')
+    if (!this.fallMesh || key !== this._fallKey) {
+      this._fallKey = key
+      this.rebuildFall(params)
+      return
+    }
+    updateFallingLeaves(this.fallMesh, params)
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 地面落叶堆积                                                        */
+  /* ------------------------------------------------------------------ */
+  rebuildLitter(params) {
+    if (!this.treeGroup) return
+    if (this.litterMesh) {
+      this.treeGroup.remove(this.litterMesh)
+      this.litterMesh.geometry.dispose()
+      this.litterMesh.material.dispose()
+      this.litterMesh = null
+    }
+    const L = params.litter || {}
+    if (!L.enabled) return
+    const leafGeo = this.leafMesh ? this.leafMesh.geometry : null
+    if (leafGeo && !leafGeo.boundingBox) leafGeo.computeBoundingBox()
+    const followMap = params.leafMat && params.leafMat.texture ? (this.materials.leaf.map || null) : null
+    this.litterMesh = buildLeafLitter(params, followMap, leafGeo ? leafGeo.boundingBox : null)
+    this.litterMesh.renderOrder = 1
+    this.treeGroup.add(this.litterMesh)
+  }
+
+  updateLitter(params) {
+    const L = params.litter || {}
+    if (!L.enabled) {
+      if (this.litterMesh) this.litterMesh.visible = false
+      return
+    }
+    const key = [
+      L.cardId || '', Math.round(L.count === undefined ? 260 : L.count),
+      Math.round((L.radius === undefined ? 1 : L.radius) * 100),
+      Math.round((L.size === undefined ? 0.55 : L.size) * 100),
+      Math.round((L.thickness === undefined ? 0.06 : L.thickness) * 1000),
+      Math.round((L.colorVariance === undefined ? 0.45 : L.colorVariance) * 100),
+      params.leaves && params.leaves.cardAspect,
+    ].join('|')
+    if (!this.litterMesh || key !== this._litterKey) {
+      this._litterKey = key
+      this.rebuildLitter(params)
+      return
+    }
+    this.litterMesh.visible = true
   }
 
   /* ------------------------------------------------------------------ */

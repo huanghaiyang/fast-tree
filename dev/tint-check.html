@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><title>tint-check: booting</title></head>
+  <body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+    <iframe id="f" src="/" style="width:1200px;height:760px;border:0"></iframe>
+    <pre id="out">…</pre>
+    <script type="module">
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const L = []
+      const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+      let win, doc, state, sc
+      const errs = []
+      f.addEventListener('load', () => {
+        win = f.contentWindow; doc = f.contentDocument
+        win.addEventListener('error', (e) => errs.push('ERR:' + e.message))
+      })
+      const setPose = () => {
+        sc.controls.target.set(0, state.stats.height * 0.55, 0)
+        sc.camera.position.set(10, state.stats.height * 0.72, 13)
+        sc.camera.lookAt(sc.controls.target)
+        sc.controls.update()
+      }
+      // 用 toDataURL -> Image -> 2D canvas 读平均色 (比直接 drawImage WebGL canvas 可靠)
+      async function meanColor() {
+        sc.renderer.render(sc.scene, sc.camera)
+        const cv = doc.querySelector('canvas')
+        const url = cv.toDataURL('image/png')
+        const img = await new Promise((res) => {
+          const i = new win.Image()
+          i.onload = () => res(i)
+          i.onerror = () => res(null)
+          i.src = url
+        })
+        if (!img) return null
+        const c2 = doc.createElement('canvas')
+        c2.width = 200; c2.height = 130
+        const cx = c2.getContext('2d')
+        cx.drawImage(img, 0, 0, 200, 130)
+        const d = cx.getImageData(0, 0, 200, 130).data
+        let r = 0, g = 0, b = 0, n = 0
+        for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; n++ }
+        return [r / n, g / n, b / n].map((v) => +v.toFixed(1))
+      }
+      const dist = (a, b) => (a && b ? Math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2) : -1)
+      setTimeout(async () => {
+        try {
+          for (let i = 0; i < 60 && !(sc && state && sc.barkMesh); i++) await sleep(150)
+          sc = win.__fastTreeScene; state = win.__fastTree
+          win.__fastTreeSceneApi.rebuildNow(true)
+          await sleep(400)
+          // 0) 先用"无贴图程序化叶形"量一次 (默认参数, 不应是白叶子)
+          state.params.leafMat.texture = ''
+          state.params.leaves.cardMode = false
+          state.params.leafMat.tintMode = 'season'
+          win.__fastTreeSceneApi.rebuildNow(true)
+          await sleep(400)
+          setPose(); await sleep(200)
+          const plain = await meanColor()
+          const bright = plain ? (plain[0] + plain[1] + plain[2]) / 3 : 0
+          const greenish = plain ? plain[1] > plain[0] + 4 : false
+          bar('无贴图程序化叶形: 平均色=' + JSON.stringify(plain) + ' 亮度=' + bright.toFixed(1) + ' 偏绿=' + greenish)
+          bar('无贴图叶片不是白色=' + (bright < 120 && greenish))
+          // 1) 应用一张卡片 + 原色模式
+          const mod = await import('/src/core/leafCards.generated.js')
+          win.__fastTreeApi.applyLeafCard(mod.LEAF_CARDS[0].id)
+          state.params.leaves.cardMode = true
+          state.params.leafMat.tintMode = 'texture'
+          win.__fastTreeSceneApi.rebuildNow(true)
+          await sleep(400)
+          setPose(); await sleep(200)
+          const summer = await meanColor()
+          const leafCount0 = state.stats.leaves
+          // 2) 只改"叶色"参数 (不改季节 -> 叶片密度/几何顶点数不变, 只变烘焙的顶点色)
+          const recolor = () => {
+            state.params.leaves.color = '#b8501c'
+            state.params.leaves.colorTip = '#e8b23e'
+          }
+          recolor()
+          win.__fastTreeSceneApi.rebuildNow(false)
+          await sleep(400)
+          bar('只改叶色后 叶片数=' + state.stats.leaves + ' (原 ' + leafCount0 + ', 应相同) tintMode=' + state.params.leafMat.tintMode)
+          setPose(); await sleep(200)
+          const autumnTex = await meanColor()
+          // 3) 同样的叶色, 但切到"跟随季节" (应该明显变色)
+          state.params.leafMat.tintMode = 'season'
+          win.__fastTreeSceneApi.rebuildNow(false)
+          await sleep(400)
+          setPose(); await sleep(200)
+          const autumnSeason = await meanColor()
+          bar('夏季(原色)=' + JSON.stringify(summer))
+          bar('秋季(原色)=' + JSON.stringify(autumnTex) + '  差异=' + dist(summer, autumnTex).toFixed(2))
+          bar('秋季(跟随季节)=' + JSON.stringify(autumnSeason) + '  差异 vs 原色=' + dist(autumnTex, autumnSeason).toFixed(2))
+          bar('结论: 原色模式季节无关=' + (dist(summer, autumnTex) < 6) + ' / 跟随季节确实变色=' + (dist(autumnTex, autumnSeason) > 6))
+          bar('errs=' + (errs.length ? errs.slice(0, 3).join(' ;; ') : 'none'))
+          document.title = 'TINTCHECK-OK :: ' + L.join(' || ').slice(0, 1500)
+        } catch (e) {
+          document.title = 'TINTCHECK-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 500)
+        }
+      }, 4000)
+    </script>
+  </body>
+</html>

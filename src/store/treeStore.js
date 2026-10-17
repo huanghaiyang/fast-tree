@@ -353,7 +353,7 @@ export function applyLeafCard(cardId, opts = {}) {
   p.leafMat.texture = card.url
   p.leafMat.textureHasAlpha = true
   // 卡片是照片级贴图: 默认直接用贴图原色 (顶点色是季节调色板, 乘上去会把橙色叶子染绿)
-  p.leafMat.vertexColorMix = 0
+  p.leafMat.tintMode = 'texture'
   if (opts.alphaTest !== undefined) p.leafMat.alphaTest = opts.alphaTest
   p.leafMat.alphaTest = Math.max(0.2, Math.min(0.5, p.leafMat.alphaTest || 0.35))
   state.cardId = card.id

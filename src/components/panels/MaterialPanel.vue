@@ -22,10 +22,13 @@
 
   <Section title="树叶材质" hint="Leaf" :default-collapsed="true">
     <ColorRow label="色调 (tint)" v-model="lm.tint" />
-    <SliderRow label="顶点色混合" v-model="lm.vertexColorMix" :min="0" :max="1" :step="0.01"
-      hint="1 = 完全使用叶片本身的颜色" />
+    <SelectRow label="贴图染色" v-model="lm.tintMode" :options="tintOptions"
+      hint="原色 = 直接用贴图颜色 (适合全彩照片卡片, 无贴图时自动用季节色); 跟随季节 = 用季节叶色乘贴图" />
+    <SliderRow v-if="lm.tintMode === 'custom'" label="染色强度" v-model="lm.vertexColorMix" :min="0" :max="1" :step="0.01"
+      hint="0 = 贴图原色, 1 = 完全用季节叶色染色" />
     <SliderRow label="粗糙度" v-model="lm.roughness" :min="0" :max="1" :step="0.01" />
     <SliderRow label="金属度" v-model="lm.metalness" :min="0" :max="1" :step="0.01" />
+    <ColorRow label="自发光颜色" v-model="lm.emissiveColor" />
     <SliderRow label="自发光强度" v-model="lm.emissive" :min="0" :max="1" :step="0.01"
       hint="用叶色做底的自发光: 让背光/阴影里的叶片不发黑" />
     <SliderRow label="Alpha 裁剪" v-model="lm.alphaTest" :min="0" :max="1" :step="0.01" />
@@ -43,6 +46,66 @@
     <ToggleRow label="双面渲染" v-model="lm.doubleSided" />
     <TextureRow label="自定义叶片贴图 (含 alpha)" v-model="lm.texture" />
     <TextureRow label="自定义法线贴图" v-model="lm.normalTexture" />
+  </Section>
+
+  <Section title="落叶堆积" hint="Leaf Litter" :default-collapsed="true">
+    <ToggleRow label="启用落叶堆积" v-model="lt.enabled"
+      hint="地面上铺一层落叶: 随机朝向/倾斜/层叠, UV 翻转旋转制造多形态; 合批 1 个 draw call" />
+    <template v-if="lt.enabled">
+
+      <div class="pick-label">{{ '堆积贴图' }}</div>
+      <div class="chips">
+        <button class="chip nowrap" :class="{ active: !lt.cardId }" @click="lt.cardId = ''">跟随树叶</button>
+        <button v-for="c in cardChoices" :key="'lt-' + c.id" class="chip dot"
+          :class="{ active: lt.cardId === c.id }" @click="lt.cardId = c.id" :title="c.id + ' (' + c.w + '×' + c.h + ')'">
+          <img :src="c.url" alt="" />
+        </button>
+        <button class="btn small" title="随机一张" @click="lt.cardId = randomCardId()">🎲</button>
+      </div>
+      <SliderRow label="落叶数量 (堆积)" v-model="lt.count" :min="10" :max="2000" :step="10" />
+      <SliderRow label="分布半径" v-model="lt.radius" :min="0.2" :max="3" :step="0.05"
+        hint="相对树冠半径: 1 = 铺满树冠投影范围" />
+      <SliderRow label="单片大小" v-model="lt.size" :min="0.1" :max="1.5" :step="0.01" />
+      <SliderRow label="堆积厚度" v-model="lt.thickness" :min="0" :max="0.4" :step="0.005" unit="m" />
+      <SliderRow label="枯叶色差" v-model="lt.colorVariance" :min="0" :max="1" :step="0.01"
+        hint="单片落叶的颜色差异 (枯黄/褐/橙混杂)" />
+      <ColorRow label="枯叶基色" v-model="lt.color" />
+      <SliderRow label="Alpha 裁剪" v-model="lt.alphaTest" :min="0" :max="1" :step="0.01" />
+      <p class="muted" style="margin: 0">
+        使用当前选中的叶片卡片贴图; 中心区域更厚 (树下堆积更多)。
+      </p>
+    </template>
+  </Section>
+
+  <Section title="落叶" hint="Falling Leaves" :default-collapsed="true">
+    <ToggleRow label="启用落叶" v-model="fl.enabled"
+      hint="从树冠飘落的真实叶片卡片 (合批成一个 draw call, 翻滚/受风全在着色器里)" />
+    <template v-if="fl.enabled">
+
+      <div class="pick-label">{{ '落叶贴图' }}</div>
+      <div class="chips">
+        <button class="chip nowrap" :class="{ active: !fl.cardId }" @click="fl.cardId = ''">跟随树叶</button>
+        <button v-for="c in cardChoices" :key="'fl-' + c.id" class="chip dot"
+          :class="{ active: fl.cardId === c.id }" @click="fl.cardId = c.id" :title="c.id + ' (' + c.w + '×' + c.h + ')'">
+          <img :src="c.url" alt="" />
+        </button>
+        <button class="btn small" title="随机一张" @click="fl.cardId = randomCardId()">🎲</button>
+      </div>
+      <SliderRow label="落叶数量" v-model="fl.count" :min="4" :max="600" :step="1" />
+      <SliderRow label="落叶大小" v-model="fl.size" :min="0.05" :max="1.2" :step="0.01" />
+      <SliderRow label="下落速度" v-model="fl.speed" :min="0.05" :max="3" :step="0.05" />
+      <SliderRow label="翻滚自旋" v-model="fl.spinSpeed" :min="0" :max="6" :step="0.1" />
+      <SliderRow label="打旋幅度" v-model="fl.swirl" :min="0" :max="3" :step="0.05" />
+      <SliderRow label="横向错开" v-model="fl.stagger" :min="0" :max="2" :step="0.05" />
+      <SliderRow label="受风影响" v-model="fl.windFollow" :min="0" :max="3" :step="0.05"
+        hint="与树木/粒子共用同一套风向与阵风" />
+      <SliderRow label="出生点范围" v-model="fl.spread" :min="0.3" :max="1.5" :step="0.01" />
+      <SliderRow label="落地/透明度" v-model="fl.opacity" :min="0.1" :max="1" :step="0.01" />
+      <ColorRow label="落叶颜色 (无贴图时)" v-model="fl.color" />
+      <p class="muted" style="margin: 0">
+        落叶沿用当前选中的叶片卡片贴图与宽高比; 没有贴图时用椭圆兜底。
+      </p>
+    </template>
   </Section>
 
   <Section title="叶片粒子发射" hint="Foliage Particles" :default-collapsed="true">
@@ -128,10 +191,32 @@ import { state, applyLeafCard, randomLeafCard } from '../../store/treeStore.js'
 import { LEAF_CARDS, LEAF_CARD_BATCHES, leafCardsFor, leafCardRows } from '../../core/leafCards.generated.js'
 import { computed, ref } from 'vue'
 
+const tintOptions = [
+  { value: 'texture', label: '原色 (贴图不变色)' },
+  { value: 'season', label: '跟随季节叶色' },
+  { value: 'custom', label: '自定义强度' },
+]
 const b = state.params.bark
 const lm = state.params.leafMat
 const lv = state.params.leaves
 const pt = state.params.particles
+// 落叶/堆积可独立选贴图: 候选 = 当前批次每个叶形的第一张 + 当前叶形全部变体
+const cardChoices = computed(() => {
+  const out = []
+  const seen = new Set()
+  for (const r of leafCardRows(batch.value)) {
+    const list = leafCardsFor(batch.value, r)
+    if (list[0] && !seen.has(list[0].id)) { seen.add(list[0].id); out.push(list[0]) }
+  }
+  for (const c of cardsOfShape.value) if (!seen.has(c.id)) { seen.add(c.id); out.push(c) }
+  return out.slice(0, 12)
+})
+function randomCardId() {
+  const pool = LEAF_CARDS
+  return pool[Math.floor(Math.random() * pool.length)].id
+}
+const fl = state.params.fall
+const lt = state.params.litter
 const c = state.params.custom
 const shaderError = computed(() => state.shaderError)
 
@@ -181,6 +266,10 @@ function applyCustom() {
 .chip.active { border-color: var(--accent); color: #eafff7; }
 .chip.dot { padding: 0; width: 30px; height: 30px; overflow: hidden; display: inline-flex; }
 .chip.dot img { width: 100%; height: 100%; object-fit: contain; }
+.pick-label { font-size: 11px; color: var(--text-2); margin: 6px 0 3px; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.chips .chip { white-space: nowrap; }
+.chip.nowrap { padding: 4px 8px; }
 </style>
 
 <style scoped>

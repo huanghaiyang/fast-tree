@@ -175,6 +175,37 @@ export function defaultParams() {
       cardFold: 0.12,      // 卡片沿中脉的折叠
     },
 
+    // ---------------- 落叶 (从树冠落下的叶片) ----------------
+    fall: {
+      enabled: false,
+      cardId: '',          // 落叶自己的贴图卡片 (空 = 跟随树叶当前卡片)
+      count: 80,           // 同时飘落的叶片数
+      speed: 1.0,          // 下落速度倍率
+      size: 0.55,          // 落叶大小 (相对叶片)
+      swirl: 1.0,          // 打旋/摆动幅度
+      spinSpeed: 1.2,      // 翻滚自旋速度
+      stagger: 0.6,        // 横向错开幅度 (避免叠在一起落)
+      spread: 1.0,         // 出生点范围 = 树冠半径 × 该值
+      windFollow: 1.0,     // 受风影响倍率 (与树木/粒子同一套风场)
+      color: '#d9a441',    // 无贴图时的落叶颜色 (秋叶)
+      opacity: 1.0,
+      alphaTest: 0.35,
+    },
+
+    // ---------------- 地面落叶堆积 ----------------
+    litter: {
+      enabled: false,
+      cardId: '',          // 堆积自己的贴图卡片 (空 = 跟随树叶当前卡片)
+      count: 260,          // 地面落叶数
+      radius: 1.0,         // 分布半径 = 树冠半径 × 该值
+      size: 0.55,          // 单片落叶大小 (相对叶片)
+      thickness: 0.06,     // 堆积厚度(米): 越大层叠越高
+      color: '#ffffff',    // 落叶基色 (与贴图相乘; 白色=保持贴图原色)
+      colorVariance: 0.45, // 单片色差 (枯黄/褐/橙 混杂)
+      alphaTest: 0.35,
+      shade: 0.78,         // 明暗系数 (地面落叶用无光照渲染, 这个是唯一的亮度控制)
+    },
+
     // ---------------- 粒子发射 (从叶片位置发射) ----------------
     particles: {
       enabled: false,
@@ -230,6 +261,9 @@ export function defaultParams() {
     // ---------------- 树叶材质 ----------------
     leafMat: {
       tint: '#ffffff',
+      // 贴图染色模式: texture = 贴图原色 (全彩照片卡片); season = 跟随季节叶色;
+      // custom = 用下面的"染色强度"手动控制
+      tintMode: 'season',
       vertexColorMix: 1.0,
       roughness: 0.62,
       metalness: 0.0,
@@ -244,6 +278,7 @@ export function defaultParams() {
       scatter: 0.0,            // 边缘散射强度
       scatterPower: 2.0,       // 边缘锐度 (越大越贴边)
       emissive: 0.0,
+      emissiveColor: '#ffffff',   // 自发光底色 (与季节叶色解耦)
       texture: '',
       normalTexture: '',
     },
@@ -351,7 +386,7 @@ export function normalizeParams(p) {
 }
 
 const GEOMETRY_KEYS = ['seed', 'auto', 'trunk', 'roots', 'branches', 'leaves', 'fruit', 'lod']
-const MATERIAL_KEYS = ['bark', 'leafMat', 'custom', 'particles']
+const MATERIAL_KEYS = ['bark', 'leafMat', 'custom', 'particles', 'fall', 'litter']
 const WIND_KEYS = ['wind']
 const SCENE_KEYS = ['scene', 'growth']
 

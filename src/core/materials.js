@@ -209,6 +209,20 @@ export function internalShaderSources() {
   }
 }
 
+/**
+ * 染色模式 -> 实际顶点色混合系数
+ * @param m leafMat 参数
+ * @param hasTexture 是否真的有贴图。程序化叶形是**中性灰度遮罩**, 颜色全部来自顶点色,
+ *        所以"原色"模式在没有贴图时没有意义 -> 自动回落到跟随季节 (否则会渲染成白叶子)。
+ */
+export function resolveTintMix(m, hasTexture) {
+  const mode = m.tintMode || 'season'
+  const textured = hasTexture === undefined ? true : !!hasTexture
+  if (mode === 'texture') return textured ? 0 : 1
+  if (mode === 'season') return 1
+  return m.vertexColorMix === undefined ? 0.5 : m.vertexColorMix
+}
+
 function hashCode(s) {
   let h = 2166136261
   for (let i = 0; i < s.length; i++) {
@@ -256,7 +270,7 @@ export function perMaterialUniforms(params, isLeaf) {
   return {
     uIsLeaf: { value: isLeaf ? 1 : 0 },
     uSway: { value: isLeaf ? 1.0 : (w.barkSway === undefined ? 1 : w.barkSway) },
-    uVertexColorMix: { value: m.vertexColorMix === undefined ? 1 : m.vertexColorMix },
+    uVertexColorMix: { value: isLeaf ? resolveTintMix(m, !!(params.leafMat && params.leafMat.texture)) : (m.vertexColorMix === undefined ? 1 : m.vertexColorMix) },
     uTint: { value: new THREE.Color(m.tint || '#ffffff') },
     uTranslucency: { value: isLeaf ? (m.translucency || 0) : 0 },
     uSpecular: { value: isLeaf ? (m.specular === undefined ? 0 : m.specular) : 0 },
@@ -283,9 +297,12 @@ function applyTreeShader(material, shaderUniforms, opts) {
       '#include <begin_vertex>\n' + vertexBody(customVertex),
     )
     shader.fragmentShader = FRAGMENT_HEADER + shader.fragmentShader
+    // 注意: 不能保留 three 的 <color_fragment> —— 在 vertexColors:true 时它**无条件**乘一次
+    // vColor, 那样即使 uVertexColorMix=0 (贴图原色模式) 贴图仍会被季节叶色染色。
+    // 用我们自己的 body 替换它: 顶点色只经过 mix(diffuse, diffuse*vColor, uVertexColorMix) 这一条路。
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <color_fragment>',
-      '#include <color_fragment>\n' + fragmentBody(customFragment),
+      fragmentBody(customFragment),
     )
     // 选中高亮 (自发光) 必须在 totalEmissiveRadiance 声明之后注入
     const emissiveInjection = '#include <emissivemap_fragment>\n' + SELECTION_GLOW +
@@ -425,10 +442,11 @@ export function updateLeafMaterial(mat, params, sharedUniforms) {
   mat.side = p.doubleSided ? THREE.DoubleSide : THREE.FrontSide
   mat.color.set(0xffffff)
   // 叶片自发光: 用叶色做底, 强度由滑杆控制 (让背光/阴影里的叶子不至于死黑)
-  mat.emissive.set(params.leaves.color || '#ffffff')
+  // 自发光用独立颜色: 不再隐式拿季节叶色当底色 (否则选了贴图也会被染色)
+  mat.emissive.set(p.emissiveColor || '#ffffff')
   mat.emissiveIntensity = p.emissive || 0
   const u = mat.userData.uniforms
-  u.uVertexColorMix.value = p.vertexColorMix
+  u.uVertexColorMix.value = resolveTintMix(p, !!(p.texture || (params.leaves && params.leaves.cardMode)))
   u.uTint.value.set(p.tint || '#ffffff')
   u.uTranslucency.value = p.translucency
   // 反光 / 散光
