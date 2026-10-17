@@ -348,10 +348,20 @@ export function buildTree(params) {
       aspread: trunkRng.range(0.5, 1.6),
     })
   }
+  // 根部"板根/表层根"的方位分布: 真实树木基部不是圆锥, 而是 4~6 条放射状凸起
+  // (每条的方位固定, 这样同一棵树每次生成都一样)
+  const rootLobeCount = 5
+  const rootLobePhase = trunkRng.range(0, Math.PI * 2)
   const trunkRadiusMod = (tt, angle) => {
     let m = 1
     if (t.flare > 0 && t.flareHeight > 0 && tt < t.flareHeight) {
-      m *= 1 + t.flare * Math.pow(1 - tt / t.flareHeight, 2.0)
+      const u = tt / t.flareHeight            // 0 = 地面, 1 = 扩展区顶部
+      // 1) 整体扩张: 幂次 >2 让底部更"鼓"、往上是弧形收进去 (圆锥形太假)
+      const baseFlare = 1 + t.flare * Math.pow(1 - u, 2.6)
+      // 2) 放射状板根: 沿方位周期性加粗, 越靠近地面越明显
+      const lobe = Math.pow(Math.max(0, Math.cos(rootLobeCount * (angle - rootLobePhase))), 2.5)
+      const lobeAmp = t.flare * 0.55 * Math.pow(1 - u, 2.2)
+      m *= baseFlare * (1 + lobeAmp * lobe)
     }
     for (const k of knots) {
       const dt = (tt - k.t) / k.spread

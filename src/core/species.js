@@ -141,12 +141,13 @@ export const SPECIES = [
     patch: () => ({
       trunk: {
         height: 11.5, baseRadius: 0.56, taper: 0.09, radiusCurve: 1.5,
-        segments: 16, radialSegments: 12, curve: 0.3, curveVariance: 0.45,
+        segments: 16, radialSegments: 16, curve: 0.3, curveVariance: 0.45,
         lean: 0.05, leanDirection: 20, twist: 0.12, gnarl: 0.8,
-        flare: 1.6, flareHeight: 0.24, knots: 4, knotSize: 0.32, squash: 1.0, capBase: true,
+        flare: 1.5, flareHeight: 0.18, knots: 4, knotSize: 0.32, squash: 1.0, capBase: true,
         fork: { ...OAK_FORK, enabled: true },
       },
-      roots: { enabled: true, count: 6, length: 0.24, lengthVariance: 0.32, radiusRatio: 0.4, spread: 1.0, pitch: 116, segments: 6, radialSegments: 6, curve: 0.6, sink: 0.42 },
+      // 板根贴着地面向外铺 (原来 pitch 116° 是往地下扎, 所以几乎看不见)
+      roots: { enabled: true, count: 7, length: 0.2, lengthVariance: 0.32, radiusRatio: 0.42, spread: 1.0, pitch: 96, segments: 6, radialSegments: 6, curve: 0.75, sink: 0.18 },
       branches: {
         levels: 4, apicalDominance: 0.3, phototropism: 0.03, gravityScale: 1.15,
         lengthScale: 1.0, radiusScale: 1.0, startSpread: 0,
