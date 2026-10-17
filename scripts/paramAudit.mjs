@@ -128,7 +128,7 @@ export const DOM_DEPENDENT = new Set([
   // 粒子是场景级效果 (Points + 顶点着色器动画, 需要渲染器), Node 侧无法比较
   'particles.enabled', 'particles.count', 'particles.size', 'particles.speed', 'particles.fall',
   'particles.sway', 'particles.swirl', 'particles.color', 'particles.opacity', 'particles.glow',
-  'particles.spread',
+  'particles.spread', 'particles.windFollow',
 ])
 
 /** 由 store / 场景循环消费, 不直接进 uniform */

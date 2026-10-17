@@ -45,7 +45,7 @@ export function buildParticleSeeds(count, seed) {
   return aSeed
 }
 
-const PARTICLE_VERT = /* glsl */`
+export const PARTICLE_VERT = /* glsl */`
 uniform float uTime;
 uniform float uSize;
 uniform float uSpeed;
@@ -54,6 +54,15 @@ uniform float uSway;
 uniform float uSwirl;
 uniform float uHeight;
 uniform float uGlow;
+// --- 风场 (与树木共用同一份 uniform) ---
+uniform vec2 uWindDir;
+uniform float uWindStrength;
+uniform float uGust;
+uniform float uGustSpeed;
+uniform float uWindBias;
+uniform float uWindEnabled;
+uniform float uWindSpeed;
+uniform float uWindFollow;   // 粒子受风影响倍率
 attribute vec3 aSeed;      // phase, speedScale, swayScale
 varying float vAlpha;
 varying float vGlow;
@@ -67,7 +76,20 @@ void main() {
   vec3 p = position;
   // 下落: 从树冠高度落到地面
   p.y -= t * uFall * max(1.0, uHeight * 0.85);
-  // 横向飘动 + 打旋
+  // --- 风场: 沿下风向被吹走 (与树同源, 风向/强度/阵风一致) ---
+  vec2 windDir = normalize(uWindDir + vec2(1e-5, 1e-6));
+  // 阵风: 同一套起伏模型, 让粒子跟着树一起"一阵一阵"地走
+  float gust = 1.0 - uGust * 0.6 * (1.0 - (sin(uTime * uGustSpeed + phase * 6.28318) * 0.5 + 0.5));
+  // 风只推不拉 + bias 抬低谷 (与树叶同一规则)
+  float along = uWindStrength * uWindFollow * (0.55 * gust + uWindBias * 0.45) * uWindEnabled;
+  // 越到生命后期被吹得越远 (粒子被风带着走)
+  float carry = along * (2.5 + 9.0 * t) * (1.0 + 0.35 * sin(uTime * uWindSpeed * 2.0 + phase * 12.0));
+  p.x += windDir.x * carry;
+  p.z += windDir.y * carry;
+  // 垂直分量: 强风时粒子被上扬/翻卷
+  p.y += sin(uTime * (0.6 + uWindSpeed) + phase * 9.0) * along * 1.2;
+
+  // 独立的横向飘动 + 打旋 (无风时也有细微运动)
   float ang = (phase + t) * 6.28318 * (0.5 + phase);
   p.x += sin(ang) * uSway * swayScale * (0.4 + 0.6 * t) + sin(uTime * 0.7 + phase * 12.0) * uSwirl * 0.15;
   p.z += cos(ang * 0.8) * uSway * swayScale * (0.4 + 0.6 * t) + cos(uTime * 0.6 + phase * 9.0) * uSwirl * 0.15;
@@ -82,7 +104,7 @@ void main() {
 }
 `
 
-const PARTICLE_FRAG = /* glsl */`
+export const PARTICLE_FRAG = /* glsl */`
 uniform vec3 uColor;
 uniform float uOpacity;
 varying float vAlpha;
@@ -114,6 +136,15 @@ export function createParticleMaterial(params, sharedUniforms) {
       uGlow: { value: P.glow === undefined ? 0.8 : P.glow },
       uColor: { value: new THREE.Color(P.color || '#fff0b8') },
       uOpacity: { value: P.opacity === undefined ? 0.85 : P.opacity },
+      // 直接引用共享风场 uniform (同一个对象: 风向/强度/阵风改动会立即同步到粒子)
+      uWindDir: sharedUniforms.uWindDir,
+      uWindStrength: sharedUniforms.uWindStrength,
+      uGust: sharedUniforms.uGust,
+      uGustSpeed: sharedUniforms.uGustSpeed,
+      uWindBias: sharedUniforms.uWindBias,
+      uWindEnabled: sharedUniforms.uWindEnabled,
+      uWindSpeed: sharedUniforms.uWindSpeed,
+      uWindFollow: { value: P.windFollow === undefined ? 1 : P.windFollow },
     },
     vertexShader: PARTICLE_VERT,
     fragmentShader: PARTICLE_FRAG,
@@ -136,6 +167,7 @@ export function updateParticleMaterial(mat, params, leafBBox) {
   u.uGlow.value = P.glow === undefined ? 0.8 : P.glow
   u.uColor.value.set(P.color || '#fff0b8')
   u.uOpacity.value = P.opacity === undefined ? 0.85 : P.opacity
+  if (u.uWindFollow) u.uWindFollow.value = P.windFollow === undefined ? 1 : P.windFollow
   if (leafBBox) u.uHeight.value = Math.max(1, leafBBox.max.y - leafBBox.min.y)
 }
 

@@ -55,6 +55,8 @@
       <SliderRow label="下落距离" v-model="pt.fall" :min="0" :max="2" :step="0.05" />
       <SliderRow label="横向飘动" v-model="pt.sway" :min="0" :max="3" :step="0.05" />
       <SliderRow label="打旋" v-model="pt.swirl" :min="0" :max="3" :step="0.05" />
+      <SliderRow label="受风影响" v-model="pt.windFollow" :min="0" :max="3" :step="0.05"
+        hint="粒子被风带走的强度: 与树木共用同一套风向/强度/阵风 (0 = 不受风)" />
       <SliderRow label="采样范围" v-model="pt.spread" :min="0.2" :max="1.5" :step="0.01"
         hint="发射点取树冠的哪一部分 (1 = 整个树冠)" />
       <SliderRow label="粒子亮度" v-model="pt.glow" :min="0.1" :max="3" :step="0.05" />

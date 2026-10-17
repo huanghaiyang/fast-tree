@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><title>shader: booting</title></head>
+  <body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+    <iframe id="f" src="/" style="width:1400px;height:800px;border:0"></iframe>
+    <pre id="out">…</pre>
+    <script type="module">
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const L = []
+      const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+      let win, sc, state
+      const errs = []
+      f.addEventListener('load', () => {
+        win = f.contentWindow
+        win.addEventListener('error', (e) => errs.push('ERR: ' + e.message))
+        const oe = win.console.error, ow = win.console.warn
+        win.console.error = function (...a) { errs.push('CERR: ' + a.map(String).join(' ').slice(0, 260)); oe.apply(win.console, a) }
+        win.console.warn = function (...a) { const s = a.map(String).join(' '); if (/shader|program|webgl/i.test(s)) errs.push('CWARN: ' + s.slice(0, 200)); ow.apply(win.console, a) }
+      })
+      setTimeout(async () => {
+        try {
+          document.title = 'S1'
+          sc = win.__fastTreeScene; state = win.__fastTree
+          await sleep(1200)
+          win.__fastTreeSceneApi.rebuildNow(true)
+          await sleep(400)
+          // 开启粒子 (含风场耦合的顶点着色器)
+          state.params.particles.enabled = true
+          state.params.particles.count = 400
+          sc.updateParticles(state.params)
+          await sleep(300)
+          sc.renderer.render(sc.scene, sc.camera)
+          await sleep(300)
+          // 可靠的编译检查: renderer.info.programs 里 diagnostics 为空才是编译通过
+          const progs = (sc.renderer.info.programs || [])
+          bar('program 数量: ' + progs.length)
+          let bad = 0
+          for (const p of progs) {
+            const name = p.name || 'unnamed'
+            if (p.diagnostics && (p.diagnostics.vertexShader || p.diagnostics.fragmentShader || p.diagnostics.programLog)) {
+              bad++
+              bar('✗ 编译失败: ' + name + ' | ' + String(p.diagnostics.programLog || '').replace(/\n/g, ' ').slice(0, 220))
+            }
+          }
+          bar('编译失败的 program: ' + bad + ' (期望 0)')
+          // 粒子的 draw 调用是否真的发生
+          sc.renderer.info.autoReset = false
+          sc.renderer.info.reset()
+          sc.renderer.render(sc.scene, sc.camera)
+          bar('本帧 draw calls=' + sc.renderer.info.render.calls + ' points=' + sc.renderer.info.render.points)
+          sc.renderer.info.autoReset = true
+          bar('errs=' + (errs.length ? errs.slice(0, 4).join(' ;; ') : 'none'))
+          document.title = 'SHADER-OK :: ' + L.join(' || ').slice(0, 1600)
+        } catch (e) {
+          document.title = 'SHADER-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 600)
+        }
+      }, 3000)
+    </script>
+  </body>
+</html>

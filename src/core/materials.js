@@ -200,6 +200,15 @@ const LEAF_REFLECTION = /* glsl */`
   #endif
 `
 
+/** 供自检使用: 返回注入用的 GLSL 片段与声明头 (静态检查"用了但没声明"的 uniform) */
+export function internalShaderSources() {
+  return {
+    fragmentHeader: FRAGMENT_HEADER,
+    vertexHeader: VERTEX_HEADER,
+    snippets: { TRANSLUCENCY, LEAF_REFLECTION, SELECTION_GLOW },
+  }
+}
+
 function hashCode(s) {
   let h = 2166136261
   for (let i = 0; i < s.length; i++) {

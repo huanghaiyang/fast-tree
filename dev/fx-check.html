@@ -42,6 +42,9 @@
         try {
           for (let i = 0; i < 60 && !(state && state.stats && sc && sc.barkMesh); i++) await sleep(150)
           document.title = 'P3-app-ready:' + !!state + ',' + !!sc
+          // 无头/后台窗口 rAF 被暂停, 初始构建不会跑 -> 强制同步构建一次
+          win.__fastTreeSceneApi.rebuildNow(true)
+          await sleep(400)
           const base = { ...state.stats }
           bar(`基线: 叶面=${base.leafTriangles} 果=${base.fruit}`)
           // ===== 1) 反光 + 散光 =====
@@ -92,6 +95,53 @@
           sc.camera.position.set(9, state.stats.height * 0.75, 11)
           sc.camera.lookAt(sc.controls.target)
           await shot('leaf-particles')
+          // ===== 3) 粒子对接风参数: 两种风向下亮点的水平重心应明显偏移 =====
+          state.params.particles.enabled = true
+          state.params.particles.count = 900
+          state.params.particles.size = 0.22
+          state.params.particles.glow = 2.4
+          state.params.particles.windFollow = 2.2
+          state.params.wind.strength = 0.55
+          state.params.wind.enabled = true
+          win.__fastTreeSceneApi.rebuildNow(false)
+          if (sc.leafMesh) sc.leafMesh.visible = false   // 只隐藏叶片网格: 几何还在, 粒子仍有采样源
+          await sleep(400)
+          const centroid = () => {
+            // same-frame: WebGL 缓冲在 await 之后会被清空, 必须在同一帧内渲染+读像素
+            sc.renderer.render(sc.scene, sc.camera)
+            const cv = doc.querySelector('canvas')
+            const t = doc.createElement('canvas'); t.width = 240; t.height = 160
+            const cx = t.getContext('2d'); cx.drawImage(cv, 0, 0, 240, 160)
+            const px = cx.getImageData(0, 0, 240, 160).data
+            let sx = 0, n = 0
+            for (let i = 0; i < px.length; i += 4) {
+              const r = px[i], g = px[i + 1], b = px[i + 2]
+              if (r > 170 && g > 150 && b > 90) { sx += (i / 4) % 240; n++ }   // 暖白亮点
+            }
+            return n ? { x: sx / n, n } : { x: -1, n: 0 }
+          }
+          const setWind = async (deg) => {
+            state.params.wind.direction = deg
+            state.params.wind.enabled = true
+            await sleep(250)
+            for (let i = 0; i < 10; i++) { sc.renderer.render(sc.scene, sc.camera); await sleep(60) }
+            return centroid()
+          }
+          // 相机固定俯视, 让"下风向"在屏幕上对应 +x / -x
+          sc.controls.target.set(0, state.stats.height * 0.45, 0)
+          sc.camera.position.set(0, state.stats.height * 0.55, 46)
+          sc.camera.lookAt(sc.controls.target)
+          await sleep(300)
+          if (sc) sc.updateWind(state.params)
+          const east = await setWind(0)
+          bar('风 +X 时 uWindDir=' + JSON.stringify(sc.uniforms.uWindDir.value.toArray().map((v) => +v.toFixed(2))))
+          const west = await setWind(180)
+          bar('风 -X 时 uWindDir=' + JSON.stringify(sc.uniforms.uWindDir.value.toArray().map((v) => +v.toFixed(2))))
+          bar('粒子亮点水平重心: 风+ X -> ' + east.x.toFixed(1) + ' (' + east.n + ' 点) | 风- X -> ' + west.x.toFixed(1) + ' (' + west.n + ' 点) | 偏移=' + Math.abs(east.x - west.x).toFixed(1) + 'px')
+          state.params.wind.direction = 70
+          if (sc.leafMesh) sc.leafMesh.visible = true
+          await sleep(300)
+          await shot('leaf-particles-wind')
           bar('errs=' + (errs.length ? errs.slice(0, 4).join(' ;; ') : 'none'))
           document.title = 'FXCHECK-OK :: ' + lines.join(' || ').slice(0, 1800)
         } catch (e) {

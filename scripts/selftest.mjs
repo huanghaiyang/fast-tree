@@ -9,8 +9,8 @@ import {
   SPECIES, GROWTH_STAGES, SEASONS, composeTree, classificationName, allCombinations,
 } from '../src/core/species.js'
 import { buildLeafTemplate, LEAF_SHAPE_KEYS } from '../src/core/leaf.js'
-import { createSharedUniforms, createLeafMaterial, createBarkMaterial, updateMaterials } from '../src/core/materials.js'
-import { sampleEmitPositions, buildParticleSeeds } from '../src/core/particles.js'
+import { createSharedUniforms, createLeafMaterial, createBarkMaterial, updateMaterials, internalShaderSources } from '../src/core/materials.js'
+import { sampleEmitPositions, buildParticleSeeds, createParticleMaterial, PARTICLE_VERT, PARTICLE_FRAG } from '../src/core/particles.js'
 import { motionMetrics, swayEnvelope } from '../src/core/windModel.js'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -764,12 +764,70 @@ const ptsSeed = sampleEmitPositions(leafGeo, pBase, pBase.seed + 1)
 check('粒子分布随种子变化 (同参数可复现)', geomHash({ attributes: { position: { array: pts } } }) !== geomHash({ attributes: { position: { array: ptsSeed } } }))
 check('粒子数变化会改变缓冲长度', sampleEmitPositions(leafGeo, { ...pBase, particles: { ...pBase.particles, count: 50 } }, 1).length === 150)
 const seeds = buildParticleSeeds(120, 7)
+check('粒子与树共用同一份风场 uniform (风向一改就同步)', (() => {
+  const sh = createSharedUniforms()
+  const p2 = composeTree('oak', 'mature', 'summer', 4242)
+  p2.particles = { ...p2.particles, enabled: true, count: 20 }
+  const mat = createParticleMaterial(p2, sh)
+  const same = mat.uniforms.uWindDir === sh.uWindDir &&
+    mat.uniforms.uWindStrength === sh.uWindStrength &&
+    mat.uniforms.uGust === sh.uGust &&
+    mat.uniforms.uWindBias === sh.uWindBias
+  sh.uWindDir.value.set(0.2, 0.98)
+  sh.uWindStrength.value = 0.42
+  const synced = Math.abs(mat.uniforms.uWindDir.value.y - 0.98) < 1e-6 && Math.abs(mat.uniforms.uWindStrength.value - 0.42) < 1e-6
+  console.log('      共享引用=' + same + ', 改风后同步=' + synced)
+  return same && synced
+})())
+check('粒子受风倍率进入 uniform', (() => {
+  const sh = createSharedUniforms()
+  const p2 = composeTree('oak', 'mature', 'summer', 4242)
+  const mat = createParticleMaterial({ ...p2, particles: { ...p2.particles, windFollow: 2.4 } }, sh)
+  console.log('      uWindFollow=' + mat.uniforms.uWindFollow.value)
+  return Math.abs(mat.uniforms.uWindFollow.value - 2.4) < 1e-6
+})())
 check('粒子随机相/速度在有效范围', (() => {
   for (let i = 0; i < seeds.length; i += 3) {
     if (seeds[i] < 0 || seeds[i] > 1) return false
     if (seeds[i + 1] < 0.5 || seeds[i + 1] > 1.5) return false
   }
   return true
+})())
+
+/* 14. GLSL 静态检查: 用到的 uniform 必须声明 (防止着色器编译失败) */
+console.log('\n[14] GLSL uniform 声明检查')
+function undeclaredUniforms(src, extraDecls = '') {
+  const decl = new Set()
+  for (const m of (src + '\n' + extraDecls).matchAll(/uniform\s+\w+\s+(\w+)/g)) decl.add(m[1])
+  const used = new Set([...src.matchAll(/\bu[A-Z]\w*/g)].map((x) => x[0]))
+  return [...used].filter((u) => !decl.has(u))
+}
+check('粒子顶点着色器: 用到的 uniform 都有声明', (() => {
+  const miss = undeclaredUniforms(PARTICLE_VERT)
+  if (miss.length) console.log('      缺失: ' + miss.join(', '))
+  return miss.length === 0
+})())
+check('粒子片元着色器: 用到的 uniform 都有声明', (() => {
+  const miss = undeclaredUniforms(PARTICLE_FRAG)
+  if (miss.length) console.log('      缺失: ' + miss.join(', '))
+  return miss.length === 0
+})())
+check('树叶注入片段: 用到的 uniform 都在声明头里', (() => {
+  const src = internalShaderSources()
+  const miss = undeclaredUniforms(src.snippets.LEAF_REFLECTION + src.snippets.TRANSLUCENCY, src.fragmentHeader)
+  if (miss.length) console.log('      缺失: ' + miss.join(', '))
+  return miss.length === 0
+})())
+check('每个 uniform 都在 JS 侧有对应值 (不会静默变 0)', (() => {
+  const sh = createSharedUniforms()
+  const p2 = composeTree('oak', 'mature', 'summer', 4242)
+  const mat = createParticleMaterial({ ...p2, particles: { ...p2.particles, enabled: true } }, sh)
+  const keys = Object.keys(mat.uniforms)
+  const src = PARTICLE_VERT + PARTICLE_FRAG
+  const used = [...new Set([...src.matchAll(/\bu[A-Z]\w*/g)].map((x) => x[0]))]
+  const miss = used.filter((u) => !keys.includes(u))
+  if (miss.length) console.log('      JS 未提供: ' + miss.join(', '))
+  return miss.length === 0
 })())
 
 /* 汇总 */

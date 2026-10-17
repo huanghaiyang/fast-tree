@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><title>dbg: booting</title></head>
+  <body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+    <iframe id="f" src="/" style="width:1400px;height:800px;border:0"></iframe>
+    <pre id="out">…</pre>
+    <script type="module">
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const L = []
+      const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+      let win, sc, state
+      const errs = []
+      f.addEventListener('load', () => {
+        win = f.contentWindow
+        win.addEventListener('error', (e) => errs.push('ERR: ' + e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno))
+        win.addEventListener('unhandledrejection', (e) => errs.push('REJ: ' + String(e.reason && e.reason.message || e.reason)))
+        const oe = win.console.error
+        win.console.error = function (...a) { errs.push('CERR: ' + a.map(String).join(' ').slice(0, 300)); oe.apply(win.console, a) }
+        window.addEventListener('error', (e) => errs.push('PARENT-ERR: ' + e.message))
+      })
+      setTimeout(async () => {
+        try {
+          document.title = 'D1'
+          sc = win.__fastTreeScene; state = win.__fastTree
+          bar('__fastTree=' + !!state + ' __fastTreeScene=' + !!sc)
+          await sleep(1500)
+          bar('state.stats=' + (state && state.stats ? Object.keys(state.stats).length + ' keys' : 'null'))
+          bar('barkMesh=' + !!sc.barkMesh + ' leafMesh=' + !!sc.leafMesh + ' treeGroup children=' + (sc.treeGroup ? sc.treeGroup.children.length : '-'))
+          // 手动重建, 抓住真正的异常
+          try {
+            sc.build(state.params, state.selection || { ranges: [] })
+            bar('手动 build 成功: barkMesh=' + !!sc.barkMesh + ' children=' + sc.treeGroup.children.length)
+          } catch (e) {
+            bar('手动 build 抛错: ' + (e && e.message) + ' | ' + String(e && e.stack).split('\n')[1])
+          }
+          bar('errs=' + (errs.length ? errs.slice(0, 5).join(' ;; ') : 'none'))
+          document.title = 'DBG-OK :: ' + L.join(' || ').slice(0, 1500)
+        } catch (e) {
+          document.title = 'DBG-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 600)
+        }
+      }, 3500)
+    </script>
+  </body>
+</html>
