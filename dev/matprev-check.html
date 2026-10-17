@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><title>matprev: booting</title></head>
+  <body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+    <iframe id="f" src="/" style="width:1100px;height:700px;border:0"></iframe>
+    <pre id="out">…</pre>
+    <script type="module">
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const L = []
+      const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+      let win, doc, sc, state
+      f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+      setTimeout(async () => {
+        try {
+          sc = win.__fastTreeScene; state = win.__fastTree
+          win.__fastTreeSceneApi.rebuildNow(true)
+          await sleep(600)
+          // 切换到「材质」页, 否则面板未挂载 (0 张图就是没切页)
+          const tabMat = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('材质'))
+          if (tabMat) { tabMat.click() }
+          await sleep(1600)
+          // ① 材质球预览组件是否渲染出图片
+          const imgs = [...doc.querySelectorAll('.mat-preview img')]
+          bar('① 材质球图片数=' + imgs.length + ' 尺寸=' + imgs.map((i) => i.naturalWidth + 'x' + i.naturalHeight).join(','))
+          bar('① 是非空 PNG=' + imgs.every((i) => i.src.startsWith('data:image/png') && i.src.length > 5000))
+          // ② 贴图扭曲: 开启后主树皮材质应编译成功且 uniform 生效
+          state.params.bark.texture = '/bark/bark_batch2/bark2_r01_c01.png'
+          state.params.bark.uvWarp = 0.12
+          state.params.bark.uvWarpScale = 12
+          sc.updateMaterialParams(state.params)
+          await sleep(1200)
+          const u = sc.materials.bark.userData.uniforms
+          bar('② 扭曲 uniform: uUvWarp=' + u.uUvWarp.value + ' 频率=' + u.uUvWarpScale.value)
+          let bad = 0
+          for (const p of (sc.renderer.info.programs || [])) if (p.diagnostics && (p.diagnostics.vertexShader || p.diagnostics.fragmentShader || p.diagnostics.programLog)) { bad++; bar('  编译失败: ' + String(p.diagnostics.programLog || p.diagnostics.vertexShader).slice(0, 160)) }
+          bar('② 着色器编译失败数=' + bad)
+          // ③ 改扭曲强度后材质球应重画 (dataURL 变化)
+          const before = [...doc.querySelectorAll('.mat-preview img')].map((i) => i.src.length).join(',')
+          state.params.bark.uvWarp = 0.3
+          await sleep(700)
+          const after = [...doc.querySelectorAll('.mat-preview img')].map((i) => i.src.length).join(',')
+          bar('③ 材质球重画: 前=' + before + ' 后=' + after + ' 变化=' + (before !== after))
+          bar('errs=none')
+          document.title = 'MATPREV-OK :: ' + L.join(' || ').slice(0, 1300)
+        } catch (e) {
+          document.title = 'MATPREV-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 500)
+        }
+      }, 3200)
+    </script>
+  </body>
+</html>

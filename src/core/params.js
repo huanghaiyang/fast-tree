@@ -251,6 +251,8 @@ export function defaultParams() {
       metalness: 0.0,
       normalScale: 1.0,
       normalFromAlbedo: 1.4,   // 照片树皮: 从颜色贴图自动生成法线 (0 = 关闭)
+      uvWarp: 0.0,             // 贴图扭曲强度 (0 = 不扭曲; 打散平铺重复感)
+      uvWarpScale: 8.0,        // 扭曲频率
       uvScaleU: 1.0,
       uvScaleV: 1.0,
       bump: 1.0,

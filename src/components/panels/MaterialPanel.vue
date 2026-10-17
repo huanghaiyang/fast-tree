@@ -1,4 +1,6 @@
 <template>
+  <MaterialPreview />
+
   <Section title="树皮材质" hint="Bark">
     <SelectRow label="程序化花纹" v-model="b.procedural.style" :options="barkStyles" />
     <SliderRow label="花纹缩放" v-model="b.procedural.scale" :min="0.3" :max="3" :step="0.05" />
@@ -12,6 +14,9 @@
     <SliderRow label="自动生成法线" v-model="b.normalFromAlbedo" :min="0" :max="3" :step="0.05"
       hint="照片树皮专用: 0 = 关闭。从颜色贴图的裂纹/凹凸自动生成法线贴图 (程序化花纹本身已带法线)" />
     <SliderRow label="凹凸强度 (bump)" v-model="b.bump" :min="0" :max="2" :step="0.05" />
+    <SliderRow label="贴图扭曲" v-model="b.uvWarp" :min="0" :max="0.3" :step="0.005"
+      hint="让贴图 UV 做低频扭曲, 打散平铺重复感 (树皮/树皮纹理更自然); 0 = 关闭" />
+    <SliderRow v-if="b.uvWarp > 0" label="扭曲频率" v-model="b.uvWarpScale" :min="1" :max="40" :step="0.5" />
     <SliderRow label="顶点色混合" v-model="b.vertexColorMix" :min="0" :max="1" :step="0.01"
       hint="顶点色里烘焙了根部变暗 / 嫩枝偏绿" />
     <div class="grid-2">
@@ -207,6 +212,7 @@
 
 <script setup>
 import Section from '../ui/Section.vue'
+import MaterialPreview from './MaterialPreview.vue'
 import SliderRow from '../ui/SliderRow.vue'
 import ToggleRow from '../ui/ToggleRow.vue'
 import ColorRow from '../ui/ColorRow.vue'

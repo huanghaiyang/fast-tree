@@ -33,6 +33,8 @@ uniform float uSpatialScale;
 uniform float uWindBias;
 uniform float uFlexFalloff;
 uniform float uSway;
+uniform float uUvWarp;
+uniform float uUvWarpScale;
 uniform float uLeafFlutter;
 uniform float uLeafTwist;
 uniform float uIsLeaf;
@@ -316,6 +318,8 @@ export function perMaterialUniforms(params, isLeaf) {
   return {
     uIsLeaf: { value: isLeaf ? 1 : 0 },
     uSway: { value: isLeaf ? 1.0 : (w.barkSway === undefined ? 1 : w.barkSway) },
+    uUvWarp: { value: isLeaf ? 0.0 : 0.0 },
+    uUvWarpScale: { value: 8.0 },
     uVertexColorMix: { value: isLeaf ? resolveTintMix(m, !!(params.leafMat && params.leafMat.texture)) : (m.vertexColorMix === undefined ? 1 : m.vertexColorMix) },
     uTint: { value: new THREE.Color(m.tint || '#ffffff') },
     uTranslucency: { value: isLeaf ? (m.translucency || 0) : 0 },
@@ -342,6 +346,23 @@ function applyTreeShader(material, shaderUniforms, opts) {
       '#include <begin_vertex>',
       '#include <begin_vertex>\n' + vertexBody(customVertex),
     )
+    // 贴图扭曲: 用低频正弦场偏移 vMapUv (只影响贴图采样, 不改几何)
+    if (shader.vertexShader.includes('#include <uv_vertex>')) {
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <uv_vertex>',
+        `#include <uv_vertex>
+#ifdef USE_MAP
+        if (uUvWarp > 0.0) {
+          float wx = vMapUv.x * uUvWarpScale;
+          float wy = vMapUv.y * uUvWarpScale;
+          float n1 = sin(wy * 0.7 + wx * 0.35) * sin(wx * 0.9 + 1.7);
+          float n2 = sin(wx * 0.6 - wy * 0.4 + 2.3) * sin(wy * 1.1 + 0.4);
+          float n3 = sin((wx + wy) * 0.45 + 3.1);
+          vMapUv += vec2(n1, n2 + n3 * 0.5) * uUvWarp;
+        }
+#endif`,
+      )
+    }
     shader.fragmentShader = FRAGMENT_HEADER + shader.fragmentShader
     // 注意: 不能保留 three 的 <color_fragment> —— 在 vertexColors:true 时它**无条件**乘一次
     // vColor, 那样即使 uVertexColorMix=0 (贴图原色模式) 贴图仍会被季节叶色染色。
@@ -432,6 +453,8 @@ export function updateBarkMaterial(mat, params, sharedUniforms) {
   mat.normalScale.set(p.normalScale, p.normalScale)
   const u = mat.userData.uniforms
   u.uSway.value = params.wind.barkSway === undefined ? 1 : params.wind.barkSway
+  u.uUvWarp.value = p.uvWarp === undefined ? 0 : p.uvWarp
+  u.uUvWarpScale.value = p.uvWarpScale === undefined ? 8 : p.uvWarpScale
   u.uVertexColorMix.value = p.vertexColorMix
   u.uTint.value.set(p.tint || '#ffffff')
 
