@@ -113,8 +113,8 @@ const current = computed(() => cardsOfShape.value[Math.min(col.value - 1, cardsO
 
 function use(card) {
   if (!card) return
+  // 只换贴图/叶形, 不动相机: 保持当前观察视角 (换卡片不该把视角拉回去)
   applyLeafCard(card.id)
-  state.frameVersion++
 }
 
 function rand() {
@@ -125,7 +125,6 @@ function rand() {
     batch.value = b2
     row.value = r2
     col.value = Math.max(1, leafCardsFor(b2, r2).findIndex((x) => x.id === card.id) + 1)
-    state.frameVersion++
   }
 }
 

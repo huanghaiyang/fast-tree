@@ -357,7 +357,9 @@ export function applyLeafCard(cardId, opts = {}) {
   if (opts.alphaTest !== undefined) p.leafMat.alphaTest = opts.alphaTest
   p.leafMat.alphaTest = Math.max(0.2, Math.min(0.5, p.leafMat.alphaTest || 0.35))
   state.cardId = card.id
-  state.rebuildVersion++
+  // 注意: 不要 bump rebuildVersion —— 它的语义是"重建 + 重新取景",
+  // 换叶片贴图/叶形不该把用户正在看的视角拉回去。
+  // 几何变化 (leaves.cardMode/cardAspect) 由 Viewport 的几何组 watcher 自动触发重建。
   return card
 }
 

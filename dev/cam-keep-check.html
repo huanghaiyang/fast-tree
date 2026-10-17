@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><title>cam-keep: booting</title></head>
+  <body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+    <iframe id="f" src="/" style="width:1500px;height:900px;border:0"></iframe>
+    <pre id="out">…</pre>
+    <script type="module">
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const lines = []
+      const bar = (l) => { lines.push(l); document.getElementById('out').textContent = lines.join('\n') }
+      let win, doc, state, sc
+      const errs = []
+      f.addEventListener('load', () => {
+        win = f.contentWindow; doc = f.contentDocument; state = win.__fastTree; sc = win.__fastTreeScene
+        win.addEventListener('error', (e) => errs.push('ERR:' + String(e.message).slice(0, 120)))
+      })
+      const camState = () => {
+        const c = sc.camera, t = sc.controls.target
+        return [c.position.x, c.position.y, c.position.z, t.x, t.y, t.z].map((v) => +v.toFixed(4))
+      }
+      setTimeout(async () => {
+        try {
+          for (let i = 0; i < 60 && !(state && state.stats && sc && sc.barkMesh); i++) await sleep(150)
+          // 用户先自己把视角转到一个特定位置 (模拟"正在观察")
+          sc.controls.target.set(1.2, 6.5, 0.4)
+          sc.camera.position.set(9.5, 9.0, 11.5)
+          sc.camera.lookAt(sc.controls.target)
+          sc.controls.update()
+          await sleep(200)
+          const before = camState()
+          bar('切换前 相机=' + JSON.stringify(before))
+          // 1) 应用第一张卡片
+          const mod = await import('/src/core/leafCards.generated.js')
+          win.__fastTreeApi.applyLeafCard(mod.LEAF_CARDS[0].id)
+          await sleep(200)
+          win.__fastTreeSceneApi.rebuildNow(false)
+          await sleep(300)
+          const after1 = camState()
+          bar('切换卡片后 相机=' + JSON.stringify(after1))
+          bar('卡片切换后视角是否保持: ' + (JSON.stringify(before) === JSON.stringify(after1)))
+          // 2) 再换一张 (batch2)
+          const g = mod.LEAF_CARDS.find((c) => c.batch === 'batch2')
+          win.__fastTreeApi.applyLeafCard(g.id)
+          await sleep(200)
+          win.__fastTreeSceneApi.rebuildNow(false)
+          await sleep(300)
+          const after2 = camState()
+          bar('再换一张后 相机=' + JSON.stringify(after2))
+          bar('连续换卡视角是否保持: ' + (JSON.stringify(before) === JSON.stringify(after2)))
+          // 3) 对照: 点"取景"按钮应该会重新取景 (证明取景功能本身没坏)
+          state.frameVersion++
+          await sleep(300)
+          const after3 = camState()
+          bar('点取景后 相机=' + JSON.stringify(after3) + ' 变化=' + (JSON.stringify(before) !== JSON.stringify(after3)))
+          bar('errs=' + (errs.length ? errs.slice(0, 2).join(' ;; ') : 'none'))
+          document.title = 'CAMKEEP-OK :: ' + lines.join(' || ').slice(0, 1500)
+        } catch (e) {
+          document.title = 'CAMKEEP-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 500)
+        }
+      }, 4000)
+    </script>
+  </body>
+</html>
