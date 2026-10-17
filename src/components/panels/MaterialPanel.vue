@@ -27,11 +27,11 @@
     <TextureRow label="自定义法线贴图" v-model="b.normalTexture" />
 
     <!-- 内置树皮贴图库 (来自 bark_batch1 / bark_batch2) -->
-    <div class="pick-label">内置树皮贴图 ({{ BARK_TEXTURES.length }} 张)</div>
+    <div class="pick-label">内置树皮贴图 ({{ barkTotalReal === null ? BARK_TEXTURES.length + '…' : barkTotalReal }} 张)</div>
     <div class="chips">
       <button class="chip nowrap" :class="{ active: !b.texture }" @click="b.texture = ''">程序化花纹</button>
       <button v-for="bt in BARK_BATCHES" :key="bt.id" class="chip nowrap"
-        :class="{ active: barkBatch === bt.id }" @click="barkBatch = bt.id; barkRow = barkTextureRows(bt.id)[0]">{{ bt.name }}</button>
+        :class="{ active: barkBatch === bt.id }" @click="barkBatch = bt.id; barkRow = barkTextureRows(bt.id)[0]">{{ bt.name }}<template v-if="barkRealCount(bt.id) !== null"> · {{ barkRealCount(bt.id) }}</template></button>
     </div>
     <div class="chips">
       <span class="muted">款式</span>
@@ -39,9 +39,9 @@
         @click="barkRow = r">#{{ r }}</button>
     </div>
     <div class="chips">
-      <button v-for="bt in barkTexturesFor(barkBatch, barkRow)" :key="bt.id" class="chip dot"
+      <button v-for="bt in barkChoices" :key="bt.id" class="chip dot"
         :class="{ active: b.texture === bt.url }" :title="bt.name" @click="useBark(bt)">
-        <img :src="bt.url" alt="" />
+        <img :src="bt.url" alt="" @error="onThumbError(e)" />
       </button>
       <button class="btn small" title="随机一张树皮" @click="useBark(randomBarkTexture())">🎲</button>
     </div>
@@ -88,7 +88,7 @@
         <button class="chip nowrap" :class="{ active: !lt.cardId }" @click="lt.cardId = ''">跟随树叶</button>
         <button v-for="c in cardChoices" :key="'lt-' + c.id" class="chip dot"
           :class="{ active: lt.cardId === c.id }" @click="lt.cardId = c.id" :title="c.id + ' (' + c.w + '×' + c.h + ')'">
-          <img :src="c.url" alt="" />
+          <img :src="c.url" alt="" @error="onThumbError(e)" />
         </button>
         <button class="btn small" title="随机一张" @click="lt.cardId = randomCardId()">🎲</button>
       </div>
@@ -117,7 +117,7 @@
         <button class="chip nowrap" :class="{ active: !fl.cardId }" @click="fl.cardId = ''">跟随树叶</button>
         <button v-for="c in cardChoices" :key="'fl-' + c.id" class="chip dot"
           :class="{ active: fl.cardId === c.id }" @click="fl.cardId = c.id" :title="c.id + ' (' + c.w + '×' + c.h + ')'">
-          <img :src="c.url" alt="" />
+          <img :src="c.url" alt="" @error="onThumbError(e)" />
         </button>
         <button class="btn small" title="随机一张" @click="fl.cardId = randomCardId()">🎲</button>
       </div>
@@ -167,7 +167,7 @@
     <div class="inline">
       <span class="muted">批次</span>
       <button v-for="bt in batches" :key="bt" class="chip" :class="{ active: batch === bt }"
-        @click="batch = bt; row = leafCardRows(bt)[0]; col = 1">{{ bt === 'batch1' ? '① 秋色系' : '② 绿色系' }} · {{ LEAF_CARD_BATCHES[bt] ? Object.values(LEAF_CARD_BATCHES[bt]).reduce((a, b) => a + b, 0) : 0 }}</button>
+        @click="batch = bt; row = leafCardRows(bt)[0]; col = 1">{{ batchLabel(bt) }} · {{ batchRealCount(bt) === null ? batchCount(bt) + '…' : batchRealCount(bt) }}</button>
     </div>
     <div class="inline">
       <span class="muted">叶形</span>
@@ -176,7 +176,7 @@
     </div>
     <div class="inline">
       <span class="muted">颜色变体</span>
-      <button v-for="cd in cardsOfShape" :key="cd.id" class="chip dot"
+      <button v-for="cd in variantCards" :key="cd.id" class="chip dot"
         :class="{ active: lm.texture === cd.url }" :style="{ background: 'transparent' }"
         @click="use(cd)" :title="cd.id + ' (' + cd.w + '×' + cd.h + ')'">
         <img :src="cd.url" alt="" />
@@ -219,11 +219,42 @@ import ColorRow from '../ui/ColorRow.vue'
 import SelectRow from '../ui/SelectRow.vue'
 import TextureRow from '../ui/TextureRow.vue'
 import { state, applyLeafCard, randomLeafCard } from '../../store/treeStore.js'
-import { LEAF_CARDS, LEAF_CARD_BATCHES, leafCardsFor, leafCardRows } from '../../core/leafCards.generated.js'
+import { LEAF_CARDS, LEAF_CARD_BATCHES, LEAF_CARD_BATCH_NAMES, leafCardsFor, leafCardRows } from '../../core/leafCards.generated.js'
 import {
   BARK_TEXTURES, BARK_BATCHES, barkTexturesFor, barkTextureRows,
 } from '../../core/barkTextures.js'
-import { computed, ref } from 'vue'
+import { computed, ref, watch, onMounted } from 'vue'
+
+/* ---------------- 缩略图存在性校验 (路径枚举会碰上空号) ---------------- */
+const missing = ref({})            // url -> true 表示 404
+const exists = ref({})             // url -> true 表示探测到存在 (HEAD 200)
+async function probe(urls) {
+  const todo = urls.filter((x) => exists.value[x] === undefined && missing.value[x] !== true)
+  if (!todo.length) return
+  await Promise.all(todo.map(async (url) => {
+    try {
+      const r = await fetch(url, { method: 'HEAD' })
+      // 注意: dev server 对缺失文件会 SPA 回退成 200 + index.html,
+      // 所以必须看 content-type 是不是图片, 否则会把"缺图"当成"存在"
+      const ct = (r.headers.get('content-type') || '').toLowerCase()
+      const ok = r.ok && ct.startsWith('image/')
+      if (ok) exists.value = { ...exists.value, [url]: true }
+      else missing.value = { ...missing.value, [url]: true }
+    } catch (e) {
+      missing.value = { ...missing.value, [url]: true }
+    }
+  }))
+}
+function onThumbError(e) {
+  const img = e && e.target
+  if (!img) return
+  const url = img.getAttribute('src') || ''
+  if (url) missing.value = { ...missing.value, [url]: true }
+  // 整个按钮一起隐藏, 避免留下"空方块"
+  const btn = img.parentElement
+  if (btn) btn.style.display = 'none'
+}
+const alive = (list) => (list || []).filter((x) => !missing.value[x.url])
 
 /* ---------------- 内置树皮贴图 ---------------- */
 const barkBatch = ref('batch1')
@@ -239,10 +270,10 @@ function useBark(bt) {
     b.uvScaleV = 12
   }
 }
+const barkChoices = computed(() => alive(barkTexturesFor(barkBatch.value, barkRow.value)))
 function randomBarkTexture() {
-  const pool = barkTexturesFor(barkBatch.value, barkRow.value)
-  const list = pool.length ? pool : BARK_TEXTURES
-  return list[Math.floor(Math.random() * list.length)]
+  const pool = barkChoices.value.length ? barkChoices.value : BARK_TEXTURES
+  return pool[Math.floor(Math.random() * pool.length)]
 }
 
 const tintOptions = [
@@ -255,7 +286,7 @@ const lm = state.params.leafMat
 const lv = state.params.leaves
 const pt = state.params.particles
 // 落叶/堆积可独立选贴图: 候选 = 当前批次每个叶形的第一张 + 当前叶形全部变体
-const cardChoices = computed(() => {
+const cardChoicesRaw = computed(() => {
   const out = []
   const seen = new Set()
   for (const r of leafCardRows(batch.value)) {
@@ -265,6 +296,8 @@ const cardChoices = computed(() => {
   for (const c of cardsOfShape.value) if (!seen.has(c.id)) { seen.add(c.id); out.push(c) }
   return out.slice(0, 12)
 })
+// 只用"确实存在"的卡 (路径枚举会碰到断档; 404 的卡已被 onThumbError 标记)
+const cardChoices = computed(() => alive(cardChoicesRaw.value))
 function randomCardId() {
   const pool = LEAF_CARDS
   return pool[Math.floor(Math.random() * pool.length)].id
@@ -275,12 +308,16 @@ const c = state.params.custom
 const shaderError = computed(() => state.shaderError)
 
 /* ---------------- 内置叶片卡片 ---------------- */
-const batches = ['batch1', 'batch2']
+// 批次/名称全部来自卡片库的路径定义 (删贴图/加批次都不用改这里)
+const batches = Object.keys(LEAF_CARD_BATCHES)
+const batchLabel = (bt) => LEAF_CARD_BATCH_NAMES[bt] || bt
+const batchCount = (bt) => (LEAF_CARD_BATCHES[bt] ? Object.values(LEAF_CARD_BATCHES[bt]).reduce((a, b) => a + b, 0) : 0)
 const total = LEAF_CARDS.length
 const batch = ref('batch1')
 const row = ref(1)
 const col = ref(1)
 const cardsOfShape = computed(() => leafCardsFor(batch.value, row.value))
+const variantCards = computed(() => alive(cardsOfShape.value))
 const current = computed(() => cardsOfShape.value[Math.min(col.value - 1, cardsOfShape.value.length - 1)] || cardsOfShape.value[0] || LEAF_CARDS[0])
 
 function use(card) {
@@ -310,6 +347,39 @@ const barkStyles = [
 function applyCustom() {
   state.materialVersion++
 }
+
+/* ---- 断档校验: 所有定义就绪后再探测 ---- */
+watch([batch, row], () => probe(cardsOfShape.value.map((c) => c.url)), { immediate: true })
+watch(cardChoicesRaw, (v) => probe(v.map((c) => c.url)), { immediate: true })
+watch([barkBatch, barkRow], () => probe(barkTexturesFor(barkBatch.value, barkRow.value).map((t) => t.url)), { immediate: true })
+
+/* ---------------- 批次真实张数 (整批探测一次, 结果缓存) ---------------- */
+const probedBatches = ref({})
+const probedBarkBatches = ref({})
+const realCount = (bt) => LEAF_CARDS.filter((c) => c.batch === bt && exists.value[c.url] === true).length
+const batchRealCount = (bt) => (probedBatches.value[bt] ? realCount(bt) : null)
+const barkTotalReal = computed(() => {
+  const ids = Object.keys(probedBarkBatches.value)
+  if (ids.length < BARK_BATCHES.length) return null
+  return ids.reduce((sum, id) => sum + (barkRealCount(id) || 0), 0)
+})
+const barkRealCount = (bt) => (probedBarkBatches.value[bt] ? BARK_TEXTURES.filter((t) => t.batch === bt && exists.value[t.url] === true).length : null)
+async function probeBatch(bt) {
+  if (probedBatches.value[bt]) return
+  const urls = LEAF_CARDS.filter((c) => c.batch === bt).map((c) => c.url)
+  for (let i = 0; i < urls.length; i += 16) await probe(urls.slice(i, i + 16))
+  probedBatches.value = { ...probedBatches.value, [bt]: true }
+}
+async function probeBarkBatch(bt) {
+  if (probedBarkBatches.value[bt]) return
+  const urls = BARK_TEXTURES.filter((t) => t.batch === bt).map((t) => t.url)
+  for (let i = 0; i < urls.length; i += 16) await probe(urls.slice(i, i + 16))
+  probedBarkBatches.value = { ...probedBarkBatches.value, [bt]: true }
+}
+onMounted(() => {
+  for (const bt of batches) probeBatch(bt)
+  for (const bt of BARK_BATCHES) probeBarkBatch(bt.id)
+})
 </script>
 
 <style scoped>

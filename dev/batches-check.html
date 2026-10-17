@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>batches: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1100px;height:700px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let doc, win
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    const tabMat = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('材质'))
+    tabMat.click(); await sleep(1500)
+    const btns = [...doc.querySelectorAll('.chip')].filter((b) => /秋色系|绿色系|桦树/.test(b.textContent))
+    bar('批次按钮=' + JSON.stringify(btns.map((b) => b.textContent.trim())))
+    // 点桦树 A 批次 -> 叶形/颜色变体应换成桦树
+    const b3 = btns.find((b) => b.textContent.includes('桦树 A'))
+    if (b3) { b3.click(); await sleep(900) }
+    const rows = [...doc.querySelectorAll('.chip')].filter((b) => /^#\d+$/.test(b.textContent.trim())).map((b) => b.textContent.trim())
+    bar('桦树 A 叶形按钮=' + JSON.stringify(rows))
+    const imgs = [...doc.querySelectorAll('.chip.dot img')].map((i) => i.src.split('/').pop())
+    bar('缩略图样例=' + JSON.stringify(imgs.slice(0, 4)) + ' 共' + imgs.length + '张')
+    bar('是桦树贴图=' + imgs.every((n) => !n || n.startsWith('v4_leaf1')))
+    bar('errs=none')
+    document.title = 'BATCH-OK :: ' + L.join(' || ').slice(0, 1000)
+  } catch (e) { document.title = 'BATCH-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 400) }
+}, 3000)
+</script></body></html>

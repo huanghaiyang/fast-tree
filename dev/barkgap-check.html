@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>barkgap: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1100px;height:700px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let doc
+f.addEventListener('load', () => { doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    const tabMat = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('材质'))
+    tabMat.click(); await sleep(6000)
+    const label = doc.querySelector('.pick-label') ? doc.querySelector('.pick-label').textContent.trim() : '(无)'
+    bar('标题=' + label)
+    const batches = [...doc.querySelectorAll('.chip')].filter((c) => /灰褐|红褐|黑白|白桦/.test(c.textContent))
+    for (const b of batches) {
+      b.click(); await sleep(1200)
+      const rows = [...doc.querySelectorAll('.chip')].filter((c) => /^#\d+$/.test(c.textContent.trim()))
+      for (const r of rows) {
+        r.click(); await sleep(900)
+        const imgs = [...doc.querySelectorAll('.chip.dot img')]
+        const broken = imgs.filter((i) => i.complete && i.naturalWidth === 0 && i.parentElement.style.display !== 'none')
+        bar(b.textContent.trim() + ' ' + r.textContent.trim() + ': 缩略图=' + imgs.length + ' 破图=' + broken.length)
+      }
+    }
+    bar('errs=none')
+    document.title = 'BARKGAP-OK :: ' + L.join(' || ').slice(0, 1200)
+  } catch (e) { document.title = 'BARKGAP-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 300) }
+}, 3000)
+</script></body></html>

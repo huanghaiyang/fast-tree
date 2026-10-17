@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>path: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1100px;height:700px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let doc, win
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    const tabMat = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('材质'))
+    tabMat.click(); await sleep(1600)
+    const btns = [...doc.querySelectorAll('.chip')].filter((b) => /秋色系|绿色系|桦树|灰褐|红褐|黑白|白桦/.test(b.textContent))
+    bar('批次按钮=' + JSON.stringify(btns.map((b) => b.textContent.trim())))
+    // 404 自动隐藏: 统计可见缩略图数量 vs 库总数 (缺图的会被隐藏)
+    const lc = await import('/src/core/leafCards.generated.js')
+    const bk = await import('/src/core/barkTextures.js')
+    const imgs = [...doc.querySelectorAll('.chip.dot img')]
+    const hidden = imgs.filter((i) => i.style.display === 'none').length
+    bar('当前页缩略图: 挂载=' + imgs.length + ' 已隐藏(404)=' + hidden)
+    bar('叶片库总卡数=' + lc.LEAF_CARDS.length + ' 树皮库总数=' + bk.BARK_TEXTURES.length)
+    // 删一张贴图的模拟: 请求一个不存在的 URL 应 404 且不影响页面
+    const miss = await fetch('/leaves/batch1/v2_leaf1_r07_c07.png', { method: 'HEAD' })
+    bar('模拟缺失卡片 HTTP=' + miss.status + ' (404 说明缺图被正确识别, 不会崩)')
+    bar('errs=none')
+    document.title = 'PATH-OK :: ' + L.join(' || ').slice(0, 1000)
+  } catch (e) { document.title = 'PATH-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 400) }
+}, 3000)
+</script></body></html>

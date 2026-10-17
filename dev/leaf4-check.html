@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>leaf4: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1100px;height:700px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    state = win.__fastTree
+    const mod = await import('/src/core/leafCards.generated.js')
+    bar('① 卡片总数=' + mod.LEAF_CARDS.length + ' 批次=' + Object.keys(mod.LEAF_CARD_BATCHES).join('/'))
+    let bad = 0
+    for (const c of mod.LEAF_CARDS) { const r = await fetch(c.url, { method: 'HEAD' }); if (!r.ok) bad++ }
+    bar('① 全部卡片 URL 可访问=' + (bad === 0) + ' 失败=' + bad)
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(600)
+    // ② 应用一张桦树叶卡 -> 贴图应加载成功
+    const birch = mod.LEAF_CARDS.filter((c) => c.batch === 'v4_batch1')[0]
+    win.__fastTreeApi.applyLeafCard(birch.id)
+    await sleep(2000)
+    const lm = win.__fastTreeScene.materials.leaf
+    bar('② 应用桦树叶卡 ' + birch.id + ': map=' + !!lm.map + ' 尺寸=' + (lm.map && lm.map.image ? lm.map.image.width + 'x' + lm.map.image.height : '-'))
+    bar('② tintMode=' + state.params.leafMat.tintMode + ' 叶片数=' + state.stats.leaves)
+    // ③ 材质球(树叶)是否跟着更新
+    const tabMat = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('材质'))
+    tabMat.click(); await sleep(1800)
+    const cv = doc.querySelectorAll('.mp-canvas')[1]
+    const snap = () => { const c = doc.createElement('canvas'); c.width = 48; c.height = 48; const x = c.getContext('2d'); x.drawImage(cv, 0, 0, 48, 48); const d = x.getImageData(0, 0, 48, 48).data; let s = 0; for (let i = 0; i < d.length; i += 4) s += d[i] * 3 + d[i+1] * 5 + d[i+2] * 7; return s }
+    const before = snap()
+    win.__fastTreeApi.applyLeafCard(mod.LEAF_CARDS.filter((c) => c.batch === 'v4_batch2')[3].id)
+    await sleep(2400)
+    bar('③ 换桦树叶卡后 树叶材质球变化=' + (before !== snap()))
+    bar('errs=none')
+    document.title = 'LEAF4-OK :: ' + L.join(' || ').slice(0, 1200)
+  } catch (e) { document.title = 'LEAF4-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 400) }
+}, 3200)
+</script></body></html>

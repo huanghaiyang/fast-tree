@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>gap: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1100px;height:700px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let doc, win
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    const tabMat = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('材质'))
+    tabMat.click(); await sleep(1500)
+    // 依次点每个批次, 统计缩略图: 可见 / 破图(naturalWidth=0)
+    const btns = [...doc.querySelectorAll('.chip')].filter((b) => /秋色系|绿色系|桦树/.test(b.textContent))
+    for (const b of btns) {
+      b.click(); await sleep(1600)
+      const imgs = [...doc.querySelectorAll('.chip.dot img')]
+      const broken = imgs.filter((i) => i.complete && i.naturalWidth === 0 && i.style.display !== 'none' && i.parentElement.style.display !== 'none')
+      const hiddenBtns = [...doc.querySelectorAll('.chip.dot')].filter((x) => x.style.display === 'none').length
+      bar(b.textContent.trim() + ': 缩略图=' + imgs.length + ' 破图=' + broken.length + ' 已隐藏按钮=' + hiddenBtns)
+    }
+    bar('errs=none')
+    document.title = 'GAP-OK :: ' + L.join(' || ').slice(0, 1100)
+  } catch (e) { document.title = 'GAP-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 400) }
+}, 3000)
+</script></body></html>
