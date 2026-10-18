@@ -5,6 +5,7 @@
 import { buildTree, selectionRanges } from '../src/core/treeBuilder.js'
 import { defaultParams, cloneParams, normalizeParams, MAX_LEVELS, GROUP_KEYS } from '../src/core/params.js'
 import { ENVIRONMENTS, ENV_IDS, envById, applyEnvironment } from '../src/core/environments.js'
+import { TWIST_POINTS, normalizeTwistProfile, sampleTwistProfile, twistProfileRad } from '../src/core/twist.js'
 import { autoGenerate, autoWind, applyPreset, PRESETS } from '../src/core/presets.js'
 import {
   SPECIES, GROWTH_STAGES, SEASONS, composeTree, classificationName, allCombinations,
@@ -1330,6 +1331,49 @@ console.log('\n[25] 环境预设')
   const same = g1.barkGeometry.attributes.position.array.length === g2.barkGeometry.attributes.position.array.length &&
     g1.barkGeometry.attributes.position.array.every((v, i) => v === g2.barkGeometry.attributes.position.array[i])
   check('切换环境不改变树几何 (只改场景参数)', same)
+}
+
+/* 26. 扭曲曲线 (树干/树枝) + 视口句柄数据 */
+console.log('\n[26] 扭曲曲线与句柄')
+{
+  const base = normalizeParams(applyPreset(defaultParams(), 'oak', 'mature', 'summer'))
+  check('树干/树枝默认扭曲曲线长度 = 5 且为 0', base.trunk.twistProfile.length === TWIST_POINTS &&
+    base.branches.twistProfile.length === TWIST_POINTS &&
+    base.trunk.twistProfile.every((v) => v === 0) && base.branches.twistProfile.every((v) => v === 0))
+  check('曲线采样: 线性插值正确', Math.abs(sampleTwistProfile([0, 100, 100, 100, 100], 0.125) - 50) < 1e-9,
+    sampleTwistProfile([0, 100, 100, 100, 100], 0.125))
+  check('曲线弧度换算 + 越界钳制', Math.abs(twistProfileRad([0, 90, 0, 0, 0], 0.25) - Math.PI / 2) < 1e-9 &&
+    normalizeTwistProfile([5000, -5000, 0, 0, 0]).join(',') === '720,-720,0,0,0')
+
+  const sum = (arr) => { let s = 0; for (let i = 0; i < arr.length; i++) s += arr[i]; return s }
+  const a = buildTree(base)
+  const pTrunk = cloneParams(base)
+  pTrunk.trunk.twistProfile = [0, 120, 240, 360, 480]
+  const b = buildTree(pTrunk)
+  const barkDiff = a.barkGeometry.attributes.position.array.some((v, i) => v !== b.barkGeometry.attributes.position.array[i])
+  const leafDiff = a.leafGeometry.attributes.position.array.some((v, i) => v !== b.leafGeometry.attributes.position.array[i])
+  check('树干扭曲曲线改变树皮几何 (截面扭转)', barkDiff)
+  check('树干扭曲曲线也带动叶片/子枝螺旋 (可见)', leafDiff)
+  const pBr = cloneParams(base)
+  pBr.branches.twistProfile = [0, 90, 180, 270, 360]
+  const c = buildTree(pBr)
+  check('树枝扭曲曲线改变树枝/叶片几何', c.barkGeometry.attributes.position.array.some((v, i) => v !== a.barkGeometry.attributes.position.array[i]) &&
+    c.leafGeometry.attributes.position.array.some((v, i) => v !== a.leafGeometry.attributes.position.array[i]))
+  check('扭曲曲线结果确定 (同参数两次一致)', (() => {
+    const d = buildTree(pTrunk)
+    return d.barkGeometry.attributes.position.array.every((v, i) => v === b.barkGeometry.attributes.position.array[i])
+  })())
+
+  check('句柄引导线: 树干有 17 个采样点', a.twistGuides && a.twistGuides.trunk.length === 17 * 3, a.twistGuides && a.twistGuides.trunk.length)
+  check('句柄引导线: 树枝 L1/L2 有代表枝采样', !!a.twistGuides.branches[1] && a.twistGuides.branches[1].length >= 6 &&
+    !!a.twistGuides.branches[2])
+  check('句柄坐标是有限数值', a.twistGuides.trunk.every(Number.isFinite) && a.twistGuides.branches[1].every(Number.isFinite))
+  // 默认曲线为 0 时, 树几何应与没有该字段的旧参数一致 (向后兼容)
+  const legacy = cloneParams(base)
+  delete legacy.trunk.twistProfile
+  delete legacy.branches.twistProfile
+  const l = buildTree(legacy)
+  check('旧参数 (无 twistProfile) 兼容: 几何与默认一致', l.barkGeometry.attributes.position.array.every((v, i) => v === a.barkGeometry.attributes.position.array[i]))
 }
 
 /* 汇总 */

@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>twist: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+/* 扭曲句柄自检
+ * 1) 树干/树枝 5 点曲线 + 视口 SVG 句柄
+ * 2) 拖拽句柄 -> 参数变化 -> 几何重建 (树皮截面 + 叶片螺旋)
+ * 3) 树枝层级/无枝层级/关闭句柄 */
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+let fail = 0
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+const check = (name, cond, detail = '') => {
+  if (!cond) fail++
+  line((cond ? '✔ ' : '✘ ') + name + (detail ? ' — ' + detail : ''))
+}
+async function waitFor(fn, timeout = 20000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { if (fn()) return true } catch (e) { /* ignore */ }
+    await sleep(100)
+  }
+  return false
+}
+const hash = (arr) => {
+  let h = 0
+  const n = Math.min(arr.length, 6000)
+  for (let i = 0; i < n; i++) h = (h * 31 + Math.round(arr[i] * 10000)) % 1000000007
+  return h
+}
+const pointer = (win, type, x, y) => new win.PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse' })
+let win, doc
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    for (let i = 0; i < 120 && !win; i++) await sleep(100)
+    await waitFor(() => win.__fastTree && win.__fastTree.ready && win.__fastTreeScene, 30000)
+    const state = win.__fastTree
+    const scene = win.__fastTreeScene
+    await sleep(500)
+
+    line('===== 扭曲句柄 =====')
+    check('默认树干/树枝曲线存在且为 0', Array.isArray(state.params.trunk.twistProfile) &&
+      Array.isArray(state.params.branches.twistProfile) &&
+      state.params.trunk.twistProfile.every((v) => v === 0) && state.params.branches.twistProfile.every((v) => v === 0))
+    check('场景已生成扭曲引导线', !!scene.twistGuides && scene.twistGuides.trunk.length >= 12 &&
+      !!scene.twistGuides.branches[1], 'trunkPts=' + (scene.twistGuides ? scene.twistGuides.trunk.length / 3 : 0))
+
+    // 打开树干句柄 (走真实 UI: 树干标签 -> 展开「扭曲句柄」-> 勾选显示)
+    state.twistTarget = 'trunk'
+    state.twistEdit = false
+    const trunkTab = [...doc.querySelectorAll('.tab')].find((t) => (t.textContent || '').includes('树干'))
+    check('存在"树干"标签页', !!trunkTab)
+    trunkTab.click()
+    await sleep(300)
+    const twistHead = [...doc.querySelectorAll('.section-head')].find((h) => (h.textContent || '').includes('扭曲句柄'))
+    check('树干面板存在「扭曲句柄」分组', !!twistHead)
+    twistHead.click()
+    await sleep(250)
+    const toggleLabel = [...doc.querySelectorAll('.section .inline label')].find((l) => (l.textContent || '').includes('显示扭曲句柄'))
+    check('存在「显示扭曲句柄」开关', !!toggleLabel)
+    toggleLabel.click()
+    await sleep(400)
+    check('UI 开关已打开句柄编辑', state.twistEdit === true)
+    await waitFor(() => doc.querySelectorAll('.twist-handle').length === 5, 8000)
+    let hs = [...doc.querySelectorAll('.twist-handle')]
+    check('视口渲染 5 个树干句柄', hs.length === 5, 'handles=' + hs.length)
+    check('引导线 (SVG polyline) 已渲染', !!doc.querySelector('.twist-guide'))
+    const tip = (doc.querySelector('.twist-tip') || {}).textContent || ''
+    check('提示文案正确 (树干)', tip.includes('树干') && tip.includes('拖拽'), tip.slice(0, 40))
+
+    // 拖拽第 2 个句柄 +90px
+    const leafBefore = hash(scene.leafMesh.geometry.attributes.position.array)
+    const h = hs[1]
+    const rect = h.getBoundingClientRect()
+    const x0 = rect.left + rect.width / 2
+    const y0 = rect.top + rect.height / 2
+    h.dispatchEvent(pointer(win, 'pointerdown', x0, y0))
+    win.dispatchEvent(pointer(win, 'pointermove', x0 + 90, y0))
+    win.dispatchEvent(pointer(win, 'pointerup', x0 + 90, y0))
+    await sleep(250)
+    const deg = Math.round(state.params.trunk.twistProfile[1])
+    check('拖拽句柄改变树干曲线 (≈ +108°)', Math.abs(deg - 108) <= 10, 'value=' + deg)
+    await waitFor(() => !state.busy, 10000)
+    await sleep(300)
+    const leafAfter = hash(scene.leafMesh.geometry.attributes.position.array)
+    check('几何已重建 (叶片位置变化, 螺旋可见)', leafAfter !== leafBefore, `${leafBefore} -> ${leafAfter}`)
+    check('松手后相机控制恢复', scene.controls.enabled === true)
+    check('其他控制点保持 0', state.params.trunk.twistProfile.filter((v, i) => i !== 1).every((v) => v === 0))
+
+    // 树枝曲线: L1 最后一个点 +120px
+    state.twistTarget = 'branches'
+    state.twistLevel = 1
+    await sleep(400)
+    hs = [...doc.querySelectorAll('.twist-handle')]
+    check('切到树枝后仍渲染 5 个句柄', hs.length === 5, 'handles=' + hs.length)
+    const tip2 = (doc.querySelector('.twist-tip') || {}).textContent || ''
+    check('提示文案正确 (树枝 L1)', tip2.includes('树枝 L1'), tip2.slice(0, 40))
+    const leafBefore2 = hash(scene.leafMesh.geometry.attributes.position.array)
+    const h2 = hs[4]
+    const r2 = h2.getBoundingClientRect()
+    const bx = r2.left + r2.width / 2
+    const by = r2.top + r2.height / 2
+    h2.dispatchEvent(pointer(win, 'pointerdown', bx, by))
+    win.dispatchEvent(pointer(win, 'pointermove', bx + 120, by))
+    win.dispatchEvent(pointer(win, 'pointerup', bx + 120, by))
+    await sleep(250)
+    check('拖拽句柄改变树枝曲线 (≈ +144°)', Math.abs(Math.round(state.params.branches.twistProfile[4]) - 144) <= 12,
+      'value=' + Math.round(state.params.branches.twistProfile[4]))
+    await waitFor(() => !state.busy, 10000)
+    await sleep(300)
+    const leafAfter2 = hash(scene.leafMesh.geometry.attributes.position.array)
+    check('树枝扭转也重建了几何', leafAfter2 !== leafBefore2)
+    check('树干曲线未被树枝操作污染', Math.abs(state.params.trunk.twistProfile[1] - deg) < 1e-6)
+
+    // 没有该层树枝时不再显示句柄
+    state.twistLevel = 5
+    await sleep(400)
+    const tip3 = (doc.querySelector('.twist-tip') || {}).textContent || ''
+    check('无树枝层级提示 (L5 无枝)', tip3.includes('没有可编辑树枝') || doc.querySelectorAll('.twist-handle').length === 0, tip3.slice(0, 50))
+
+    // 关闭句柄
+    state.twistTarget = 'trunk'
+    state.twistEdit = false
+    await sleep(300)
+    check('关闭后句柄叠层移除', !doc.querySelector('.twist-gizmo') && doc.querySelectorAll('.twist-handle').length === 0)
+
+    line('\n结果: ' + (fail ? 'TWIST-FAIL ' + fail : 'TWIST-OK'))
+    document.title = (fail ? 'TWIST-FAIL(' + fail + ')' : 'TWIST-OK') + ' :: ' + R.filter((s) => s.startsWith('✘')).slice(0, 5).join(' | ')
+  } catch (e) {
+    document.title = 'TWIST-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 900)
+    line('EX: ' + (e && e.stack ? e.stack : e))
+  }
+}, 2400)
+</script></body></html>

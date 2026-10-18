@@ -219,7 +219,7 @@ export function buildTree(params) {
       if (!fr) continue
       const dir = fr.dir
       const perp = anyPerp(dir)
-      const azimuthBase = i * phyllo + rng.range(0, Math.PI * 2)
+      const azimuthBase = i * phyllo + rng.range(0, Math.PI * 2) + (fr.profileRoll || 0)
 
       for (let c = 0; c < clusterCount; c++) {
         if (leafCount >= maxLeaves) return
@@ -332,7 +332,10 @@ export function buildTree(params) {
         fr.radius * cfg.radiusRatio * rng.vary(cfg.radiusVariance) * (branchParams.radiusScale || 1))
       const radius1 = Math.max(0.0005, radius0 * cfg.taper)
       const dir = childDirection(rng, fr.dir, cfg, k, P)
-      const outDir = azimuthPerp(fr.dir, k * (cfg.phyllotaxis || 137.5) * DEG, new THREE.Vector3())
+      // 扭曲: 子枝绕父枝轴旋转 (句柄曲线控制), 让扭转在树冠上可见
+      const profileRoll = fr.profileRoll || 0
+      if (profileRoll) dir.applyAxisAngle(fr.dir, profileRoll)
+      const outDir = azimuthPerp(fr.dir, k * (cfg.phyllotaxis || 137.5) * DEG + profileRoll, new THREE.Vector3())
       const startPos = fr.pos.clone().addScaledVector(outDir, fr.radius * 0.3)
 
       const wind0 = lerp(parentWind0, parentWind1, tt)
@@ -359,9 +362,12 @@ export function buildTree(params) {
       gravity: (cfg.gravity || 0) * (branchParams.gravityScale || 1) +
         (branchParams.phototropism || 0) + (cfg.upBias || 0),
       twist: cfg.twist || 0,
+      twistProfile: cfg.twistProfile || (P.branches && P.branches.twistProfile),
       gnarl: 0.18,
       taperRatio: cfg.taper,
     })
+    // 每层取第一根枝条作为该层扭曲句柄的可视化引导线
+    if (level >= 1 && !twistGuides.branches[level]) twistGuides.branches[level] = sampleGuidePoints(frames)
 
     const radialSegments = Math.max(3, Math.round(cfg.radialSegments * ((P.lod && P.lod.barkDetail) || 1)))
     const isYoung = level >= 3
@@ -470,9 +476,12 @@ export function buildTree(params) {
     curveVariance: t.curveVariance,
     gravity: 0,
     twist: t.twist,
+    twistProfile: t.twistProfile,
     gnarl: t.gnarl,
     taperRatio: t.taper,
   })
+  // 扭曲句柄用的引导线 (树干 + 每层代表枝的骨架采样)
+  const twistGuides = { trunk: sampleGuidePoints(trunkFramesAll), branches: {} }
 
   // 分叉 (多主枝): 橡树这类乔木常在 1/3 高度处分成 2~4 条主枝
   // 关键: 主干**不截断** (截断会留一个可见的平截面), 而是继续向上当"主导枝";
@@ -617,8 +626,8 @@ export function buildTree(params) {
         const t = Math.min(0.995, Math.max(0.02, tt + dT))
         const fr = sampleFrame(frames, t)
         if (!fr) continue
-        // 挂果方位: 绕枝轴随机, 以"枝条下表面"为主
-        const az = Math.PI + rng.range(-0.9, 0.9)
+        // 挂果方位: 绕枝轴随机, 以"枝条下表面"为主; 跟随扭曲曲线旋转
+        const az = Math.PI + rng.range(-0.9, 0.9) + (fr.profileRoll || 0)
         const radial = azimuthPerp(fr.dir, az, new THREE.Vector3())
         if (radial.dot(UP) > 0) radial.negate()      // 指向下方 = 枝条下表面
         const surface = fr.pos.clone().addScaledVector(radial, Math.max(0.004, fr.radius) * 0.9)
@@ -765,7 +774,7 @@ export function buildTree(params) {
         if (!fr) continue
         const dir = fr.dir.clone()
         const perp = anyPerp(dir)
-        const azimuthBase = i * 137.5 * DEG + fRng.range(0, Math.PI * 2)
+        const azimuthBase = i * 137.5 * DEG + fRng.range(0, Math.PI * 2) + (fr.profileRoll || 0)
         for (let c = 0; c < perCluster; c++) {
           const tpl = fTpls[Math.floor(fRng.next() * fTpls.length) % fTpls.length]
           const jitter = 1 + fRng.signed() * (FL.colorVariance === undefined ? 0.16 : FL.colorVariance) * 0.3
@@ -838,6 +847,7 @@ export function buildTree(params) {
     flowerGeometry,
     nodes,
     groups,
+    twistGuides,
     stats: {
       branches: branchCount,
       leaves: L.enabled ? leafCount : 0,
@@ -888,6 +898,19 @@ const NODE_GROUPS = [
   { id: 'material-bark', name: '材质 · 树皮', icon: '🎨', type: 'material', material: 'bark' },
   { id: 'material-leaf', name: '材质 · 树叶', icon: '🎨', type: 'material', material: 'leaf' },
 ]
+
+/** 把一根枝条的骨架按 t 均匀采样成扭曲句柄的引导线 (扁平 xyz 数组) */
+function sampleGuidePoints(frames, n = 17) {
+  const out = []
+  if (!frames || !frames.length) return out
+  const count = Math.max(2, n)
+  for (let i = 0; i < count; i++) {
+    const fr = sampleFrame(frames, i / (count - 1))
+    if (!fr) continue
+    out.push(fr.pos.x, fr.pos.y, fr.pos.z)
+  }
+  return out
+}
 
 function emptyBox() {
   return { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] }

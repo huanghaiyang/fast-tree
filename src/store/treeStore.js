@@ -20,6 +20,10 @@ export const state = reactive({
   // 动态 LOD: 当前档位 + 各级统计 (由 sceneManager 回调)
   lodLevel: 0,
   lodInfo: [],
+  // 扭曲句柄编辑 (视口叠加层)
+  twistEdit: false,
+  twistTarget: 'trunk',   // trunk | branches
+  twistLevel: 1,          // 编辑哪一层树枝 (1..5)
   // 伪装卡生成结果 + 预览开关 (主预览区显示 2D 卡片还是 3D 树)
   impostorResult: null,
   impostorBusy: false,

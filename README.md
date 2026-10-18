@@ -194,6 +194,7 @@ src/
 │  ├─ Viewport.vue                    Three 视口 + 变更分组监听 (几何/材质/风/场景/选中)
 │  ├─ ControlPanel.vue                左侧 8 个参数标签页
 │  ├─ ChatPanel.vue                   AI 对话助手 (历史/图片/思考过程/联网搜索/会话管理)
+│  ├─ TwistGizmo.vue                  视口扭曲句柄叠层 (树干/树枝曲线拖拽编辑)
 │  ├─ NodeDock.vue                    右侧可收起的「模型节点」面板 (默认不展示)
 │  ├─ ParamTip.vue                    参数 hover 说明浮层 (事件委托 + 词典查表)
 │  ├─ WindCompass.vue                 视口风向指示器 (世界风向投影到相机地面基)
@@ -212,6 +213,7 @@ src/
    ├─ leaf.js          叶片模板 (5 种轮廓) + 实例化写入
    ├─ treeBuilder.js   递归生长 + finalizeNodes (节点表/id 重排/统计/包围盒) + selectionRanges
    ├─ ambientOcclusion.js  程序化 AO: 叶片点云空间哈希 + 顶点色烘焙 (Node 可复现)
+   ├─ twist.js         树干/树枝 5 点扭曲曲线 (采样/钳制/默认值)
    ├─ environments.js  环境预设 (白昼/黄昏/森林/雨林/沙漠/雪地/高原/黑夜/群星)
    ├─ textures.js      程序化树皮/叶片贴图 (颜色+法线+粗糙度)
    ├─ materials.js     PBR + 风场/生长/自定义 GLSL + 节点选中高亮
@@ -220,7 +222,7 @@ src/
    ├─ appApi.js        浏览器侧命令执行器 + 本地桥客户端
    └─ sceneManager.js  渲染器/相机/灯光/天空/地面/动画循环/选中框/聚焦/相机基
 scripts/
-├─ selftest.mjs        208 项无浏览器自检 (含导出格式、AO、LOD、环境预设、模板卫生)
+├─ selftest.mjs        219 项无浏览器自检 (含导出格式、AO、LOD、环境预设、扭曲曲线、模板卫生)
 ├─ paramAudit.mjs      参数有效性审计核心 (几何/材质/风场三路签名比对)
 ├─ audit-params.mjs    npm run audit 入口
 ├─ app-bridge-server.mjs  本地应用桥 / MCP 服务器 / 大模型代理 (Key 只在服务端)
@@ -271,6 +273,22 @@ Wind (Games)、Forces、Vertex Colors/AO、Level of Detail 与导出等章节，
 | `aOrigin` | 该枝条基点（生长动画的收缩目标） |
 | `aGrow` | 生长区间 `[start, end]` |
 | `aNodeId` | 所属模型节点 id（节点树的选中 / 高亮 / 隔离） |
+
+---
+
+## 扭曲句柄 (树干 / 树枝)
+
+「左侧参数面板 → 树干 → 扭曲句柄」打开后，视口会显示一条青色引导线 + 5 个可拖拽圆点
+（对应 t = 0 / 25 / 50 / 75 / 100%），左右拖拽圆点即可实时改变该处的累计扭转角（±720°）：
+
+- **树干曲线** `trunk.twistProfile`：沿树干高度的额外扭转，叠加在原有 `trunk.twist` 标量之上。
+- **树枝曲线** `branches.twistProfile`：沿每根枝条长度的额外扭转；编辑对象切到「树枝」后可再选 L1~L5，引导线取该层第一根枝条。
+- 扭转不只改树皮截面：子枝方位、叶片/花朵/果实的挂点都会跟随曲线绕枝轴旋转，所以拖拽时看到的是一圈圈螺旋，而不是只转贴图。
+- 句柄拖拽时按 ~60ms 节流触发重建；松手恢复相机控制。曲线写入参数 JSON / 预设，导出的 GLB/OBJ 里就是烘焙后的最终几何。
+- 无对应层级树枝时会提示「当前层级没有可编辑树枝」；`重置扭转曲线` 只清零 5 个控制点，不动基础扭转标量。
+
+自检：`dev/twist-check.html`（拖拽句柄 → 参数/几何/树枝层级/关闭句柄全部断言），
+Node 侧 `npm run selftest` 覆盖曲线采样、钳制、几何变化、引导线数据、旧参数兼容。
 
 ---
 
@@ -356,7 +374,7 @@ npm run chat:check   # 对话链路自检 (需要 Key + 网络)
 ## 自检与诊断
 
 ```bash
-npm run selftest     # 208 项断言
+npm run selftest     # 219 项断言
 npm run audit        # 参数有效性审计 (改了就一定变)
 ```
 
@@ -404,6 +422,7 @@ node scripts/shot-receiver.mjs        # 监听 127.0.0.1:5274, 把页面回传�
 - `dev/classify-check.html` —— 点真实的树种/阶段/季节 chips, 验证重建/重新取景/生长进度不被重置
 - `dev/ui-check.html` —— hover 说明浮层 + 风向指示器箭头角度 + 不同风向下的屏幕摆动
 - `dev/speedtree-check.html` —— SpeedTree 风格功能自检: 相机拉远/拉近驱动动态 LOD (档位/面数递减/缓存复用/选中回全模)，AO 开关/强度/恢复对比
+- `dev/twist-check.html` —— 扭曲句柄自检: 视口出现 5 个可拖拽句柄，模拟拖拽后验证树干/树枝曲线参数、几何重建、树枝层级/无枝层级提示、关闭句柄
 - `dev/leaf-panel-check.html` —— 叶片面板 UI 回归: 展开「叶片形态」，确认没有孤立属性/源码片段被当成正文显示（修复过 `hint="..." />` 漏进页面的问题）
 - `dev/environments-check.html` —— 环境预设自检: 9 种环境的背景/太阳/环境光/地面/曝光/雾/星空逐项校验 + 真实点击「场景 → 环境预设」按钮；群星星空跟随相机、切环境不重建树几何
 - `dev/export-format-check.html` —— 导出数据格式自检: GLB 按 glTF 2.0 规范校验容器/accessor/min-max/贴图/节点并用官方 GLTFLoader 回读, OBJ 按 Wavefront 文法校验并用 OBJLoader 回读, PNG 校验签名/IHDR/CRC/IDAT/行滤波并确认非空帧, 参数 JSON 校验结构完整性与导入回环, 以及"特效全开时的富场景导出"

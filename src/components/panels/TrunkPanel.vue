@@ -1,4 +1,20 @@
 <template>
+  <Section title="扭曲句柄" hint="Twist Handles" :default-collapsed="true">
+    <ToggleRow label="显示扭曲句柄" v-model="state.twistEdit"
+      hint="在视口中显示 5 个可拖拽句柄, 直接编辑树干/树枝的扭转曲线" />
+    <template v-if="state.twistEdit">
+      <SelectRow label="编辑对象" v-model="state.twistTarget" :options="twistTargets" />
+      <SelectRow v-if="state.twistTarget === 'branches'" label="树枝层级" v-model="state.twistLevel" :options="twistLevels" />
+      <div class="inline">
+        <button class="btn small" @click="resetTwist">重置扭转曲线</button>
+      </div>
+      <p class="muted" style="margin: 0">
+        视口里的青色圆点 = 扭转控制点 (t=0/25/50/75/100%)；左右拖拽改变该处的累计扭转角，
+        正负决定旋向。树干与树枝共用 5 点曲线，范围 ±720°。
+      </p>
+    </template>
+  </Section>
+
   <Section title="树干" hint="Trunk">
     <SliderRow label="树干高度" v-model="t.height" :min="0.5" :max="30" :step="0.1" unit="m" />
     <SliderRow label="底部半径" v-model="t.baseRadius" :min="0.02" :max="1.5" :step="0.01" unit="m" />
@@ -67,9 +83,21 @@
 import Section from '../ui/Section.vue'
 import SliderRow from '../ui/SliderRow.vue'
 import ToggleRow from '../ui/ToggleRow.vue'
+import SelectRow from '../ui/SelectRow.vue'
 import { state } from '../../store/treeStore.js'
+import { normalizeTwistProfile } from '../../core/twist.js'
 
 const t = state.params.trunk
 const r = state.params.roots
 const f = state.params.trunk.fork
+const twistTargets = [
+  { value: 'trunk', label: '树干' },
+  { value: 'branches', label: '树枝' },
+]
+const twistLevels = [1, 2, 3, 4, 5].map((v) => ({ value: String(v), label: `L${v}` }))
+
+function resetTwist() {
+  const arr = state.twistTarget === 'trunk' ? state.params.trunk.twistProfile : state.params.branches.twistProfile
+  arr.splice(0, arr.length, ...normalizeTwistProfile(null))
+}
 </script>

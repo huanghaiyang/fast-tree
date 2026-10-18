@@ -89,6 +89,8 @@ export function defaultParams() {
       lean: 0.06,           // 倾斜 (弧度)
       leanDirection: 20,    // 倾斜方向(度)
       twist: 0.18,          // 沿高度的扭转
+      // 扭曲曲线: 5 个控制点 (t=0/25/50/75/100%) 的额外扭转角(度), 由视口句柄编辑
+      twistProfile: [0, 0, 0, 0, 0],
       gnarl: 0.35,          // 不规则/节瘤感
       flare: 0.9,           // 根部外扩
       flareHeight: 0.18,    // 外扩影响的高度比例
@@ -136,6 +138,8 @@ export function defaultParams() {
       radiusScale: 1.0,                       // 全局枝条半径倍率
       startSpread: 0.0,                       // 上层枝条起始位置的整体上下偏移
       apicalDominance: 0.35,                  // 顶端优势: 越靠顶端枝条越短
+      // 扭曲曲线: 沿每条枝条长度 5 个控制点 (t=0/25/50/75/100%) 的额外扭转角(度)
+      twistProfile: [0, 0, 0, 0, 0],
     },
 
     // ---------------- 树叶 ----------------

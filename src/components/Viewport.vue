@@ -28,6 +28,9 @@
 
     <WindCompass />
 
+    <!-- 扭曲句柄叠层 (树干/树枝扭转曲线) -->
+    <TwistGizmo v-if="state.twistEdit" />
+
     <!-- 预览切换: 3D 模型 <-> 伪装卡 -->
     <div v-if="state.impostorResult" class="overlay preview-switch">
       <button class="btn small" :class="{ active: !state.impostorPreview }" @click="setImpostorPreview(false)">3D 模型</button>
@@ -52,6 +55,7 @@ import { onBeforeUnmount, onMounted, ref, watch, computed } from 'vue'
 import { TreeScene } from '../core/sceneManager.js'
 import { serializeGroup } from '../core/params.js'
 import WindCompass from './WindCompass.vue'
+import TwistGizmo from './TwistGizmo.vue'
 import {
   state, sceneApi, totalTriangles, setNodeModel, selectionSignature, setImpostorPreview,
   clearSelection as clearSelectionAction, toggleNodePanel,
@@ -97,6 +101,8 @@ onMounted(() => {
   sceneApi.frameCamera = () => scene.frameCamera()
   sceneApi.focusBox = (min, max) => scene.focusBox(min, max)
   sceneApi.getWindScreenBasis = () => scene.getWindScreenBasis()
+  sceneApi.getTwistScreen = (target, level) => (scene ? scene.projectTwistGuide(target, level) : null)
+  sceneApi.setControlsEnabled = (v) => { if (scene) scene.controls.enabled = !!v }
 sceneApi.makeImpostor = (opts) => scene.makeImpostor(opts)
 sceneApi.setImpostorModel = (res) => scene.setImpostorPreview(res)
   // 验证/脚本用的同步重建 (应用内重建走 rAF, 后台标签页会被节流)

@@ -16,6 +16,7 @@ import { generateImpostor } from './impostor.js'
 import { boxInfo } from './mathUtils.js'
 import { cloneParams } from './params.js'
 import { makeRng } from './rng.js'
+import { TWIST_TIMES } from './twist.js'
 
 const SKY_VERT = /* glsl */`
 varying vec3 vSkyPos;
@@ -154,6 +155,7 @@ export class TreeScene {
     this.lodCache = new Map()
     this.lodLevel = 0
     this.lodInfo = []
+    this.twistGuides = null
     // three r186 起 THREE.Clock 已废弃, 这里自己计时
     this.lastTime = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000
     this.playing = true
@@ -335,6 +337,7 @@ export class TreeScene {
     this._rehideForImpostorPreview()
 
     this.stats = { ...result.stats, totalMs: performance.now() - t }
+    this.twistGuides = result.twistGuides || null
     const info = boxInfo(result.barkGeometry)
     this.treeHeight = Math.max(0.5, this.stats.height)
     this.treeSpread = Math.max(0.5, this.stats.spread || 1)
@@ -511,6 +514,36 @@ export class TreeScene {
       else if (cur === 2 && dist > d2 * 0.94) desired = 2
     }
     if (desired !== this.lodLevel) this.applyLod(desired)
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 扭曲句柄: 把树干/代表枝的骨架投影到屏幕 (给 TwistGizmo 叠层用)       */
+  /* ------------------------------------------------------------------ */
+  projectTwistGuide(target = 'trunk', level = 1) {
+    if (!this.twistGuides || !this.camera) return null
+    const guide = target === 'branches'
+      ? (this.twistGuides.branches && this.twistGuides.branches[level])
+      : this.twistGuides.trunk
+    if (!guide || guide.length < 6) return null
+    const n = Math.floor(guide.length / 3)
+    const el = this.renderer.domElement
+    const w = el.clientWidth || 1
+    const h = el.clientHeight || 1
+    const v = new THREE.Vector3()
+    const points = []
+    for (let i = 0; i < n; i++) {
+      v.set(guide[i * 3], guide[i * 3 + 1], guide[i * 3 + 2]).project(this.camera)
+      points.push({ x: (v.x * 0.5 + 0.5) * w, y: (-v.y * 0.5 + 0.5) * h })
+    }
+    const handles = TWIST_TIMES.map((t) => {
+      const x = t * (n - 1)
+      const i0 = Math.max(0, Math.min(n - 2, Math.floor(x)))
+      const f = x - i0
+      const a = points[i0]
+      const b = points[Math.min(n - 1, i0 + 1)]
+      return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, t }
+    })
+    return { width: w, height: h, points, handles }
   }
 
   /* ------------------------------------------------------------------ */

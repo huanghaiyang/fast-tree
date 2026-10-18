@@ -12,6 +12,7 @@
  *   aNodeId float  所属模型节点 id (用于节点树选中/高亮/隔离)
  */
 import * as THREE from 'three'
+import { sampleTwistProfile } from './twist.js'
 
 export const UP = new THREE.Vector3(0, 1, 0)
 
@@ -58,7 +59,10 @@ export function sampleFrame(frames, t) {
   const n = frames.length
   if (n === 0) return null
   if (n === 1) {
-    return { pos: frames[0].pos.clone(), dir: frames[0].dir.clone(), radius: frames[0].radius, roll: frames[0].roll || 0, t }
+    return {
+      pos: frames[0].pos.clone(), dir: frames[0].dir.clone(), radius: frames[0].radius,
+      roll: frames[0].roll || 0, profileRoll: frames[0].profileRoll || 0, t,
+    }
   }
   const x = clamp01(t) * (n - 1)
   const i = Math.min(n - 2, Math.floor(x))
@@ -70,6 +74,7 @@ export function sampleFrame(frames, t) {
     dir: new THREE.Vector3().lerpVectors(a.dir, b.dir, f).normalize(),
     radius: lerp(a.radius, b.radius, f),
     roll: lerp(a.roll || 0, b.roll || 0, f),
+    profileRoll: lerp(a.profileRoll || 0, b.profileRoll || 0, f),
     t,
   }
 }
@@ -88,16 +93,21 @@ export function growFrames(rng, o) {
   const gravity = o.gravity || 0
   const gnarl = o.gnarl || 0
   const twist = o.twist || 0
+  const twistProfile = o.twistProfile || null
+  const twistProfileOn = Array.isArray(twistProfile) && twistProfile.some((v) => Number(v) !== 0)
   const taperRatio = o.taperRatio === undefined ? 0.2 : o.taperRatio
   const radiusCurve = o.radiusCurve || 1
   const r0 = o.radius0
   const r1 = o.radius1 !== undefined ? o.radius1 : r0 * taperRatio
-  let roll = o.roll0 || 0
+  const roll0 = o.roll0 || 0
 
   for (let i = 0; i <= segments; i++) {
     const t = i / segments
     const radius = Math.max(0.0006, r1 + (r0 - r1) * Math.pow(1 - t, radiusCurve))
-    frames.push({ pos: pos.clone(), dir: dir.clone(), radius, t, roll })
+    // 基础扭转 (标量) + 扭曲曲线 (句柄编辑的额外角度)
+    const profileRoll = twistProfileOn ? sampleTwistProfile(twistProfile, t) * Math.PI / 180 : 0
+    const roll = roll0 + twist * t + profileRoll
+    frames.push({ pos: pos.clone(), dir: dir.clone(), radius, t, roll, profileRoll })
     if (i === segments) break
 
     // 1) 弯曲: 越靠梢部弯得越明显
@@ -108,8 +118,7 @@ export function growFrames(rng, o) {
     rotateTowardUp(dir, gravity / segments)
     // 3) 不规则生长: 慢慢旋转弯曲平面
     if (gnarl && rng) bendAxis.applyAxisAngle(dir, (rng.signed() * gnarl * 2.2) / segments)
-    // 4) 扭转
-    roll += twist / segments
+    // 4) 扭转由 roll 曲线控制 (上面按 t 直接计算), 这里只更新方向与弯曲轴
     dir.normalize()
     // 保持 bendAxis 垂直于 dir
     bendAxis.addScaledVector(dir, -bendAxis.dot(dir))
