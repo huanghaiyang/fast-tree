@@ -50,7 +50,7 @@ export class TreeScene {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
     renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.ACESFilmicToneMapping
-    renderer.toneMappingExposure = 1.05
+    renderer.toneMappingExposure = 1.18
     renderer.shadowMap.enabled = true
     renderer.shadowMap.type = THREE.PCFShadowMap
     renderer.debug.checkShaderErrors = true
@@ -99,9 +99,9 @@ export class TreeScene {
     this.scene.add(this.sky)
 
     // --- 灯光 ---
-    this.hemi = new THREE.HemisphereLight(0xbfd4ff, 0x2a2118, 0.55)
+    this.hemi = new THREE.HemisphereLight(0xc8dcff, 0x3a2f24, 0.95)
     this.scene.add(this.hemi)
-    this.sun = new THREE.DirectionalLight(0xfff2e0, 2.4)
+    this.sun = new THREE.DirectionalLight(0xfff2e0, 3.0)
     this.sun.position.set(12, 18, 8)
     this.sun.castShadow = true
     this.sun.shadow.mapSize.set(2048, 2048)
@@ -109,9 +109,16 @@ export class TreeScene {
     this.sun.shadow.normalBias = 0.03
     this.scene.add(this.sun)
     this.scene.add(this.sun.target)
-    this.fill = new THREE.DirectionalLight(0x9fc0ff, 0.35)
+    this.fill = new THREE.DirectionalLight(0x9fc0ff, 0.9)
     this.fill.position.set(-10, 6, -9)
     this.scene.add(this.fill)
+    // 逆光/顶光补光: 让背光面也有细节 (整体更亮, 不再发暗)
+    this.back = new THREE.DirectionalLight(0xbfd8ff, 0.55)
+    this.back.position.set(-6, 4, 12)
+    this.scene.add(this.back)
+    this.topFill = new THREE.DirectionalLight(0xffffff, 0.35)
+    this.topFill.position.set(0, 20, 0)
+    this.scene.add(this.topFill)
 
     // --- 地面 ---
     this.groundMat = new THREE.MeshStandardMaterial({ color: 0x23272f, roughness: 0.96, metalness: 0.0 })
@@ -402,8 +409,8 @@ export class TreeScene {
     this.renderer.shadowMap.enabled = !!s.shadows
     this.shadowsEnabled = !!s.shadows
     this.sun.castShadow = !!s.shadows
-    this.sun.intensity = s.sunIntensity === undefined ? 2.6 : s.sunIntensity
-    this.hemi.intensity = s.ambient === undefined ? (s.gradient ? 0.7 : 0.4) : s.ambient
+    this.sun.intensity = s.sunIntensity === undefined ? 3.1 : s.sunIntensity
+    this.hemi.intensity = s.ambient === undefined ? (s.gradient ? 1.15 : 0.85) : s.ambient
     if (s.fog) {
       const far = Math.max(60, (this.treeHeight || 8) * 14)
       this.scene.fog = new THREE.Fog(new THREE.Color(s.background), far * 0.35, far)

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>six: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state, sc
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument; state = win.__fastTree; sc = win.__fastTreeScene })
+const grab = () => {
+  const gl = sc.renderer.getContext()
+  sc.renderer.render(sc.scene, sc.camera)
+  const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight
+  const px = new Uint8Array(w * h * 4)
+  gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px)
+  let sum = 0, n = 0
+  for (let i = 0; i < px.length; i += 4) { const l = 0.299*px[i]+0.587*px[i+1]+0.114*px[i+2]; if (l > 12) { sum += l; n++ } }
+  return { avgLum: n ? +(sum / n).toFixed(1) : 0, litPct: +(n / (w*h) * 100).toFixed(1) }
+}
+setTimeout(async () => {
+  try {
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(800)
+    state.params.flower.enabled = true
+    const mod = await import('/src/core/leafCards.generated.js')
+    const c = await mod.pickExistingCard('flower', Math.random, 6)
+    if (c) win.__fastTreeApi.applyFlowerCard(c.id)
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1500)
+    // ① 黑边: 花朵材质 alphaTest 应为 0.35 而不是 0
+    const fm = sc.materials.flower
+    bar('① 花朵 alphaTest=' + (fm ? fm.alphaTest : '?') + ' (0 会黑边) 正确=' + (fm && fm.alphaTest >= 0.2))
+    // ② 圆叶 + 花朵用叶形
+    const leafMod = await import('/src/core/leaf.js')
+    bar('② 圆叶在叶形列表=' + leafMod.LEAF_SHAPE_KEYS.includes('round'))
+    state.params.flower.useShape = true
+    state.params.flower.shape = 'round'
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1200)
+    bar('② 花朵用圆叶轮廓: 花数=' + state.stats.flowers + ' 花三角=' + state.stats.flowerTriangles)
+    state.params.flower.useShape = false
+    // ③ 适配贴图尺寸
+    const before = state.params.flower.cardAspect
+    const a = await win.__fastTreeApi.fitFlowerCardToTexture()
+    await sleep(900)
+    bar('③ 花朵适配贴图尺寸: ' + before + ' -> ' + state.params.flower.cardAspect + ' (返回 ' + (a ? a.toFixed(3) : '失败') + ')')
+    const la = await win.__fastTreeApi.fitLeafCardToTexture()
+    bar('③ 树叶适配贴图尺寸: cardAspect=' + state.params.leaves.cardAspect + ' (返回 ' + (la ? la.toFixed(3) : '失败') + ')')
+    // ④ 十字交叉
+    const tri0 = state.stats.flowerTriangles / Math.max(1, state.stats.flowers)
+    for (const mode of ['v', 'h', 'both']) {
+      state.params.flower.cross = mode
+      win.__fastTreeSceneApi.rebuildNow(true); await sleep(900)
+      bar('④ 交叉=' + mode + ': 每朵=' + (state.stats.flowerTriangles / Math.max(1, state.stats.flowers)).toFixed(1) + ' 三角 (不交叉=' + tri0.toFixed(1) + ')')
+    }
+    state.params.flower.cross = 'both'
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1000)
+    // ⑤ 场景亮度
+    const lit = grab()
+    bar('⑤ 场景亮度: 平均亮度=' + lit.avgLum + ' 受光像素=' + lit.litPct + '%')
+    // ⑥ 伪装卡 360 光照
+    const res = await win.__fastTreeApi.doGenerateImpostor({ mode: 'atlas', views: 4, size: 256 })
+    await sleep(1200)
+    const im = await new Promise((r) => { const img = new Image(); img.onload = () => { const cv = doc.createElement('canvas'); cv.width = img.width; cv.height = img.height; const g = cv.getContext('2d'); g.drawImage(img, 0, 0); const d = g.getImageData(0,0,img.width,img.height).data; let s=0,n2=0; for (let i=0;i<d.length;i+=4){ if (d[i+3]>30){ s += 0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]; n2++ } } r({ avg: n2? +(s/n2).toFixed(1):0, cov: +(n2/(img.width*img.height)*100).toFixed(1) }); } ; img.onerror = () => r(null); img.src = res.dataUrl })
+    bar('⑥ 伪装卡: 平均亮度=' + (im ? im.avg : '?') + ' 覆盖率=' + (im ? im.cov + '%' : '?'))
+    document.title = 'SIX-OK :: ' + L.join(' || ').slice(0, 1400)
+  } catch (e) { document.title = 'SIX-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 400) }
+}, 2500)
+</script></body></html>

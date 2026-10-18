@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>fsel: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+/* 回归: 花朵面板的两个下拉框 ("花朵十字交叉" / "花朵叶形") 必须有内容。
+ * 症状: 模板引用了未定义的选项数组时 v-for 为空 -> <select> 渲染成空白。 */
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state
+const warns = []; const errs = []
+f.addEventListener('load', () => {
+  win = f.contentWindow; doc = f.contentDocument; state = win.__fastTree
+  const ow = win.console.warn.bind(win.console)
+  win.console.warn = (...a) => { warns.push(a.map(String).join(' ')); ow(...a) }
+  win.addEventListener('error', (e) => errs.push(e.message || String(e)))
+  win.addEventListener('unhandledrejection', (e) => errs.push(String(e.reason)))
+})
+setTimeout(async () => {
+  try {
+    const tab = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('花朵'))
+    tab.click(); await sleep(700)
+    // 打开"用叶形轮廓", 这样"花朵叶形"下拉框才会出现 (截图里的就是这两个空下拉框)
+    state.params.flower.useShape = true; await sleep(500)
+    const leafMod = await import('/src/core/leaf.js')
+    const selectInfo = () => [...doc.querySelectorAll('.sidebar .row-head')].map((r) => {
+      const label = (r.querySelector('label')?.textContent || '').trim()
+      const sel = r.querySelector('select')
+      return sel ? { label, count: sel.options.length, value: sel.value, text: (sel.options[sel.selectedIndex] || {}).textContent || '' } : null
+    }).filter(Boolean)
+    const pick = (list, label) => list.find((s) => s.label === label)
+    let info = selectInfo()
+    const cross = pick(info, '花朵十字交叉')
+    const shape = pick(info, '花朵叶形')
+    bar('① 十字交叉: ' + (cross ? `${cross.count} 项, 当前=${cross.text}(${cross.value})` : '控件不存在'))
+    bar('② 花朵叶形: ' + (shape ? `${shape.count} 项, 当前=${shape.text}(${shape.value})` : '控件不存在'))
+    const crossOk = cross && cross.count === 4 && cross.value === 'none' && cross.text.includes('不交叉')
+    const shapeOk = shape && shape.count === leafMod.LEAF_SHAPE_KEYS.length && shape.value === 'oval' && shape.text.includes('椭圆')
+    const allFilled = info.length > 0 && info.every((s) => s.count > 0 && s.text.trim() !== '')
+    bar('③ 十字交叉内容正确=' + crossOk + ' 花朵叶形内容正确=' + shapeOk)
+    bar('④ 花朵面板所有下拉框非空=' + allFilled + ' (共 ' + info.length + ' 个)')
+    // ⑤ 选项值的双向绑定: 改 select 后参数必须跟着变
+    const setSel = (label, value) => {
+      const r = [...doc.querySelectorAll('.sidebar .row-head')].find((x) => (x.querySelector('label')?.textContent || '').trim() === label)
+      const sel = r && r.querySelector('select')
+      if (!sel) return false
+      sel.value = value; sel.dispatchEvent(new win.Event('change', { bubbles: true }))
+      return true
+    }
+    setSel('花朵十字交叉', 'both'); setSel('花朵叶形', 'round'); await sleep(400)
+    const bindOk = state.params.flower.cross === 'both' && state.params.flower.shape === 'round'
+    bar('⑤ 选项写回参数: cross=' + state.params.flower.cross + ' shape=' + state.params.flower.shape + ' 正确=' + bindOk)
+    state.params.flower.cross = 'none'; state.params.flower.shape = 'oval'; state.params.flower.useShape = false
+    const vueWarn = warns.filter((w) => /crossOptions|shapeOptions|not defined|无效|undefined/i.test(w))
+    bar('⑥ Vue 警告=' + (vueWarn.length ? vueWarn.slice(0, 2).join(' | ') : '无'))
+    bar('⑦ 运行时错误=' + (errs.length ? errs.slice(0, 2).join(' | ') : '无'))
+    const pass = crossOk && shapeOk && allFilled && bindOk && vueWarn.length === 0 && errs.length === 0
+    document.title = (pass ? 'FSEL-OK' : 'FSEL-FAIL') + ' :: ' + L.join(' || ').slice(0, 1400)
+  } catch (e) { document.title = 'FSEL-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 400) }
+}, 3000)
+</script></body></html>

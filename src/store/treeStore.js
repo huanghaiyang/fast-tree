@@ -373,6 +373,38 @@ export function applyLeafCard(cardId, opts = {}) {
 }
 
 /** 随机换一张内置叶片卡片 (可指定批次/叶形) */
+/** 读取图片真实宽高比 */
+function imageAspect(url) {
+  return new Promise((resolve) => {
+    if (!url) return resolve(0)
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => resolve(img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : 0)
+    img.onerror = () => resolve(0)
+    img.src = url
+  })
+}
+
+/** 适配贴图尺寸: 把卡片宽高比设成贴图真实比例 (树叶) */
+export async function fitLeafCardToTexture() {
+  const url = state.params.leafMat.texture
+  const aspect = await imageAspect(url)
+  if (!aspect) return 0
+  pushUndo()
+  state.params.leaves.cardAspect = +aspect.toFixed(3)
+  return aspect
+}
+
+/** 适配贴图尺寸 (花朵) */
+export async function fitFlowerCardToTexture() {
+  const url = state.params.flower.texture
+  const aspect = await imageAspect(url)
+  if (!aspect) return 0
+  pushUndo()
+  state.params.flower.cardAspect = +aspect.toFixed(3)
+  return aspect
+}
+
 /** 应用一张内置卡片作为花朵贴图 (参照树叶 applyLeafCard) */
 export function applyFlowerCard(cardId) {
   const card = LEAF_CARD_BY_ID.get(cardId) || LEAF_CARDS.find((c) => c.id === cardId)
@@ -422,7 +454,9 @@ export function randomizeFoliageAssets(seed = state.params.seed) {
     F.texture = flowerCard.url
     F.cardAspect = flowerCard.aspect || 1
     F.tintMode = 'texture'
-    F.alphaTest = 0
+    // 花朵卡片的透明背景是黑色 RGB + 0 alpha；alphaTest=0 会把整张黑色背景也画出来。
+    // 必须保留裁切阈值（和 applyFlowerCard 的默认值一致），否则花朵周围会出现黑边/黑块。
+    F.alphaTest = 0.35
   }
   // 异步校正: 卡片库是路径枚举 (有空位), 只保留真实存在的卡片;
   // 若当前这张 404, 换成真实存在的; 全都探测不到 -> 退回程序化叶形 (宁可样式变, 不要光秃秃)
@@ -572,6 +606,7 @@ if (typeof window !== 'undefined' && import.meta.env && import.meta.env.DEV) {
     pushUndo, doAutoGenerate, doApplyPreset, setSeed, randomizeSeed,
     doGenerateImpostor, downloadImpostor, setImpostorPreview,
     applyFlowerCard, randomFlowerCard, randomizeFoliageAssets,
+    fitLeafCardToTexture, fitFlowerCardToTexture,
     applyClassification, randomClassification, applyLeafCard, randomLeafCard,
   }
 }

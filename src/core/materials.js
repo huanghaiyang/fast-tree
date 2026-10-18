@@ -420,7 +420,11 @@ function flowerLeafParams(params) {
       texture: f.texture || '',
       normalTexture: f.normalTexture || '',
       tintMode: f.tintMode || 'texture',
-      alphaTest: f.alphaTest === undefined ? 0 : f.alphaTest,
+      // 花朵贴图透明区是黑色；alphaTest<=0 会把整张卡片的黑底画出来。
+      // 即使旧参数/旧存档里是 0，也强制回落到默认裁切阈值。
+      alphaTest: !f.alphaTest || f.alphaTest <= 0.01 ? 0.35 : f.alphaTest,
+      // 花卡素材的白色花瓣内部可能有封闭透明洞；加载时修复 alpha 并做颜色扩散。
+      alphaRepair: true,
       normalFromAlbedo: f.normalFromAlbedo || 0,
       textureU: f.textureU || 0,
       textureV: f.textureV || 0,
@@ -559,12 +563,9 @@ export function updateLeafMaterial(mat, params, sharedUniforms) {
   const p = params.leafMat
   mat.roughness = p.roughness
   mat.metalness = p.metalness
-  // 这时不能用 alphaTest (否则照片卡片会在花冠上打出一堆洞)
-  const lv = params.leaves || {}
-  const isFlower = lv.shape === 'trumpet' || lv.shape === 'bell' ||
-    (Array.isArray(lv.shapeMix) && lv.shapeMix.some((x) => x && (x.shape === 'trumpet' || x.shape === 'bell')))
-  const is3dFlower = lv.flower3d !== false && isFlower
-  mat.alphaTest = is3dFlower ? 0 : p.alphaTest
+  // 花朵现在只有平面花卡: 两种材质都必须按贴图 alpha 裁形
+  // (alphaTest = 0 会把贴图透明区绘制成黑边)
+  mat.alphaTest = p.alphaTest || 0
   mat.side = p.doubleSided ? THREE.DoubleSide : THREE.FrontSide
   mat.color.set(0xffffff)
   // 叶片自发光: 用叶色做底, 强度由滑杆控制 (让背光/阴影里的叶子不至于死黑)
@@ -590,7 +591,7 @@ export function updateLeafMaterial(mat, params, sharedUniforms) {
     const old = mat.map
     const hadAuto = mat.userData.autoLeafMap
     if (p.texture) {
-      mat.map = loadTexture(p.texture, { clamp: true })
+      mat.map = loadTexture(p.texture, { clamp: true, repairAlpha: p.alphaRepair === true })
       mat.userData.autoLeafMap = null
     } else {
       const tex = makeLeafTexture({ shape: params.leaves.shape, seed: 7 })

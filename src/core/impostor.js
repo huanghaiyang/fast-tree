@@ -148,6 +148,21 @@ export function generateImpostor(o) {
   for (const obj of o.hide || []) if (obj) { restore.push([obj, obj.visible]); obj.visible = false }
   const prevBg = scene.background
   scene.background = null
+  // ---- 拍摄用全 360 光照: 环境 + 半球 + 6 向平行光, 保证任何角度都不背光发黑 ----
+  const captureLights = []
+  const prevExposure = renderer.toneMappingExposure
+  const addLight = (L) => { captureLights.push(L); scene.add(L) }
+  addLight(new THREE.AmbientLight(0xffffff, 0.85))
+  addLight(new THREE.HemisphereLight(0xdce9ff, 0x4a3d2e, 0.9))
+  const dirs = [
+    [1, 0.6, 0], [-1, 0.6, 0], [0, 0.6, 1], [0, 0.6, -1], [0, 1, 0], [0, -0.7, 0],
+  ]
+  for (const d of dirs) {
+    const L = new THREE.DirectionalLight(0xffffff, 1.15)
+    L.position.set(d[0] * 20, d[1] * 20, d[2] * 20)
+    addLight(L)
+  }
+  renderer.toneMappingExposure = Math.max(prevExposure, 1.15)
   const horiz = mode === 'cross' ? crossCardQuads(count).map((q) => q.angle) : viewAngles(count)
   const elevs = mode === 'cross' ? [0] : elevationAngles(o.elevations === undefined ? 1 : o.elevations)
   const views = []
@@ -179,6 +194,8 @@ export function generateImpostor(o) {
     }
   } finally {
     for (const [obj, v] of restore) obj.visible = v
+    for (const L of captureLights) scene.remove(L)
+    renderer.toneMappingExposure = prevExposure
     scene.background = prevBg
     renderer.setRenderTarget(null)
   }

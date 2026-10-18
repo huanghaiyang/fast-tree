@@ -186,6 +186,10 @@
       <button class="btn small primary" @click="use(current)">应用这张叶子</button>
       <button class="btn small" @click="rand">🎲 随机叶片</button>
       <span class="tag" :class="{ on: lv.cardMode }">{{ lv.cardMode ? '卡片模式' : '程序化叶形' }}</span>
+      <div class="fte-open">
+        <button class="btn small" @click="onFitLeafTexture">📐 适配贴图尺寸</button>
+        <span class="fte-open-hint">把卡片宽高比设为树叶贴图的真实比例</span>
+      </div>
     </div>
     <p class="muted" style="margin: 0">
       内置 {{ total }} 张已按 alpha 裁边的叶片卡片 (来自你的 leaves_v2_batch1/2)；
@@ -218,7 +222,7 @@ import ToggleRow from '../ui/ToggleRow.vue'
 import ColorRow from '../ui/ColorRow.vue'
 import SelectRow from '../ui/SelectRow.vue'
 import TextureRow from '../ui/TextureRow.vue'
-import { state, applyLeafCard, randomLeafCard } from '../../store/treeStore.js'
+import { state, applyLeafCard, randomLeafCard, fitLeafCardToTexture } from '../../store/treeStore.js'
 import { LEAF_CARDS, LEAF_CARD_BATCHES, LEAF_CARD_BATCH_NAMES, leafCardsFor, leafCardRows } from '../../core/leafCards.generated.js'
 import {
   BARK_TEXTURES, BARK_BATCHES, barkTexturesFor, barkTextureRows,
@@ -283,6 +287,11 @@ const tintOptions = [
 ]
 const b = state.params.bark
 const lm = state.params.leafMat
+async function onFitLeafTexture() {
+  const a = await fitLeafCardToTexture()
+  if (!a) console.warn('适配贴图尺寸失败: 没有可用树叶贴图')
+}
+
 const lv = state.params.leaves
 const pt = state.params.particles
 // 落叶/堆积可独立选贴图: 候选 = 当前批次每个叶形的第一张 + 当前叶形全部变体

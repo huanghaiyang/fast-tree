@@ -57,6 +57,13 @@ export const LEAF_OUTLINES = {
     const dry = 0.86 + 0.14 * Math.cos(t * Math.PI * 7 + 1.3)
     return base * dry * 0.5
   },
+  /** 圆叶 (round): 近圆形叶片, 中部最宽, 上下端圆润收口 */
+  round: (t) => {
+    const base = Math.pow(Math.max(0, Math.sin(Math.PI * t)), 0.55)
+    const tip = t > 0.82 ? 1 - 0.32 * Math.pow((t - 0.82) / 0.18, 2) : 1
+    const widen = 0.62 + 0.38 * Math.sin(Math.PI * Math.min(1, t * 1.15))
+    return base * tip * widen * 0.98
+  },
 }
 
 export const LEAF_SHAPE_KEYS = Object.keys(LEAF_OUTLINES)

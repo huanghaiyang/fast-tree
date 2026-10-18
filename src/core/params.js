@@ -298,10 +298,13 @@ export function defaultParams() {
       textureRepeatV: 1,     // 贴图纵向平铺次数
       textureRotation: 0,    // 贴图旋转 (弧度)
       tintMode: 'texture',   // 花朵贴图染色模式 (同树叶)
-      alphaTest: 0,          // 花朵贴图 alpha 裁切 (平面花卡模式才需要)
+      alphaTest: 0.35,      // 贴图裁切阈值: 0 会让透明区变黑边
       normalFromAlbedo: 0,   // 花朵贴图自动法线 (可选)
       cardId: '',
       cardAspect: 1,
+      cross: 'none',          // 十字交叉: none | v (竖向交叉) | h (横向交叉) | both
+      useShape: false,        // true = 用程序化平面叶形 (shape) 代替照片卡片
+      shape: 'oval',          // useShape 时的叶形轮廓
       cardMode: true,        // 花朵 = 平面花卡 (无 3D 模型)
     },
 

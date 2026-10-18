@@ -66,6 +66,7 @@ const L = state.params.leaves
 const lod = state.params.lod
 const shapes = [
   { value: 'oval', label: '椭圆 oval' },
+  { value: 'round', label: '圆叶 round' },
   { value: 'birch', label: '桦叶 birch' },
   { value: 'maple', label: '枫叶 maple' },
   { value: 'lance', label: '披针 lance' },

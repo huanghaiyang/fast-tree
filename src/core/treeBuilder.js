@@ -69,12 +69,63 @@ export function buildTree(params) {
   const FL = P.flower || {}
   const flowerAcc = FL.enabled ? new GeoAcc() : null
   const flowerBranches = []
-  // 花朵模板: 平面花卡 (照片级素材, 不做程序化 3D 建模)
-  const makeFlowerTemplate = () => buildLeafCardTemplate({
-    aspect: FL.cardAspect || 1, cols: 1, rows: 3,
-    curl: FL.cardCurl === undefined ? 0.1 : FL.cardCurl,
-    fold: FL.cardFold === undefined ? 0.12 : FL.cardFold,
-  })
+  // 花朵模板: 平面花卡 (照片级素材) 或 程序化叶形轮廓; 可选十字交叉
+  const flowerCardTemplate = () => (FL.useShape
+    ? buildLeafTemplate({
+        shape: FL.shape || 'oval',
+        segments: FL.segments, curl: FL.curl, fold: FL.fold, petiole: FL.petiole,
+      })
+    : buildLeafCardTemplate({
+        aspect: FL.cardAspect || 1, cols: 1, rows: 3,
+        curl: FL.cardCurl === undefined ? 0.1 : FL.cardCurl,
+        fold: FL.cardFold === undefined ? 0.12 : FL.cardFold,
+      }))
+
+  /** 把多个模板按给定欧拉角合并成一个几何 (十字交叉用) */
+  const mergeFlowerTemplates = (tpls, rotations) => {
+    const positions = []
+    const normals = []
+    const uvs = []
+    const index = []
+    const stamenRange = null
+    tpls.forEach((tpl, i) => {
+      const [rx, ry] = rotations[i] || [0, 0]
+      const cx = Math.cos(rx), sx = Math.sin(rx)
+      const cy = Math.cos(ry), sy = Math.sin(ry)
+      const base = positions.length / 3
+      for (let k = 0; k < tpl.positions.length; k += 3) {
+        let x = tpl.positions[k]
+        let y = tpl.positions[k + 1]
+        let z = tpl.positions[k + 2]
+        // 绕 Y
+        let x1 = x * cy + z * sy
+        let z1 = -x * sy + z * cy
+        // 绕 X
+        let y1 = y * cx - z1 * sx
+        let z2 = y * sx + z1 * cx
+        positions.push(x1, y1, z2)
+        const nx = tpl.normals[k], ny = tpl.normals[k + 1], nz = tpl.normals[k + 2]
+        const nx1 = nx * cy + nz * sy
+        const nz1 = -nx * sy + nz * cy
+        const ny1 = ny * cx - nz1 * sx
+        const nz2 = ny * sx + nz1 * cx
+        normals.push(nx1, ny1, nz2)
+      }
+      for (let k = 0; k < tpl.uvs.length; k++) uvs.push(tpl.uvs[k])
+      for (const idx of tpl.index) index.push(base + idx)
+    })
+    return { positions, normals, uvs, index, vertexCount: positions.length / 3, stamenRange }
+  }
+
+  const makeFlowerTemplate = () => {
+    const tpl = flowerCardTemplate()
+    const mode = FL.cross || 'none'
+    if (mode === 'none') return tpl
+    const HALF_PI = Math.PI / 2
+    if (mode === 'v') return mergeFlowerTemplates([tpl, tpl], [[0, 0], [0, HALF_PI]])          // 竖向交叉 (两片竖直面)
+    if (mode === 'h') return mergeFlowerTemplates([tpl, tpl], [[0, 0], [HALF_PI, 0]])          // 横向交叉 (一竖一横)
+    return mergeFlowerTemplates([tpl, tpl, tpl], [[0, 0], [0, HALF_PI], [HALF_PI, 0]])          // 双向交叉 (3 片)
+  }
   const makeTemplate = (shape) => (L.cardMode
     ? buildLeafCardTemplate({
         aspect: L.cardAspect || 1,

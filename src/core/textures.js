@@ -224,11 +224,135 @@ export function makeLeafTexture(o = {}) {
   return { map }
 }
 
+/**
+ * 修复花卡贴图的 alpha 蒙版：
+ * 素材是从白底抠图生成的，白色花瓣内部经常会残留“封闭透明洞”（alpha=0 但被花瓣包住），
+ * alphaTest 裁切后这些洞会露出黑色背景，看起来就是花瓣黑边/黑斑。
+ * 这里做两件事（只在加载花卡时执行一次）：
+ *  1. 从图像边缘洪水填充，保留真正的外部透明区域；
+ *  2. 把不与边缘连通的透明洞填成不透明，并把 RGB 从最近的可见像素扩散过去，
+ *     同时给外部透明区做颜色扩散，避免 mipmap/线性过滤把黑底混进花瓣边缘。
+ */
+function repairCardAlpha(image) {
+  if (typeof document === 'undefined' || !image) return null
+  const w = image.width || image.naturalWidth
+  const h = image.height || image.naturalHeight
+  if (!w || !h) return null
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  if (!ctx) return null
+  ctx.drawImage(image, 0, 0)
+  let img
+  try {
+    img = ctx.getImageData(0, 0, w, h)
+  } catch (e) {
+    return null
+  }
+  const data = img.data
+  const n = w * h
+  const opaque = new Uint8Array(n)
+  let transparent = 0
+  let visible = 0
+  for (let i = 0; i < n; i++) {
+    const a = data[i * 4 + 3]
+    if (a > 8) {
+      opaque[i] = 1
+      visible++
+    } else {
+      transparent++
+    }
+  }
+  if (!transparent || !visible) return null
+
+  // 1) 从边缘向内找“真正的外部透明区”
+  const outside = new Uint8Array(n)
+  const queue = new Int32Array(n)
+  let head = 0
+  let tail = 0
+  const pushIfTransparent = (i) => {
+    if (!opaque[i] && !outside[i]) {
+      outside[i] = 1
+      queue[tail++] = i
+    }
+  }
+  for (let x = 0; x < w; x++) {
+    pushIfTransparent(x)
+    pushIfTransparent((h - 1) * w + x)
+  }
+  for (let y = 0; y < h; y++) {
+    pushIfTransparent(y * w)
+    pushIfTransparent(y * w + w - 1)
+  }
+  while (head < tail) {
+    const i = queue[head++]
+    const x = i % w
+    const y = (i / w) | 0
+    if (x > 0) pushIfTransparent(i - 1)
+    if (x + 1 < w) pushIfTransparent(i + 1)
+    if (y > 0) pushIfTransparent(i - w)
+    if (y + 1 < h) pushIfTransparent(i + w)
+  }
+
+  // 2) RGB 从最近的不透明像素扩散到所有透明像素（颜色扩散/alpha bleeding）
+  const filled = new Uint8Array(n)
+  head = 0
+  tail = 0
+  for (let i = 0; i < n; i++) {
+    if (opaque[i]) {
+      filled[i] = 1
+      queue[tail++] = i
+    }
+  }
+  while (head < tail) {
+    const i = queue[head++]
+    const x = i % w
+    const y = (i / w) | 0
+    const neighbors = [x > 0 ? i - 1 : -1, x + 1 < w ? i + 1 : -1, y > 0 ? i - w : -1, y + 1 < h ? i + w : -1]
+    for (const j of neighbors) {
+      if (j < 0 || filled[j]) continue
+      filled[j] = 1
+      data[j * 4] = data[i * 4]
+      data[j * 4 + 1] = data[i * 4 + 1]
+      data[j * 4 + 2] = data[i * 4 + 2]
+      queue[tail++] = j
+    }
+  }
+
+  // 3) 不与边缘连通的透明区域 = 花瓣内部的洞 -> 变成不透明
+  let repaired = 0
+  for (let i = 0; i < n; i++) {
+    if (!opaque[i] && !outside[i]) {
+      data[i * 4 + 3] = 255
+      repaired++
+    }
+  }
+  if (!repaired) {
+    // 没有内部洞也仍然用颜色扩散后的 canvas，消除 mipmap 黑边
+    if (transparent > 0) {
+      ctx.putImageData(img, 0, 0)
+      return canvas
+    }
+    return null
+  }
+  ctx.putImageData(img, 0, 0)
+  return canvas
+}
+
 /** 从 image URL / dataURL 载入贴图 (onError: 404/坏图时回调, 用于降级) */
 export function loadTexture(url, opts = {}) {
   const tex = new THREE.TextureLoader().load(
     url,
-    undefined,
+    (loaded) => {
+      if (opts.repairAlpha && loaded && loaded.image) {
+        const fixed = repairCardAlpha(loaded.image)
+        if (fixed) {
+          loaded.image = fixed
+          loaded.needsUpdate = true
+        }
+      }
+    },
     undefined,
     () => { tex.userData.loadFailed = true; if (opts.onError) opts.onError(url) },
   )
