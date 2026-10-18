@@ -404,6 +404,19 @@ const missingDocs = [...needed.keys()].filter((k) => !docFor(k))
 check(`所有面板标签都有 hover 说明 (${needed.size} 个标签)`, missingDocs.length === 0, missingDocs.join(', '))
 check('说明词典没有多余条目 (体量合理)', DOC_KEYS.length >= needed.size,
   `${DOC_KEYS.length} 条说明 / ${needed.size} 个标签`)
+// 模板卫生: 属性行必须属于一个尚未闭合的开始标签; 否则 Vue 会把它当正文显示
+const orphanAttrs = []
+for (const f of vueFiles) {
+  const lines = readFileSync(f, 'utf8').split(/\r?\n/)
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^\s+(hint|label|v-model|:options|:min|:max)\s*=/.test(lines[i])) continue
+    let j = i - 1
+    while (j >= 0 && !lines[j].trim()) j--
+    const prev = j >= 0 ? lines[j].trim() : ''
+    if (/\/>\s*$|>\s*$/.test(prev)) orphanAttrs.push(`${f}:${i + 1}`)
+  }
+}
+check('模板里没有孤立的属性行 (会被当成正文显示)', orphanAttrs.length === 0, orphanAttrs.join(', '))
 check('关键参数说明不为空且够具体', (() => {
   for (const k of ['树干高度', '风向', '顺风偏置', '叶片铰链俯仰', '顶端优势', '柔度衰减指数']) {
     const d = docFor(k)

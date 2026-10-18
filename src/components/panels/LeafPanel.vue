@@ -22,7 +22,6 @@
     <SliderRow label="大小随机" v-model="L.sizeVariance" :min="0" :max="0.8" :step="0.01" />
     <SliderRow label="宽/长比" v-model="L.width" :min="0.05" :max="1.6" :step="0.01" />
     <SelectRow label="叶片形状" v-model="L.shape" :options="shapes" />
-      hint="开 = 真三维漏斗网格 (双壳有厚度, 内外壁都可见); 关 = 平面卡片" />
     <SliderRow label="叶片分段" v-model="L.segments" :min="2" :max="12" :step="1" />
     <SliderRow label="纵向弯曲 (curl)" v-model="L.curl" :min="-0.6" :max="0.6" :step="0.01" />
     <SliderRow label="横向折叠 (fold)" v-model="L.fold" :min="-0.4" :max="0.8" :step="0.01" />

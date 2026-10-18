@@ -220,7 +220,7 @@ src/
    ├─ appApi.js        浏览器侧命令执行器 + 本地桥客户端
    └─ sceneManager.js  渲染器/相机/灯光/天空/地面/动画循环/选中框/聚焦/相机基
 scripts/
-├─ selftest.mjs        207 项无浏览器自检 (含导出格式、AO、LOD、环境预设)
+├─ selftest.mjs        208 项无浏览器自检 (含导出格式、AO、LOD、环境预设、模板卫生)
 ├─ paramAudit.mjs      参数有效性审计核心 (几何/材质/风场三路签名比对)
 ├─ audit-params.mjs    npm run audit 入口
 ├─ app-bridge-server.mjs  本地应用桥 / MCP 服务器 / 大模型代理 (Key 只在服务端)
@@ -356,7 +356,7 @@ npm run chat:check   # 对话链路自检 (需要 Key + 网络)
 ## 自检与诊断
 
 ```bash
-npm run selftest     # 207 项断言
+npm run selftest     # 208 项断言
 npm run audit        # 参数有效性审计 (改了就一定变)
 ```
 
@@ -404,6 +404,7 @@ node scripts/shot-receiver.mjs        # 监听 127.0.0.1:5274, 把页面回传�
 - `dev/classify-check.html` —— 点真实的树种/阶段/季节 chips, 验证重建/重新取景/生长进度不被重置
 - `dev/ui-check.html` —— hover 说明浮层 + 风向指示器箭头角度 + 不同风向下的屏幕摆动
 - `dev/speedtree-check.html` —— SpeedTree 风格功能自检: 相机拉远/拉近驱动动态 LOD (档位/面数递减/缓存复用/选中回全模)，AO 开关/强度/恢复对比
+- `dev/leaf-panel-check.html` —— 叶片面板 UI 回归: 展开「叶片形态」，确认没有孤立属性/源码片段被当成正文显示（修复过 `hint="..." />` 漏进页面的问题）
 - `dev/environments-check.html` —— 环境预设自检: 9 种环境的背景/太阳/环境光/地面/曝光/雾/星空逐项校验 + 真实点击「场景 → 环境预设」按钮；群星星空跟随相机、切环境不重建树几何
 - `dev/export-format-check.html` —— 导出数据格式自检: GLB 按 glTF 2.0 规范校验容器/accessor/min-max/贴图/节点并用官方 GLTFLoader 回读, OBJ 按 Wavefront 文法校验并用 OBJLoader 回读, PNG 校验签名/IHDR/CRC/IDAT/行滤波并确认非空帧, 参数 JSON 校验结构完整性与导入回环, 以及"特效全开时的富场景导出"
 - `dev/chat-check.html` —— 对话界面自检 (mock 流式接口): 历史记录/新对话隔离/图片多模态请求/思考过程/重新生成/引用/删除/收藏/置顶/归档/联网来源渲染, 不消耗真实模型调用
