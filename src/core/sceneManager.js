@@ -871,12 +871,35 @@ export class TreeScene {
   /* ------------------------------------------------------------------ */
   /* 导出                                                                */
   /* ------------------------------------------------------------------ */
+  /**
+   * 导出用的静态模型组: 只含 树皮(含果实) / 树叶 / 花朵 三个网格。
+   * 不导出粒子、落叶、落花、堆积、线框叠加等"场景效果"——
+   * 它们由顶点着色器按时间驱动, 静态导出只会得到错位/塌陷的垃圾几何,
+   * 且部分特效材质是 ShaderMaterial, glTF 无法表达。
+   * 用 clone() 只复制节点(共享 geometry/material), 不改动场景里的原对象。
+   */
+  buildExportGroup() {
+    const g = new THREE.Group()
+    g.name = this.treeGroup.name || 'FastTree'
+    for (const mesh of [this.barkMesh, this.leafMesh, this.flowerMesh]) {
+      if (!mesh) continue
+      const c = mesh.clone()
+      // 网格自身一般无变换, 但仍按世界矩阵归一化, 保证导出坐标正确
+      c.matrix.copy(mesh.matrixWorld)
+      c.matrix.decompose(c.position, c.quaternion, c.scale)
+      c.visible = true
+      g.add(c)
+    }
+    g.updateMatrixWorld(true)
+    return g
+  }
+
   exportGLB(name) {
-    return exportGLB(this.treeGroup, name)
+    return exportGLB(this.buildExportGroup(), name)
   }
 
   exportOBJ(name) {
-    return exportOBJ(this.treeGroup, name)
+    return exportOBJ(this.buildExportGroup(), name)
   }
 
   screenshot(name) {

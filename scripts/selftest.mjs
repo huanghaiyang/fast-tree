@@ -9,6 +9,8 @@ import {
   SPECIES, GROWTH_STAGES, SEASONS, composeTree, classificationName, allCombinations,
 } from '../src/core/species.js'
 import { buildLeafTemplate, LEAF_SHAPE_KEYS } from '../src/core/leaf.js'
+import { buildFruitTemplate, FRUIT_TYPES } from '../src/core/fruit.js'
+import { expandExponentialNumbers } from '../src/core/exporter.js'
 import { createSharedUniforms, createLeafMaterial, createBarkMaterial, updateMaterials, internalShaderSources, resolveTintMix } from '../src/core/materials.js'
 import { sampleEmitPositions, buildParticleSeeds, createParticleMaterial, PARTICLE_VERT, PARTICLE_FRAG } from '../src/core/particles.js'
 import { buildFallingLeaves, fallRebuildKey, FALL_FRAG } from '../src/core/fallingLeaves.js'
@@ -1133,6 +1135,54 @@ console.log('\n[22] 伪装卡生成器')
     for (let i = 0; i < 8; i++) px[i * 4 + 3] = 255   // 前 8 个像素不透明
     return Math.abs(alphaCoverage(px, w, h) - 0.5) < 1e-6
   })())
+}
+
+/* 23. 导出数据格式 (离线可验证的部分; GLB/PNG 容器级校验见 dev/export-format-check.html) */
+console.log('\n[23] 导出数据格式')
+{
+  // OBJ 文法: 浮点不能是科学计数法 (部分老 DCC/解析器不接受)
+  const expProbe = 'v 1e-7 0 -2.5e-9\nvt 0.5 1e-8\nvn -1.49e-8 0 1\n'
+  const expFixed = expandExponentialNumbers(expProbe)
+  check('OBJ 数字展开为纯小数 (无科学计数法)', !/[eE]/.test(expFixed), expFixed.trim().replace(/\n/g, ' | '))
+
+  // 旋转体果实: 两极是退化三角面, 必须补法线 — 否则 OBJ/GLB 里出现零法线 (渲染黑斑)
+  for (const type of FRUIT_TYPES) {
+    const tpl = buildFruitTemplate({ type, radial: 10 })
+    let zero = 0
+    let bad = 0
+    for (let i = 0; i < tpl.normals.length; i += 3) {
+      const l = Math.hypot(tpl.normals[i], tpl.normals[i + 1], tpl.normals[i + 2])
+      if (l < 1e-8) zero++
+      else if (Math.abs(l - 1) > 1e-3) bad++
+    }
+    check(`果实模板法线合法 (${type}: 无零法线 + 单位长度)`, zero === 0 && bad === 0, `zero=${zero} bad=${bad}`)
+  }
+
+  // 导出几何的共同前提: position/normal/uv 齐全, 数值有限, 法线单位化, 索引在范围内
+  // (用实际默认树: 橡树成熟夏, 含果实; 果实会 merge 进树皮几何)
+  const r = buildTree(normalizeParams(applyPreset(defaultParams(), 'oak', 'mature', 'summer')))
+  for (const [label, g] of [['树皮', r.barkGeometry], ['树叶', r.leafGeometry]]) {
+    if (!g) { check(label + ': 导出几何存在', false); continue }
+    const pos = g.attributes.position
+    const nor = g.attributes.normal
+    const uv = g.attributes.uv
+    const idx = g.index
+    let finite = true
+    for (let i = 0; i < pos.array.length; i++) {
+      if (!Number.isFinite(pos.array[i])) { finite = false; break }
+    }
+    let unit = true
+    let zeroN = 0
+    for (let i = 0; i < nor.array.length; i += 3) {
+      const l = Math.hypot(nor.array[i], nor.array[i + 1], nor.array[i + 2])
+      if (l < 1e-8) zeroN++
+      else if (Math.abs(l - 1) > 1e-3) unit = false
+    }
+    let inRange = !!idx
+    if (idx) for (let i = 0; i < idx.array.length; i++) if (idx.array[i] < 0 || idx.array[i] >= pos.count) { inRange = false; break }
+    check(`${label}: 导出属性完整 (position/normal/uv/index)`, !!pos && !!nor && !!uv && !!idx)
+    check(`${label}: 顶点有限 + 法线单位化 + 索引在范围`, finite && unit && zeroN === 0 && inRange, `zeroN=${zeroN}`)
+  }
 }
 
 /* 汇总 */

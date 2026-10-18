@@ -37,8 +37,26 @@ export function exportGLB(root, filename = 'fasttree.glb') {
   })
 }
 
+/**
+ * Wavefront OBJ 的浮点文法没有科学计数法; three 的 OBJExporter 直接输出 JS 数字,
+ * 极小的坐标/法线分量会写成 "1e-7" 这种形式, 部分老 DCC/解析器不接受。
+ * 这里把指数形式展开成纯小数 (只影响极小的数值, 几何精度损失可忽略)。
+ */
+export function expandExponentialNumbers(text) {
+  if (!/[eE]/.test(text)) return text
+  return text.replace(/(?<![\w.])-?\d+(?:\.\d+)?[eE][+-]?\d+(?![\w.])/g, (m) => {
+    const v = Number(m)
+    if (!Number.isFinite(v)) return m
+    if (v === 0) return '0'
+    const abs = Math.abs(v)
+    const decimals = abs >= 1e-6 ? 9 : Math.min(24, Math.max(9, Math.ceil(-Math.log10(abs)) + 3))
+    const s = v.toFixed(decimals).replace(/0+$/, '').replace(/\.$/, '')
+    return s === '-0' ? '0' : s
+  })
+}
+
 export function exportOBJ(root, filename = 'fasttree.obj') {
-  const text = new OBJExporter().parse(root)
+  const text = expandExponentialNumbers(new OBJExporter().parse(root))
   downloadText(text, filename, 'text/plain')
   return text
 }

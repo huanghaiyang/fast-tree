@@ -1,0 +1,855 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>exp: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+import { Box3, Vector3 } from 'three'
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js'
+import { exportParamsJSON } from '/src/core/exporter.js'
+import { defaultParams } from '/src/core/params.js'
+
+/* 导出数据格式自检 (行业标准符合性)
+ *  - GLB : glTF 2.0 二进制容器 + JSON/尺寸/对齐/accessor/min-max/贴图/节点 结构校验,
+ *          再用官方 GLTFLoader 回读 (互操作性)
+ *  - OBJ : Wavefront OBJ 文法 + 索引/法线/UV 校验, 再用官方 OBJLoader 回读
+ *  - PNG : 签名/IHDR/CRC/IDAT(zlib)/行滤波 全部校验, 并确认画面非纯色
+ *  - JSON: fast-tree/params 自描述 + 结构完整性 + 无 null(NaN) + 导入回环
+ * 结果写进 document.title (EXP-OK / EXP-FAIL) 与 <pre>。
+ */
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+let fail = 0, warn = 0
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+const ok = (name, cond, detail = '') => {
+  if (!cond) fail++
+  line((cond ? '✔ ' : '✘ ') + name + (detail ? ' — ' + detail : ''))
+  return cond
+}
+const note = (name, detail = '') => { warn++; line('⚠ ' + name + (detail ? ' — ' + detail : '')) }
+const inf = (name, detail = '') => line('· ' + name + (detail ? ' — ' + detail : ''))
+
+/* ---------------- 通用 ---------------- */
+const HEX = (n) => '0x' + Number(n).toString(16).padStart(8, '0')
+function u32(dv, off) { return dv.getUint32(off, true) }
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256)
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0 }
+  return t
+})()
+function crc32(bytes) {
+  let c = 0xFFFFFFFF
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8)
+  return (c ^ 0xFFFFFFFF) >>> 0
+}
+/** 把 chunk 列表压成 "IHDR,IDAT×123,IEND" 形式, 避免标题/日志过长 */
+function compressChunks(types) {
+  const out = []
+  for (const t of types) {
+    const last = out[out.length - 1]
+    if (last && last.type === t) last.n++
+    else out.push({ type: t, n: 1 })
+  }
+  return out.map((c) => c.type + (c.n > 1 ? '×' + c.n : '')).join(',')
+}
+async function sha256(bytes) {
+  const d = await crypto.subtle.digest('SHA-256', bytes)
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+const COMP = { 5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4 }
+const NCOMP = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT2: 4, MAT3: 9, MAT4: 16 }
+function readComp(dv, off, ct) {
+  switch (ct) {
+    case 5120: return dv.getInt8(off)
+    case 5121: return dv.getUint8(off)
+    case 5122: return dv.getInt16(off, true)
+    case 5123: return dv.getUint16(off, true)
+    case 5125: return dv.getUint32(off, true)
+    case 5126: return dv.getFloat32(off, true)
+  }
+  throw new Error('componentType ' + ct)
+}
+function accessorLayout(json, ai) {
+  const acc = json.accessors[ai]
+  if (acc.bufferView === undefined) return null
+  const bv = json.bufferViews[acc.bufferView]
+  const cs = COMP[acc.componentType]
+  const nc = NCOMP[acc.type]
+  const elem = cs * nc
+  const stride = bv.byteStride || elem
+  return { acc, bv, cs, nc, elem, stride, start: (bv.byteOffset || 0) + (acc.byteOffset || 0) }
+}
+function accessorEach(json, bdv, ai, cb) {
+  const L = accessorLayout(json, ai)
+  if (!L) throw new Error('accessor ' + ai + ' 没有 bufferView (sparse 不支持)')
+  const { acc, cs, nc, stride, start } = L
+  for (let i = 0; i < acc.count; i++) {
+    for (let c = 0; c < nc; c++) cb(readComp(bdv, start + i * stride + c * cs, acc.componentType), i, c)
+  }
+}
+
+/* ---------------- PNG 校验 (容器 + CRC + zlib + 行滤波) ---------------- */
+async function validatePng(u8, label, wantSize, opts = {}) {
+  const errs = []
+  const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+  if (u8.length < 33) errs.push('文件过短')
+  for (let i = 0; i < 8; i++) if (u8[i] !== sig[i]) { errs.push('PNG 签名错误'); break }
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength)
+  const png32 = (o) => dv.getUint32(o, false) // PNG 容器/CRC/IHDR 均为大端
+  const chunks = []
+  let off = 8
+  while (off + 8 <= u8.length) {
+    const len = png32(off)
+    const type = String.fromCharCode(...u8.subarray(off + 4, off + 8))
+    if (off + 12 + len > u8.length) { errs.push('chunk ' + type + ' 越界'); break }
+    const payload = u8.subarray(off + 8, off + 8 + len)
+    const want = png32(off + 8 + len)
+    const got = crc32(u8.subarray(off + 4, off + 8 + len))
+    if (want !== got) errs.push('chunk ' + type + ' CRC 错误')
+    chunks.push({ type, len, payload })
+    off += 12 + len
+    if (type === 'IEND') break
+  }
+  if (off !== u8.length) {
+    const extra = u8.length - off
+    // GLB 内嵌图片的 bufferView 会按 4 字节对齐补 1~3 个 0, 属正常容器填充
+    if (!(opts.pad && extra > 0 && extra <= 3)) errs.push('IEND 后存在多余字节 (' + extra + ')')
+  }
+  const types = chunks.map((c) => c.type)
+  if (types[0] !== 'IHDR') errs.push('第一个 chunk 不是 IHDR')
+  if (types[types.length - 1] !== 'IEND') errs.push('最后一个 chunk 不是 IEND')
+  if (types.filter((t) => t === 'IDAT').length === 0) errs.push('没有 IDAT')
+  const ihdr = chunks[0] && chunks[0].payload
+  const hdr = ihdr ? {
+    width: ((ihdr[0] << 24) | (ihdr[1] << 16) | (ihdr[2] << 8) | ihdr[3]) >>> 0,
+    height: ((ihdr[4] << 24) | (ihdr[5] << 16) | (ihdr[6] << 8) | ihdr[7]) >>> 0,
+    bitDepth: ihdr[8], colorType: ihdr[9], compression: ihdr[10], filter: ihdr[11], interlace: ihdr[12],
+  } : null
+  if (hdr) {
+    if (hdr.width <= 0 || hdr.height <= 0) errs.push('尺寸非法')
+    if (hdr.bitDepth !== 8) errs.push('bitDepth=' + hdr.bitDepth + ' (期望 8)')
+    if (hdr.colorType !== 2 && hdr.colorType !== 6) errs.push('colorType=' + hdr.colorType + ' (期望 2/6)')
+    if (hdr.compression !== 0 || hdr.filter !== 0 || hdr.interlace !== 0) errs.push('压缩/滤波/隔行标志非法')
+    if (wantSize && (hdr.width !== wantSize.w || hdr.height !== wantSize.h)) errs.push('尺寸 ' + hdr.width + '×' + hdr.height + ' != 画布 ' + wantSize.w + '×' + wantSize.h)
+  }
+  // IDAT: zlib 解压 + 行滤波检查
+  let pixels = null
+  if (hdr && hdr.colorType === 6 || hdr && hdr.colorType === 2) {
+    const idat = chunks.filter((c) => c.type === 'IDAT')
+    const merged = new Uint8Array(idat.reduce((s, c) => s + c.len, 0))
+    let p = 0
+    for (const c of idat) { merged.set(c.payload, p); p += c.len }
+    try {
+      const raw = new Uint8Array(await new Response(new Blob([merged]).stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer())
+      const bpp = hdr.colorType === 6 ? 4 : 3
+      const rowBytes = hdr.width * bpp
+      const expect = (rowBytes + 1) * hdr.height
+      if (raw.length !== expect) errs.push('解压后大小 ' + raw.length + ' != 期望 ' + expect)
+      else {
+        const px = new Uint8Array(rowBytes * hdr.height)
+        for (let y = 0; y < hdr.height; y++) {
+          const ft = raw[y * (rowBytes + 1)]
+          const src = y * (rowBytes + 1) + 1
+          const dst = y * rowBytes
+          if (ft > 4) { errs.push('未知行滤波 ' + ft); break }
+          for (let x = 0; x < rowBytes; x++) {
+            const a = x >= bpp ? px[dst + x - bpp] : 0
+            const b = y > 0 ? px[dst - rowBytes + x] : 0
+            const c = x >= bpp && y > 0 ? px[dst - rowBytes + x - bpp] : 0
+            let v = raw[src + x]
+            if (ft === 1) v += a
+            else if (ft === 2) v += b
+            else if (ft === 3) v += (a + b) >> 1
+            else if (ft === 4) {
+              const pp = a + b - c, pa = Math.abs(pp - a), pb = Math.abs(pp - b), pc = Math.abs(pp - c)
+              v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c
+            }
+            px[dst + x] = v & 0xFF
+          }
+        }
+        pixels = { px, bpp, width: hdr.width, height: hdr.height }
+      }
+    } catch (e) { errs.push('IDAT zlib 解压失败: ' + e.message) }
+  }
+  if (pixels) {
+    let sum = 0, sum2 = 0, n = 0, opaque0 = 0
+    const bg = [pixels.px[0], pixels.px[1], pixels.px[2]]
+    let diff = 0
+    for (let i = 0; i < pixels.px.length; i += pixels.bpp) {
+      const r = pixels.px[i], g = pixels.px[i + 1], b = pixels.px[i + 2]
+      const l = 0.299 * r + 0.587 * g + 0.114 * b
+      sum += l; sum2 += l * l; n++
+      if (pixels.bpp === 4 && pixels.px[i + 3] === 0) opaque0++
+      if (Math.abs(r - bg[0]) + Math.abs(g - bg[1]) + Math.abs(b - bg[2]) > 8) diff++
+    }
+    const mean = sum / n, std = Math.sqrt(Math.max(0, sum2 / n - mean * mean))
+    if (std < 2) errs.push('画面近似纯色 (std=' + std.toFixed(2) + ')，截图可能是空帧')
+    if (diff / n < 0.005) errs.push('画面几乎无变化内容 (diff=' + (diff / n * 100).toFixed(2) + '%)')
+    inf(label + ' 像素', 'mean=' + mean.toFixed(1) + ' std=' + std.toFixed(1) + ' 与左上角不同=' + (diff / n * 100).toFixed(1) + '%' + (pixels.bpp === 4 ? ' 全透明像素=' + opaque0 : ''))
+  }
+  return { errs, hdr, chunks: types, pixels }
+}
+
+/* ---------------- GLB / glTF 2.0 校验 ---------------- */
+function validateGLTF(json, bin, label) {
+  const E = [], W = []
+  const req = (cond, msg) => { if (!cond) E.push(msg) }
+  if (!json.asset) { E.push('缺少 asset'); return { E, W } }
+  req(json.asset.version === '2.0', 'asset.version=' + json.asset.version + ' (必须是 2.0)')
+  req(typeof json.asset.generator === 'string' && json.asset.generator.length > 0, '缺少 asset.generator')
+  const buffers = json.buffers || []
+  req(buffers.length >= 1, '没有 buffers')
+  buffers.forEach((b, i) => {
+    if (b.uri === undefined) {
+      req(i === 0, 'buffer[' + i + '] 无 uri 但不是 GLB 内嵌 buffer')
+      if (i === 0 && bin) {
+        req(b.byteLength <= bin.byteLength, 'buffer[0].byteLength=' + b.byteLength + ' > BIN=' + bin.byteLength)
+        req(bin.byteLength - b.byteLength <= 3, 'BIN 比 buffer[0] 多 ' + (bin.byteLength - b.byteLength) + ' 字节 (允许 ≤3 的 4 字节补齐)')
+        for (let k = b.byteLength; k < bin.byteLength; k++) if (bin[k] !== 0) { E.push('BIN 尾部补齐不是 0x00'); break }
+      }
+    } else {
+      req(typeof b.uri === 'string', 'buffer[' + i + '].uri 非字符串')
+      req(b.byteLength > 0, 'buffer[' + i + '].byteLength 必须 >0')
+      if (b.uri.startsWith('data:')) {
+        const m = /^data:application\/(octet-stream|gltf-buffer);base64,(.*)$/.exec(b.uri)
+        req(!!m, 'buffer[' + i + '] data URI 媒体类型非法')
+        if (m) { const bytes = atob(m[2]).length; req(bytes === b.byteLength, 'buffer[' + i + '] data URI 长度 ' + bytes + ' != ' + b.byteLength) }
+        req(i === 0, 'GLB 只应有一个内嵌 buffer[0]')
+      }
+    }
+  })
+  const bufferViews = json.bufferViews || []
+  bufferViews.forEach((bv, i) => {
+    req(bv.buffer !== undefined && bv.buffer < buffers.length, 'bufferView[' + i + '].buffer 非法')
+    const buf = buffers[bv.buffer]
+    req((bv.byteOffset || 0) + bv.byteLength <= (buf ? buf.byteLength : -1), 'bufferView[' + i + '] 越界')
+    if (bv.byteStride !== undefined) {
+      req(bv.byteStride >= 4 && bv.byteStride <= 252 && bv.byteStride % 4 === 0, 'bufferView[' + i + '].byteStride=' + bv.byteStride + ' 非法')
+    }
+    if (bv.target !== undefined) req([34962, 34963].includes(bv.target), 'bufferView[' + i + '].target=' + bv.target + ' 非法')
+  })
+  const accessors = json.accessors || []
+  const bdv = bin ? new DataView(bin.buffer, bin.byteOffset, bin.byteLength) : null
+  accessors.forEach((acc, i) => {
+    req(COMP[acc.componentType] !== undefined, 'accessor[' + i + '].componentType=' + acc.componentType + ' 非法')
+    req(NCOMP[acc.type] !== undefined, 'accessor[' + i + '].type=' + acc.type + ' 非法')
+    req(Number.isInteger(acc.count) && acc.count > 0, 'accessor[' + i + '].count 非法')
+    if (acc.bufferView !== undefined) {
+      req(acc.bufferView < bufferViews.length, 'accessor[' + i + '].bufferView 非法')
+      const L = accessorLayout(json, i)
+      if (L && L.bv && bdv) {
+        const end = L.start + L.stride * (acc.count - 1) + L.elem
+        req(end <= (L.bv.byteOffset || 0) + L.bv.byteLength, 'accessor[' + i + '] 越界 bufferView')
+        req(L.start % L.cs === 0, 'accessor[' + i + '] 起点未按组件大小(' + L.cs + ')对齐')
+        req(!L.bv.byteStride || L.bv.byteStride % L.cs === 0, 'accessor[' + i + '] byteStride 未按组件大小对齐')
+      }
+    }
+    req(!acc.sparse, 'accessor[' + i + '] 使用了 sparse (本次导出预期不出现)')
+  })
+  // 网格
+  const meshes = json.meshes || []
+  const triangleTotal = { bark: 0, leaf: 0, flower: 0, other: 0 }
+  const customAttrs = new Set()
+  let primTotal = 0
+  meshes.forEach((mesh, mi) => {
+    req(Array.isArray(mesh.primitives) && mesh.primitives.length > 0, 'mesh[' + mi + '] 没有 primitive')
+    ;(mesh.primitives || []).forEach((prim, pi) => {
+      primTotal++
+      const tag = 'mesh[' + mi + '].primitive[' + pi + ']'
+      req(prim.attributes && prim.attributes.POSITION !== undefined, tag + ' 缺少 POSITION')
+      for (const [name, ai] of Object.entries(prim.attributes || {})) {
+        req(ai < accessors.length, tag + ' 属性 ' + name + ' accessor 非法')
+        if (!/^(POSITION|NORMAL|TANGENT|TEXCOORD_[0-9]+|COLOR_[0-9]+|JOINTS_[0-9]+|WEIGHTS_[0-9]+|_[A-Z0-9_]+)$/.test(name)) E.push(tag + ' 属性名 "' + name + '" 不符合 glTF 语义命名')
+        if (name.startsWith('_')) customAttrs.add(name)
+      }
+      const posAcc = accessors[prim.attributes.POSITION]
+      req(Array.isArray(posAcc.min) && Array.isArray(posAcc.max) && posAcc.min.length === 3 && posAcc.max.length === 3, tag + ' POSITION 缺少 min/max')
+      // 逐元素算实际 min/max（顺带数值有限性检查）
+      if (bdv && posAcc.min && posAcc.max) {
+        const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity]
+        let finite = true
+        const L = accessorLayout(json, prim.attributes.POSITION)
+        for (let i = 0; i < L.acc.count; i++) {
+          for (let c = 0; c < 3; c++) {
+            const v = readComp(bdv, L.start + i * L.stride + c * L.cs, L.acc.componentType)
+            if (!Number.isFinite(v)) finite = false
+            if (v < mn[c]) mn[c] = v
+            if (v > mx[c]) mx[c] = v
+          }
+        }
+        req(finite, tag + ' POSITION 含 NaN/Inf')
+        const near = (a, b) => Math.abs(a - b) <= 1e-4 * Math.max(1, Math.abs(a), Math.abs(b))
+        req(near(mn[0], posAcc.min[0]) && near(mn[1], posAcc.min[1]) && near(mn[2], posAcc.min[2]), tag + ' POSITION min 与数据不一致')
+        req(near(mx[0], posAcc.max[0]) && near(mx[1], posAcc.max[1]) && near(mx[2], posAcc.max[2]), tag + ' POSITION max 与数据不一致')
+      }
+      let tris = 0
+      if (prim.indices !== undefined) {
+        req(prim.indices < accessors.length, tag + ' indices accessor 非法')
+        const ia = accessors[prim.indices]
+        req(ia.type === 'SCALAR', tag + ' indices 不是 SCALAR')
+        req([5121, 5123, 5125].includes(ia.componentType), tag + ' indices componentType 非法')
+        if (bdv) {
+          let maxIdx = -1
+          accessorEach(json, bdv, prim.indices, (v) => { if (v > maxIdx) maxIdx = v })
+          const posCount = accessors[prim.attributes.POSITION].count
+          req(maxIdx < posCount, tag + ' 索引 ' + maxIdx + ' 超出顶点数 ' + posCount)
+          tris = ia.count / 3
+          req(ia.count % 3 === 0, tag + ' 索引数不是 3 的倍数')
+        }
+      } else if (prim.mode === undefined || prim.mode === 4) {
+        tris = accessors[prim.attributes.POSITION].count / 3
+      }
+      req(prim.mode === undefined || prim.mode === 4, tag + ' mode=' + prim.mode + ' (本导出预期只有三角形)')
+      if (prim.material !== undefined) req(prim.material < (json.materials || []).length, tag + ' material 非法')
+      const name = (mesh.name || '') + ''
+      if (/Bark/i.test(name)) triangleTotal.bark += tris
+      else if (/Leaves/i.test(name)) triangleTotal.leaf += tris
+      else if (/Flowers/i.test(name)) triangleTotal.flower += tris
+      else triangleTotal.other += tris
+    })
+  })
+  // 材质
+  const materials = json.materials || []
+  let texRefCount = 0
+  materials.forEach((m, i) => {
+    const tag = 'material[' + i + ']'
+    const p = m.pbrMetallicRoughness || {}
+    req(m.pbrMetallicRoughness !== undefined, tag + ' 缺少 pbrMetallicRoughness')
+    for (const [k, arr] of [['baseColorFactor', p.baseColorFactor], ['emissiveFactor', m.emissiveFactor]]) {
+      if (arr !== undefined) {
+        req(Array.isArray(arr) && arr.length === (k === 'emissiveFactor' ? 3 : 4), tag + ' ' + k + ' 长度非法')
+        req((arr || []).every((v) => Number.isFinite(v) && v >= 0 && v <= 1), tag + ' ' + k + ' 取值越界')
+      }
+    }
+    for (const [k, v] of [['metallicFactor', p.metallicFactor], ['roughnessFactor', p.roughnessFactor]]) {
+      if (v !== undefined) req(Number.isFinite(v) && v >= 0 && v <= 1, tag + ' ' + k + ' 越界')
+    }
+    if (m.alphaMode !== undefined) req(['OPAQUE', 'MASK', 'BLEND'].includes(m.alphaMode), tag + ' alphaMode=' + m.alphaMode + ' 非法')
+    if (m.alphaMode === 'MASK') req(Number.isFinite(m.alphaCutoff) || m.alphaCutoff === undefined, tag + ' alphaCutoff 非法')
+    if (m.alphaMode === 'BLEND') req(true, tag + ' alphaMode=BLEND (会走透明排序)')
+    if (m.doubleSided !== undefined) req(typeof m.doubleSided === 'boolean', tag + ' doubleSided 非布尔')
+    for (const key of ['baseColorTexture', 'metallicRoughnessTexture']) {
+      const t = p[key]
+      if (t !== undefined) {
+        texRefCount++
+        req(t.index < (json.textures || []).length, tag + ' ' + key + '.index 非法')
+        req(t.texCoord === undefined || t.texCoord === 0 || t.texCoord === 1, tag + ' ' + key + '.texCoord 非法')
+      }
+    }
+    for (const key of ['normalTexture', 'emissiveTexture', 'occlusionTexture']) {
+      const t = m[key]
+      if (t !== undefined) {
+        texRefCount++
+        req(t.index < (json.textures || []).length, tag + ' ' + key + '.index 非法')
+        req(t.texCoord === undefined || t.texCoord === 0 || t.texCoord === 1, tag + ' ' + key + '.texCoord 非法')
+      }
+    }
+  })
+  // 贴图 / 图片 / sampler
+  ;(json.textures || []).forEach((t, i) => {
+    req(t.source !== undefined && t.source < (json.images || []).length, 'texture[' + i + '].source 非法')
+    if (t.sampler !== undefined) req(t.sampler < (json.samplers || []).length, 'texture[' + i + '].sampler 非法')
+  })
+  ;(json.samplers || []).forEach((s, i) => {
+    const tag = 'sampler[' + i + ']'
+    if (s.magFilter !== undefined) req([9728, 9729].includes(s.magFilter), tag + ' magFilter 非法')
+    if (s.minFilter !== undefined) req([9728, 9729, 9984, 9985, 9986, 9987].includes(s.minFilter), tag + ' minFilter 非法')
+    for (const k of ['wrapS', 'wrapT']) if (s[k] !== undefined) req([33071, 33648, 10497].includes(s[k]), tag + ' ' + k + ' 非法')
+  })
+  const pngErrs = []
+  const images = json.images || []
+  images.forEach((img, i) => {
+    const tag = 'image[' + i + ']'
+    req(['image/png', 'image/jpeg', 'image/webp'].includes(img.mimeType), tag + ' mimeType=' + img.mimeType + ' 非法')
+    if (img.bufferView !== undefined) {
+      req(img.bufferView < bufferViews.length, tag + '.bufferView 非法')
+      const bv = bufferViews[img.bufferView]
+      if (bdv && bv) {
+        const sub = bin.subarray(bv.byteOffset || 0, (bv.byteOffset || 0) + bv.byteLength)
+        if (img.mimeType === 'image/png') {
+          const good = sub[0] === 0x89 && sub[1] === 0x50 && sub[2] === 0x4e && sub[3] === 0x47
+          req(good, tag + ' 声明 image/png 但字节不是 PNG')
+          if (good) pngErrs.push(validatePng(sub, tag, null, { pad: true }).then((r) => r.errs.map((e) => tag + ': ' + e)))
+        } else if (img.mimeType === 'image/jpeg') {
+          req(sub[0] === 0xFF && sub[1] === 0xD8 && sub[2] === 0xFF, tag + ' 声明 image/jpeg 但字节不是 JPEG')
+        }
+      }
+    } else if (img.uri === undefined) {
+      E.push(tag + ' 既没有 bufferView 也没有 uri')
+    }
+  })
+  // 节点 / 场景
+  const nodes = json.nodes || []
+  const scenes = json.scenes || []
+  req(scenes.length > 0, '没有 scenes')
+  const sceneIndex = json.scene === undefined ? 0 : json.scene
+  req(sceneIndex < scenes.length, 'scene 索引非法')
+  const seen = new Set()
+  const dfs = (ni, path) => {
+    req(ni >= 0 && ni < nodes.length, '节点索引 ' + ni + ' 非法')
+    if (ni < 0 || ni >= nodes.length) return
+    req(!seen.has(ni), '节点存在环/重复引用: ' + path)
+    if (seen.has(ni)) return
+    seen.add(ni)
+    const n = nodes[ni]
+    if (n.mesh !== undefined) req(n.mesh < meshes.length, 'node[' + ni + '].mesh 非法')
+    if (n.matrix !== undefined) {
+      req(Array.isArray(n.matrix) && n.matrix.length === 16, 'node[' + ni + '].matrix 长度非法')
+      req(n.translation === undefined && n.rotation === undefined && n.scale === undefined, 'node[' + ni + '] 同时有 matrix 与 TRS')
+    }
+    if (n.translation !== undefined) req(Array.isArray(n.translation) && n.translation.length === 3 && n.translation.every(Number.isFinite), 'node[' + ni + '].translation 非法')
+    if (n.rotation !== undefined) req(Array.isArray(n.rotation) && n.rotation.length === 4 && n.rotation.every(Number.isFinite), 'node[' + ni + '].rotation 非法')
+    if (n.scale !== undefined) req(Array.isArray(n.scale) && n.scale.length === 3 && n.scale.every(Number.isFinite), 'node[' + ni + '].scale 非法')
+    for (const c of n.children || []) dfs(c, path + '/' + ni)
+  }
+  for (const ni of scenes[sceneIndex].nodes || []) dfs(ni, 'scene')
+  // 扩展
+  const used = json.extensionsUsed || []
+  req(Array.isArray(used) && new Set(used).size === used.length, 'extensionsUsed 重复')
+  const required = json.extensionsRequired || []
+  for (const r of required) req(used.includes(r), 'extensionsRequired 中的 ' + r + ' 不在 extensionsUsed')
+  const KNOWN_EXT = new Set(['KHR_materials_emissive_strength', 'KHR_texture_transform', 'KHR_materials_specular', 'KHR_materials_ior', 'KHR_materials_sheen', 'KHR_materials_clearcoat', 'KHR_materials_transmission', 'KHR_materials_volume', 'KHR_materials_unlit', 'KHR_mesh_quantization', 'KHR_lights_punctual', 'KHR_materials_dispersion', 'KHR_materials_iridescence', 'KHR_materials_anisotropy', 'EXT_texture_webp', 'KHR_texture_basisu', 'EXT_meshopt_compression', 'KHR_draco_mesh_compression'])
+  for (const u of used) if (!KNOWN_EXT.has(u)) W.push('使用非通用扩展 ' + u)
+  const stats = {
+    glbBytes: 0, jsonBytes: 0, binBytes: 0,
+    meshes: meshes.length, primitives: primTotal,
+    triangles: triangleTotal, materials: materials.length,
+    textures: (json.textures || []).length, images: images.length,
+    extensions: used, customAttrs: [...customAttrs],
+    vertices: accessors.filter((a) => a.type && a.type.startsWith('VEC') && a.bufferView !== undefined).reduce((s, a) => s + a.count, 0),
+    nodeCount: nodes.length, sceneCount: scenes.length, texRefCount,
+  }
+  return { E, W, stats, imageValidations: pngErrs, json }
+}
+
+/* ---------------- OBJ 校验 ---------------- */
+function validateOBJ(text) {
+  const E = [], W = []
+  const lines = text.split(/\r?\n/)
+  let v = 0, vt = 0, vn = 0, faces = 0, oNames = [], usemtl = 0, mtllib = 0, groups = 0, expCount = 0, nan = 0
+  const badTokens = new Set()
+  const vRefs = [], vtRefs = [], vnRefs = []
+  let normalDev = 0, nBad = 0
+  for (const raw of lines) {
+    const s = raw.trim()
+    if (!s || s.startsWith('#')) continue
+    const sp = s.indexOf(' ')
+    const tok = sp < 0 ? s : s.slice(0, sp)
+    const rest = sp < 0 ? '' : s.slice(sp + 1).trim()
+    if (tok === 'v') {
+      v++
+      const p = rest.split(/\s+/).map(Number)
+      if (p.length !== 3) E.push('第 ' + v + ' 个 v 有 ' + p.length + ' 个分量')
+      if (!p.every(Number.isFinite)) nan++
+      if (/[eE]/.test(rest)) expCount++
+    } else if (tok === 'vt') {
+      vt++
+      const p = rest.split(/\s+/).map(Number)
+      if (p.length < 2 || p.length > 3) E.push('第 ' + vt + ' 个 vt 分量数 ' + p.length)
+      if (!p.every(Number.isFinite)) nan++
+      if (/[eE]/.test(rest)) expCount++
+    } else if (tok === 'vn') {
+      vn++
+      const p = rest.split(/\s+/).map(Number)
+      if (p.length !== 3) E.push('第 ' + vn + ' 个 vn 分量数 ' + p.length)
+      if (!p.every(Number.isFinite)) nan++
+      if (/[eE]/.test(rest)) expCount++
+      else {
+        const len = Math.hypot(p[0], p[1], p[2])
+        if (Math.abs(len - 1) > 1e-3) { nBad++; normalDev = Math.max(normalDev, Math.abs(len - 1)) }
+      }
+    } else if (tok === 'f') {
+      faces++
+      const parts = rest.split(/\s+/)
+      if (parts.length < 3) E.push('第 ' + faces + ' 个 f 顶点数 <3')
+      if (parts.length !== 3) W.push('存在非三角面 (' + parts.length + ' 顶点)')
+      for (const ref of parts) {
+        const seg = ref.split('/')
+        if (seg.length > 3) { E.push('f 引用非法: ' + ref); break }
+        const vi = Number(seg[0]), ti = seg[1] === undefined || seg[1] === '' ? null : Number(seg[1]), ni = seg[2] === undefined || seg[2] === '' ? null : Number(seg[2])
+        vRefs.push(vi)
+        if (ti !== null) vtRefs.push(ti)
+        if (ni !== null) vnRefs.push(ni)
+        if (!Number.isInteger(vi) || vi === 0) E.push('f 顶点索引非法: ' + ref)
+      }
+    } else if (tok === 'o') oNames.push(rest)
+    else if (tok === 'g') groups++
+    else if (tok === 'usemtl') usemtl++
+    else if (tok === 'mtllib') mtllib++
+    else if (!['s', 'l', 'p'].includes(tok)) badTokens.add(tok)
+  }
+  for (const t of badTokens) E.push('未知 OBJ 语句: ' + t)
+  // 索引范围 (正索引 1..count; 允许负索引但本次导出不会出现)
+  if (vRefs.some((i) => i < 0 || i > v || !Number.isInteger(i))) E.push('v 索引越界')
+  if (vtRefs.some((i) => i < 0 || i > vt)) E.push('vt 索引越界')
+  if (vnRefs.some((i) => i < 0 || i > vn)) E.push('vn 索引越界')
+  if (nan) E.push('存在 NaN/Infinity 数值')
+  if (expCount) W.push('数值使用科学计数法 ' + expCount + ' 次 (Wavefront 文法未定义, 部分老解析器不接受)')
+  if (normalDev > 1e-3) W.push('法线未归一化, 最大偏差 ' + normalDev.toFixed(4))
+  const stats = { v, vt, vn, faces, triangles: faces, oNames, usemtl, mtllib, groups, expCount, nBad, normalDev, bytes: new Blob([text]).size }
+  return { E, W, stats }
+}
+
+/* ---------------- 参数 JSON 校验 ---------------- */
+function collectPaths(obj, prefix = '', out = []) {
+  for (const [k, val] of Object.entries(obj || {})) {
+    const p = prefix ? prefix + '.' + k : k
+    if (Array.isArray(val)) out.push({ path: p, kind: 'array', value: val })
+    else if (val && typeof val === 'object') collectPaths(val, p, out)
+    else out.push({ path: p, kind: typeof val, value: val })
+  }
+  return out
+}
+function getAt(obj, path) {
+  let cur = obj
+  for (const k of path.split('.')) { if (cur == null) return undefined; cur = cur[k] }
+  return cur
+}
+function canonical(v) {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v)
+  if (Array.isArray(v)) return '[' + v.map(canonical).join(',') + ']'
+  return '{' + Object.keys(v).sort().map((k) => JSON.stringify(k) + ':' + canonical(v[k])).join(',') + '}'
+}
+function findNulls(v, path = '', out = []) {
+  if (v === null) out.push(path || '$')
+  else if (Array.isArray(v)) v.forEach((x, i) => findNulls(x, path + '[' + i + ']', out))
+  else if (typeof v === 'object') for (const [k, x] of Object.entries(v)) findNulls(x, path ? path + '.' + k : k, out)
+  return out
+}
+
+/* ---------------- 检查 GLB 容器 ---------------- */
+function parseGLB(buf) {
+  const E = []
+  const u8 = new Uint8Array(buf)
+  const dv = new DataView(buf)
+  if (u8.length < 20) return { E: ['GLB 文件过短 (' + u8.length + 'B)'] }
+  if (u32(dv, 0) !== 0x46546C67) E.push('magic 不是 "glTF"')
+  const version = u32(dv, 4)
+  if (version !== 2) E.push('容器 version=' + version + ' (期望 2)')
+  const total = u32(dv, 8)
+  if (total !== u8.length) E.push('header.length=' + total + ' != 实际 ' + u8.length)
+  if (u8.length % 4 !== 0) E.push('总长度未 4 字节对齐')
+  const chunks = []
+  let off = 12
+  while (off + 8 <= u8.length) {
+    const len = u32(dv, off), type = u32(dv, off + 4)
+    if (len % 4 !== 0) E.push('chunk 长度 ' + len + ' 未 4 字节对齐')
+    if (off + 8 + len > u8.length) { E.push('chunk 越界'); break }
+    chunks.push({ type, len, data: u8.subarray(off + 8, off + 8 + len) })
+    off += 8 + len
+  }
+  if (off !== u8.length) E.push('chunk 结束后仍有 ' + (u8.length - off) + ' 字节')
+  if (!chunks.length) return { E: E.concat('没有 chunk'), chunks }
+  if (chunks[0].type !== 0x4E4F534A) E.push('第一个 chunk 不是 JSON')
+  const jsonChunk = chunks[0]
+  const jsonU8 = jsonChunk.data
+  let json = null
+  // JSON chunk 的尾部补齐必须是 0x20
+  let padStart = jsonU8.length
+  while (padStart > 0 && (jsonU8[padStart - 1] === 0x20 || jsonU8[padStart - 1] === 0x00)) {
+    if (jsonU8[padStart - 1] === 0x00) { E.push('JSON chunk 补齐字节含 0x00 (规范要求 0x20 空格)'); break }
+    padStart--
+  }
+  try { json = JSON.parse(new TextDecoder().decode(jsonU8)) } catch (e) { E.push('JSON chunk 解析失败: ' + e.message) }
+  let bin = null
+  if (chunks.length > 1) {
+    if (chunks[1].type !== 0x004E4942) E.push('第二个 chunk 不是 BIN')
+    else bin = chunks[1].data
+  }
+  for (let i = 2; i < chunks.length; i++) E.push('存在多余 chunk: ' + HEX(chunks[i].type))
+  return { E, json, bin, jsonBytes: jsonChunk.len, binBytes: bin ? bin.length : 0, chunks }
+}
+
+/* ---------------- 主流程 ---------------- */
+let win, doc, scene, appState
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  const t0 = performance.now()
+  try {
+    for (let i = 0; i < 100 && !win; i++) await sleep(100)
+    scene = win.__fastTreeScene
+    appState = win.__fastTree
+    for (let i = 0; i < 100 && !(scene && scene.barkMesh); i++) await sleep(100)
+    if (!scene || !scene.barkMesh) throw new Error('场景未就绪 (scene.barkMesh 为空)')
+    // 等贴图图片解码完成 (GLTFExporter 需要 image.width/height)
+    for (let i = 0; i < 80; i++) {
+      const maps = [scene.materials && scene.materials.bark && scene.materials.bark.map, scene.materials && scene.materials.leaf && scene.materials.leaf.map].filter(Boolean)
+      const ready = maps.every((t) => !t.image || (t.image.width > 0 && t.image.height > 0))
+      if (ready) break
+      await sleep(150)
+    }
+    await sleep(600)
+    inf('场景', 'branches=' + appState.stats.branches + ' leaves=' + appState.stats.leaves +
+      ' 三角=' + (appState.stats.barkTriangles + appState.stats.leafTriangles + (appState.stats.flowerTriangles || 0)) +
+      ' seed=' + appState.params.seed)
+    const origBox = new Box3().setFromObject(scene.treeGroup)
+    // 诊断: 导出涉及的贴图对象真实类型 / 所属 realm
+    const texDiag = []
+    scene.treeGroup.traverse((o) => {
+      if (!o.isMesh || !o.material) return
+      for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap']) {
+        const t = o.material[k]
+        const img = t && t.image
+        if (!img) continue
+        texDiag.push(o.name + '.' + k + ':' + (img.constructor && img.constructor.name) +
+          '(' + (img.width || img.naturalWidth || '?') + '×' + (img.height || img.naturalHeight || '?') +
+          ' sameDoc=' + (img.ownerDocument ? img.ownerDocument === doc : 'n/a') + ')')
+      }
+    })
+    inf('导出贴图诊断', texDiag.join(' | '))
+
+    /* ======================= GLB ======================= */
+    line('\n===== GLB (glTF 2.0 binary) =====')
+    let glbBlob = null, glbBuf = null, glbHash1 = '', glbHash2 = ''
+    try {
+      glbBlob = await scene.exportGLB('export-check.glb')
+      ok('GLB 导出完成', !!glbBlob, glbBlob ? (glbBlob.size / 1048576).toFixed(2) + ' MB' : '')
+      ok('GLB MIME 类型', glbBlob && glbBlob.type === 'model/gltf-binary', glbBlob && glbBlob.type)
+      glbBuf = await glbBlob.arrayBuffer()
+      glbHash1 = await sha256(glbBuf)
+      const glb = parseGLB(glbBuf)
+      for (const e of glb.E) ok('GLB 容器: ' + e, false)
+      ok('GLB 容器结构', glb.E.length === 0 && !!glb.json)
+      if (glb.json) {
+        const v = validateGLTF(glb.json, glb.bin, 'glb')
+        for (const e of v.E) ok('glTF 规范: ' + e, false)
+        ok('glTF JSON 规范校验', v.E.length === 0, v.E.length ? v.E.length + ' 个错误' : '通过')
+        for (const w of v.W) note('glTF 警告: ' + w)
+        inf('GLB 分块', 'JSON=' + (glb.jsonBytes / 1024).toFixed(1) + ' KB BIN=' + (glb.binBytes / 1048576).toFixed(2) + ' MB')
+        inf('glTF 资产', 'generator="' + glb.json.asset.generator + '" 版本=' + glb.json.asset.version +
+          ' 节点=' + v.stats.nodeCount + ' mesh=' + v.stats.meshes + ' primitive=' + v.stats.primitives)
+        inf('glTF 材质/贴图', '材质=' + v.stats.materials + ' 贴图=' + v.stats.textures + ' 图片=' + v.stats.images +
+          ' 贴图引用=' + v.stats.texRefCount + ' 扩展=' + (v.stats.extensions.length ? v.stats.extensions.join(',') : '无'))
+        inf('glTF 自定义属性', v.stats.customAttrs.length ? v.stats.customAttrs.join(', ') + ' (glTF 允许的 "_" 前缀应用属性)' : '无')
+        inf('glTF 三角面', 'bark=' + v.stats.triangles.bark + ' leaf=' + v.stats.triangles.leaf +
+          ' flower=' + v.stats.triangles.flower + ' 其他=' + v.stats.triangles.other)
+        inf('glTF mesh 名称', (glb.json.meshes || []).map((m) => JSON.stringify(m.name || '')).join(', '))
+        const expTris = Math.round(appState.stats.barkTriangles + appState.stats.leafTriangles + (appState.stats.flowerTriangles || 0))
+        const gotTris = Math.round(v.stats.triangles.bark + v.stats.triangles.leaf + v.stats.triangles.flower + v.stats.triangles.other)
+        ok('三角面数量一致', Math.abs(gotTris - expTris) <= 2, '导出=' + gotTris + ' 场景=' + expTris)
+        // 内嵌 PNG 图片本身也做完整校验
+        const imgErrs = (await Promise.all(v.imageValidations)).flat()
+        ok('内嵌贴图 PNG 合法', imgErrs.length === 0, imgErrs.length ? imgErrs.slice(0, 3).join(' | ') : v.stats.images + ' 张')
+        // 官方 GLTFLoader 回读 (注意: 跨 realm 的 ArrayBuffer 要先复制到本页 realm)
+        const glbForLoader = new Uint8Array(glbBuf).slice().buffer
+        const warnLog = []
+        const oldWarn = console.warn
+        console.warn = (...a) => { warnLog.push(a.map(String).join(' ')); oldWarn(...a) }
+        let gltf = null
+        try {
+          gltf = await new Promise((res, rej) => new GLTFLoader().parse(glbForLoader, '', res, rej))
+        } finally { console.warn = oldWarn }
+        ok('GLTFLoader 回读成功 (互操作)', !!(gltf && gltf.scene), gltf ? '' : 'parse 失败')
+        if (gltf && gltf.scene) {
+          let meshN = 0, tris = 0, withMap = 0
+          gltf.scene.traverse((o) => {
+            if (!o.isMesh) return
+            meshN++
+            const idx = o.geometry.index
+            tris += (idx ? idx.count : o.geometry.attributes.position.count) / 3
+            if (o.material && o.material.map) withMap++
+          })
+          const box = new Box3().setFromObject(gltf.scene)
+          const os = origBox.getSize(new Vector3())
+          const bs = box.getSize(new Vector3())
+          ok('回读三角面一致', Math.abs(tris - gotTris) <= 2, '回读=' + Math.round(tris) + ' 导出=' + gotTris)
+          ok('回读包围盒一致', Math.abs(bs.x - os.x) < 0.05 && Math.abs(bs.y - os.y) < 0.05 && Math.abs(bs.z - os.z) < 0.05,
+            'glb=' + bs.x.toFixed(2) + '×' + bs.y.toFixed(2) + '×' + bs.z.toFixed(2) + ' 场景=' + os.x.toFixed(2) + '×' + os.y.toFixed(2) + '×' + os.z.toFixed(2))
+          ok('回读材质带贴图', withMap >= Math.min(2, v.stats.images), '带 map 的 mesh=' + withMap + '/' + meshN)
+          const parseWarn = warnLog.filter((w) => /KHR|extension|未|unknown/i.test(w) && !/^THREE\.GLTFLoader: THREE\.PropertyBinding/.test(w))
+          ok('回读无未知扩展警告', parseWarn.length === 0, parseWarn.slice(0, 2).join(' | '))
+        }
+      }
+      // 确定性: 同场景再导一次. 字节级完全一致是加分项; three 的 GLTFExporter 会并行编码
+      // 多张贴图, bufferView 的落盘顺序可能随异步完成顺序变化 -> 至少要求"语义一致"。
+      const second = await scene.exportGLB('export-check-2.glb')
+      const buf2 = await second.arrayBuffer()
+      glbHash2 = await sha256(buf2)
+      const g2 = parseGLB(buf2)
+      if (glb.json && g2.json) {
+        const jsonSame = JSON.stringify(glb.json) === JSON.stringify(g2.json)
+        const meshesSame = JSON.stringify(glb.json.meshes) === JSON.stringify(g2.json.meshes)
+        const accessorsSame = JSON.stringify((glb.json.accessors || []).map((a) => [a.componentType, a.type, a.count])) ===
+          JSON.stringify((g2.json.accessors || []).map((a) => [a.componentType, a.type, a.count]))
+        const bytesA = new Uint8Array(glbBuf)
+        const bytesB = new Uint8Array(buf2)
+        let firstDiff = -1
+        for (let i = 0; i < Math.min(bytesA.length, bytesB.length); i++) if (bytesA[i] !== bytesB[i]) { firstDiff = i; break }
+        // 逐张贴图比对 payload 哈希: 语义一致的核心 (打包顺序可变, 内容不能变)
+        const hashImageViews = async (g) => {
+          const out = []
+          for (const img of g.json.images || []) {
+            const bv = g.json.bufferViews[img.bufferView]
+            const sub = g.bin.subarray(bv.byteOffset || 0, (bv.byteOffset || 0) + bv.byteLength)
+            out.push(await sha256(sub))
+          }
+          return out.sort().join(',')
+        }
+        const imgsA = await hashImageViews(glb)
+        const imgsB = await hashImageViews(g2)
+        const imagesSame = imgsA === imgsB
+        const semOk = meshesSame && accessorsSame && imagesSame &&
+          (g2.json.images || []).length === (glb.json.images || []).length
+        ok('GLB 两次导出语义一致 (网格/accessor/贴图内容)', semOk,
+          '大小 ' + glbBuf.byteLength + ' / ' + buf2.byteLength + ' 贴图内容相同=' + imagesSame)
+        if (glbHash1 === glbHash2) {
+          ok('GLB 字节级确定性 (两次完全一致)', true)
+        } else {
+          note('GLB 字节非确定: JSON相同=' + jsonSame + ' 首差@' + firstDiff + ' 尺寸 ' + bytesA.length + '/' + bytesB.length +
+            ' (three 并行编码多张贴图, bufferView 布局/补零顺序可变; 网格/accessor/贴图内容一致)')
+        }
+      }
+      inf('GLB SHA-256', glbHash1)
+    } catch (e) {
+      ok('GLB 导出/校验异常: ' + (e && e.message ? e.message : e), false)
+      if (e && e.stack) line('   stack: ' + String(e.stack).split('\n').slice(0, 6).map((s) => s.trim()).join(' ⏎ '))
+    }
+
+    /* ======================= OBJ ======================= */
+    line('\n===== OBJ (Wavefront) =====')
+    try {
+      const objText = scene.exportOBJ('export-check.obj')
+      ok('OBJ 导出完成', typeof objText === 'string' && objText.length > 0, ((new Blob([objText]).size) / 1048576).toFixed(2) + ' MB')
+      const ov = validateOBJ(objText)
+      for (const e of ov.E) ok('OBJ 文法: ' + e, false)
+      ok('OBJ 文法校验', ov.E.length === 0, ov.E.length ? ov.E.length + ' 个错误' : '通过')
+      for (const w of ov.W) note('OBJ 警告: ' + w)
+      inf('OBJ 计数', 'v=' + ov.stats.v + ' vt=' + ov.stats.vt + ' vn=' + ov.stats.vn +
+        ' 三角面=' + ov.stats.faces + ' 对象=' + JSON.stringify(ov.stats.oNames) +
+        ' usemtl=' + ov.stats.usemtl + ' mtllib=' + ov.stats.mtllib +
+        ' 非单位法线=' + ov.stats.nBad + ' (最大偏差 ' + ov.stats.normalDev.toFixed(3) + ')')
+      ok('OBJ 对象数 >0', ov.stats.oNames.length > 0)
+      const expTris = Math.round(appState.stats.barkTriangles + appState.stats.leafTriangles + (appState.stats.flowerTriangles || 0))
+      ok('OBJ 三角面数量一致', Math.abs(ov.stats.faces - expTris) <= 2, '导出=' + ov.stats.faces + ' 场景=' + expTris)
+      const obj = new OBJLoader().parse(objText)
+      let meshes = 0, pos = 0
+      const box = new Box3()
+      obj.updateMatrixWorld(true)
+      obj.traverse((o) => {
+        if (!o.isMesh) return
+        meshes++
+        pos += o.geometry.attributes.position.count
+        const b = new Box3().setFromObject(o)
+        if (!b.isEmpty()) box.union(b)
+      })
+      ok('OBJLoader 回读成功 (互操作)', meshes > 0, 'mesh=' + meshes + ' 顶点=' + pos)
+      ok('OBJ 回读顶点 = 面数×3', pos === ov.stats.faces * 3, pos + ' vs ' + ov.stats.faces * 3)
+      const os = origBox.getSize(new Vector3())
+      const bs = box.getSize(new Vector3())
+      ok('OBJ 回读包围盒一致', Math.abs(bs.x - os.x) < 0.05 && Math.abs(bs.y - os.y) < 0.05 && Math.abs(bs.z - os.z) < 0.05,
+        'obj=' + bs.x.toFixed(2) + '×' + bs.y.toFixed(2) + '×' + bs.z.toFixed(2))
+      note('OBJ 为纯几何格式: 本次导出无 mtllib/usemtl、无顶点色/贴图引用 (Wavefront 标准下合法, 但外观需在 DCC 里重设材质)')
+    } catch (e) { ok('OBJ 导出/校验异常: ' + (e && e.message ? e.message : e), false) }
+
+    /* ======================= PNG ======================= */
+    line('\n===== PNG 截图 =====')
+    try {
+      const pngBlob = await scene.screenshot('export-check.png')
+      ok('PNG 导出完成', !!pngBlob, pngBlob ? (pngBlob.size / 1024).toFixed(1) + ' KB' : '')
+      ok('PNG MIME 类型', pngBlob && pngBlob.type === 'image/png', pngBlob && pngBlob.type)
+      const pngU8 = new Uint8Array(await pngBlob.arrayBuffer())
+      const canvas = scene.renderer.domElement
+      const pr = await validatePng(pngU8, '截图', { w: canvas.width, h: canvas.height })
+      for (const e of pr.errs) ok('PNG: ' + e, false)
+      ok('PNG 容器/CRC/IDAT 校验', pr.errs.length === 0, pr.errs.length ? pr.errs.length + ' 个错误' : '通过')
+      inf('PNG 头', 'IHDR ' + (pr.hdr ? pr.hdr.width + '×' + pr.hdr.height + ' bitDepth=' + pr.hdr.bitDepth + ' colorType=' + pr.hdr.colorType : '?') +
+        ' chunk=' + compressChunks(pr.chunks || []))
+      ok('PNG 非空帧', (pr.errs || []).every((e) => !/纯色|空帧|几乎无变化/.test(e)))
+    } catch (e) { ok('PNG 导出/校验异常: ' + (e && e.message ? e.message : e), false) }
+
+    /* ======================= 参数 JSON ======================= */
+    line('\n===== 参数 JSON (fast-tree/params) =====')
+    try {
+      const payload = exportParamsJSON(appState.params, 'export-check.json')
+      const text = JSON.stringify(payload, null, 2)
+      const parsed = JSON.parse(text)
+      ok('参数 JSON 可解析', !!parsed && typeof parsed === 'object')
+      ok('自描述头', parsed.format === 'fast-tree/params' && parsed.version === 1, 'format=' + parsed.format + ' version=' + parsed.version)
+      ok('seed 一致', parsed.seed === parsed.params.seed, parsed.seed + ' / ' + parsed.params.seed)
+      const nulls = findNulls(parsed.params)
+      ok('无 null (NaN/undefined 不会静默丢值)', nulls.length === 0, nulls.slice(0, 6).join(', '))
+      const defaults = collectPaths(defaultParams())
+      const missing = defaults.filter((d) => getAt(parsed.params, d.path) === undefined)
+      ok('参数结构完整 (默认 schema 全覆盖)', missing.length === 0, missing.slice(0, 6).map((m) => m.path).join(', '))
+      const typeBad = defaults.filter((d) => {
+        const v = getAt(parsed.params, d.path)
+        return d.kind !== 'array' && v !== undefined && typeof v !== d.kind
+      })
+      ok('参数类型与默认值一致', typeBad.length === 0, typeBad.slice(0, 4).map((d) => d.path + ':' + typeof getAt(parsed.params, d.path)).join(', '))
+      const sizeKB = (new Blob([text]).size / 1024)
+      inf('JSON 大小', sizeKB.toFixed(1) + ' KB' + (sizeKB > 512 ? ' (含内嵌贴图 dataURL)' : ''))
+      const before = canonical(parsed.params)
+      // 用应用自己的命令 API 导入 (dev 包里 __fastTreeApi 没暴露 importParamsJSON)
+      const cmd = win.__fastTreeCommandApi
+      ok('应用命令 API 可用', !!(cmd && typeof cmd.run === 'function'))
+      const r = await cmd.run('app.import_params', { json: text })
+      ok('导入命令执行成功', !!(r && r.ok), JSON.stringify(r && r.error || ''))
+      await sleep(300)
+      const reexport = await cmd.run('app.export_params')
+      const after = canonical(JSON.parse(reexport.data.json))
+      ok('参数 JSON 导入回环一致', before === after, before === after ? '' : '导入后参数发生变化')
+      // 恢复原参数, 避免影响后续检查
+      await cmd.run('app.import_params', { json: JSON.stringify({ format: 'fast-tree/params', version: 1, seed: parsed.seed, params: parsed.params }) })
+    } catch (e) { ok('参数 JSON 导出/校验异常: ' + (e && e.message ? e.message : e), false) }
+
+    /* ======================= 富场景导出 (特效全开) ======================= */
+    line('\n===== 富场景导出 (花朵/果实/落叶/落花/粒子/堆积 全开) =====')
+    try {
+      const cmd = win.__fastTreeCommandApi
+      const toggles = ['flower', 'fruit', 'fall', 'litter', 'flowerFall', 'flowerLitter', 'particles']
+      for (const t of toggles) await cmd.run('app.toggle', { target: t, value: true })
+      await cmd.run('app.rebuild')
+      await sleep(1800)
+      const st = win.__fastTree.stats
+      const expTris = Math.round((st.barkTriangles || 0) + (st.leafTriangles || 0) + (st.flowerTriangles || 0))
+      inf('富场景统计', '花=' + (st.flowers || 0) + ' 树叶=' + (st.leaves || 0) + ' 三角=' + expTris +
+        ' (特效网格不计入导出)')
+      const wlog = []
+      const oldWarn = win.console.warn
+      win.console.warn = (...a) => { wlog.push(a.map(String).join(' ')); oldWarn(...a) }
+      let richBlob = null, richBuf = null, richObj = null
+      try {
+        richBlob = await scene.exportGLB('export-rich.glb')
+        richBuf = await richBlob.arrayBuffer()
+        richObj = scene.exportOBJ('export-rich.obj')
+      } finally { win.console.warn = oldWarn }
+      const rg = parseGLB(richBuf)
+      let rv = null
+      let richOk = rg.E.length === 0 && !!rg.json
+      if (rg.json) {
+        rv = validateGLTF(rg.json, rg.bin, 'rich')
+        richOk = richOk && rv.E.length === 0
+        if (rv.E.length) line('   rich glTF 错误: ' + rv.E.slice(0, 4).join(' | '))
+      }
+      ok('富场景 GLB 导出且 glTF 合法', richOk, richBlob ? (richBlob.size / 1048576).toFixed(2) + ' MB' : '')
+      ok('富场景无 ShaderMaterial 不支持警告', !wlog.some((w) => /ShaderMaterial|not supported|Invalid image/i.test(w)),
+        wlog.filter((w) => /ShaderMaterial|not supported|Invalid image/i.test(w)).slice(0, 2).join(' | '))
+      if (rv) {
+        const gotT = rv.stats.triangles.bark + rv.stats.triangles.leaf + rv.stats.triangles.flower + rv.stats.triangles.other
+        ok('富场景 GLB 只含树模型 (面数 = bark+leaf+flower)', Math.abs(gotT - expTris) <= 2, '导出=' + Math.round(gotT) + ' 场景=' + expTris)
+      }
+      const ro = validateOBJ(richObj || '')
+      ok('富场景 OBJ 文法合法', !!richObj && ro.E.length === 0, ro.E.slice(0, 3).join(' | '))
+      ok('富场景 OBJ 只含树模型 (面数一致)', Math.abs(ro.stats.faces - expTris) <= 2, '导出=' + ro.stats.faces + ' 场景=' + expTris)
+      // 收尾: 关掉特效, 恢复默认场景
+      for (const t of toggles) await cmd.run('app.toggle', { target: t, value: false })
+      await cmd.run('app.rebuild')
+      await sleep(600)
+    } catch (e) { ok('富场景导出异常: ' + (e && e.message ? e.message : e), false) }
+
+    /* ======================= 汇总 ======================= */
+    const ms = Math.round(performance.now() - t0)
+    const verdict = fail === 0 ? 'EXP-OK' : 'EXP-FAIL(' + fail + ')'
+    line('\n===== 汇总 =====')
+    line('结果: ' + verdict + ' · 失败=' + fail + ' · 提醒=' + warn + ' · 耗时=' + ms + 'ms')
+    const merged = (fail === 0 ? 'EXP-OK' : 'EXP-FAIL') + ' 失败=' + fail + ' 提醒=' + warn +
+      (fail ? ' 首错=' + R.find((s) => s.startsWith('✘')) : '') +
+      ' || ' + R.filter((s) => /^(✔|✘|⚠|·)/.test(s) && !s.startsWith('·')).slice(0, 14).join(' || ')
+    document.title = merged.slice(0, 1800)
+  } catch (e) {
+    document.title = 'EXP-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 800)
+  }
+}, 3200)
+</script></body></html>

@@ -291,6 +291,7 @@ node scripts/shot-receiver.mjs        # 监听 127.0.0.1:5274, 把页面回传�
 - `dev/gallery-check.html` —— 批量生成"橡树 5 个生长阶段 + 4 个季节 + 其他树种"并逐个截图存档
 - `dev/classify-check.html` —— 点真实的树种/阶段/季节 chips, 验证重建/重新取景/生长进度不被重置
 - `dev/ui-check.html` —— hover 说明浮层 + 风向指示器箭头角度 + 不同风向下的屏幕摆动
+- `dev/export-format-check.html` —— 导出数据格式自检: GLB 按 glTF 2.0 规范校验容器/accessor/min-max/贴图/节点并用官方 GLTFLoader 回读, OBJ 按 Wavefront 文法校验并用 OBJLoader 回读, PNG 校验签名/IHDR/CRC/IDAT/行滤波并确认非空帧, 参数 JSON 校验结构完整性与导入回环, 以及"特效全开时的富场景导出"
 - `dev/node-check.html` —— 驱动节点树：选中/隔离/聚焦/材质节点/详情面板，并用像素统计验证效果
 - `dev/dock-check.html` —— 校验右侧面板布局：默认不展示、8 个标签页、打开后三列网格、组默认折叠、`N` 开关、关闭后高亮保留
 - `dev/wind-check.html` —— 把相机推近树冠，用**渲染像素**测树冠质心轨迹：默认风的轨迹薄度 ≈0.21（直线往复；1.0 = 绕圈）

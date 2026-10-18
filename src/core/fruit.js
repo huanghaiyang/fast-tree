@@ -115,6 +115,29 @@ export function buildFruitTemplate(o = {}) {
   geo.computeVertexNormals()
   const n = geo.attributes.normal.array
   geo.dispose()
+  // 旋转体两极是 r=0 的重复顶点, 连接极点的三角形面积为 0, computeVertexNormals 会给这些
+  // 顶点留下**零法线** (导出 OBJ/GLB 时是非法数据: 法线长度 0, 很多 DCC/引擎会出黑斑)。
+  // 极点法线解析上就是 ±Y: 按每个 part 的 y 上下界补成 (0,±1,0)。
+  let vOffset = 0
+  for (const part of parts) {
+    const count = part.positions.length / 3
+    let minY = Infinity
+    let maxY = -Infinity
+    for (let i = 1; i < part.positions.length; i += 3) {
+      const y = part.positions[i]
+      if (y < minY) minY = y
+      if (y > maxY) maxY = y
+    }
+    for (let k = 0; k < count; k++) {
+      const o = (vOffset + k) * 3
+      if (Math.abs(n[o]) + Math.abs(n[o + 1]) + Math.abs(n[o + 2]) > 1e-12) continue
+      const y = positions[(vOffset + k) * 3 + 1]
+      n[o] = 0
+      n[o + 1] = y <= minY + 1e-6 ? -1 : 1
+      n[o + 2] = 0
+    }
+    vOffset += count
+  }
   return {
     positions,
     normals: Array.from(n),

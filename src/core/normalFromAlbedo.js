@@ -66,7 +66,13 @@ export function normalFromLuminance(data, w, h, strength = 1, flipY = false) {
 
 const cache = new Map()
 
-/** 浏览器环境: 把 THREE.Texture 的像素读出来 -> 生成 DataTexture 法线图 (按 key 缓存) */
+/** 浏览器环境: 把 THREE.Texture 的像素读出来 -> 生成法线贴图 (按 key 缓存)
+ *  注意: 这里必须用 CanvasTexture 而不是 DataTexture。
+ *  three 的 GLTFExporter 在处理 normalMap 的通道翻转时会对 texture.image 调
+ *  canvas.drawImage(), 而 DataTexture 的 image 是 {data,width,height} 普通对象,
+ *  drawImage 会抛 "provided value is not of type ..." -> GLB 导出直接失败。
+ *  CanvasTexture 的 image 是真实 canvas, 导出器/浏览器都认。
+ *  采样参数沿用原 DataTexture 默认值 (nearest / 不生成 mipmap / flipY=false), 视觉不变。 */
 export function albedoNormalTexture(texture, strength, key) {
   if (typeof document === 'undefined') return null
   if (!texture || !texture.image) return null
@@ -92,15 +98,25 @@ export function albedoNormalTexture(texture, strength, key) {
     return null // 跨域/未加载完成
   }
   const rgb = normalFromLuminance(pixels, nw, nh, strength, true)
-  const data = new Uint8Array(nw * nh * 4)
+  const cv = document.createElement('canvas')
+  cv.width = nw
+  cv.height = nh
+  const cx = cv.getContext('2d')
+  const idata = cx.createImageData(nw, nh)
   for (let i = 0; i < nw * nh; i++) {
-    data[i * 4] = rgb[i * 3]
-    data[i * 4 + 1] = rgb[i * 3 + 1]
-    data[i * 4 + 2] = rgb[i * 3 + 2]
-    data[i * 4 + 3] = 255
+    idata.data[i * 4] = rgb[i * 3]
+    idata.data[i * 4 + 1] = rgb[i * 3 + 1]
+    idata.data[i * 4 + 2] = rgb[i * 3 + 2]
+    idata.data[i * 4 + 3] = 255
   }
-  const tex = new THREE.DataTexture(data, nw, nh, THREE.RGBAFormat)
-  tex.needsUpdate = true
+  cx.putImageData(idata, 0, 0)
+  const tex = new THREE.CanvasTexture(cv)
+  // 与 DataTexture 默认采样保持一致 (DataTexture 默认 nearest / 无 mipmap / flipY=false)
+  tex.flipY = false
+  tex.generateMipmaps = false
+  tex.magFilter = THREE.NearestFilter
+  tex.minFilter = THREE.NearestFilter
+  tex.colorSpace = THREE.NoColorSpace
   tex.wrapS = THREE.RepeatWrapping
   tex.wrapT = THREE.RepeatWrapping
   cache.set(cacheKey, tex)

@@ -10,8 +10,12 @@
     <input ref="fileInput" type="file" accept=".json,application/json" hidden @change="onLoadJSON" />
     <p v-if="status" class="muted" style="margin: 0">{{ status }}</p>
     <p class="muted" style="margin: 0">
-      GLB 会带上贴图 (程序化贴图会烘焙进 GLB)。风场/生长是顶点着色器效果,
-      导出的静态网格不含动画 —— 但如果自定义 GLSL 改动过材质, 参数 JSON 可以完整复现。
+      GLB = glTF 2.0 二进制 (含贴图/顶点色, 标准格式, 静态网格); OBJ = 纯几何 (Wavefront, 不含材质/贴图/顶点色);
+      参数 JSON 带 format/version/seed, 载入即可完整复现。
+    </p>
+    <p class="muted" style="margin: 0">
+      风场/生长是顶点着色器效果, 导出的静态网格不含动画; 粒子/落叶等场景特效也不会写进模型文件。
+      但如果自定义 GLSL 改动过材质, 参数 JSON 可以完整复现。
     </p>
   </Section>
 
