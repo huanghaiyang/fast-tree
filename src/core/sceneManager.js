@@ -14,6 +14,7 @@ import { buildFallingLeaves, updateFallingLeaves, fallRebuildKey } from './falli
 import { buildLeafLitter, litterRebuildKey } from './litter.js'
 import { generateImpostor } from './impostor.js'
 import { boxInfo } from './mathUtils.js'
+import { cloneParams } from './params.js'
 
 const SKY_VERT = /* glsl */`
 varying vec3 vSkyPos;
@@ -143,6 +144,11 @@ export class TreeScene {
     this.barkMesh = null
     this.leafMesh = null
     this.flowerMesh = null
+    // 动态 LOD: LOD0 = 上面的主网格; LOD1/2 首次需要时才构建并缓存
+    this.lastParams = null
+    this.lodCache = new Map()
+    this.lodLevel = 0
+    this.lodInfo = []
     // three r186 起 THREE.Clock 已废弃, 这里自己计时
     this.lastTime = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000
     this.playing = true
@@ -219,6 +225,9 @@ export class TreeScene {
   /* ------------------------------------------------------------------ */
   build(params, opts = {}) {
     const t = performance.now()
+    this.lastParams = params
+    this._disposeLods()
+    this.lodLevel = 0
     const result = buildTree(params)
     this.ensureMaterials(params)
     updateMaterials(this.materials, params)
@@ -289,9 +298,172 @@ export class TreeScene {
     this.groups = result.groups || []
 
     if (opts.frameCamera !== false) this.frameCamera()
+    this.lodInfo = [{ level: 0, triangles: this._meshTriangles(this.barkMesh, this.leafMesh, this.flowerMesh), leaves: this.stats.leaves || 0 }]
+    this.updateLod()
+    if (this.callbacks.onLod) this.callbacks.onLod({ level: this.lodLevel, levels: this.lodInfo })
     if (this.callbacks.onStats) this.callbacks.onStats(this.stats)
     if (this.callbacks.onModel) this.callbacks.onModel({ nodes: this.nodes, groups: this.groups })
     return this.stats
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 动态 LOD (SpeedTree 式远景降级)                                      */
+  /* ------------------------------------------------------------------ */
+  _meshTriangles(...meshes) {
+    let n = 0
+    for (const m of meshes) {
+      if (!m || !m.geometry) continue
+      const g = m.geometry
+      n += g.index ? g.index.count / 3 : (g.attributes.position ? g.attributes.position.count / 3 : 0)
+    }
+    return Math.round(n)
+  }
+
+  _disposeLods() {
+    for (const e of this.lodCache.values()) {
+      for (const m of [e.barkMesh, e.leafMesh, e.flowerMesh]) {
+        if (!m) continue
+        this.treeGroup.remove(m)
+        m.geometry.dispose()
+        m.material = null
+      }
+    }
+    this.lodCache.clear()
+  }
+
+  /** 按需生成某一级 LOD 几何 (只在相机远离时第一次触发, 避免每次重建都算三套树) */
+  _ensureLod(level) {
+    if (level <= 0) return null
+    if (this.lodCache.has(level)) return this.lodCache.get(level)
+    const base = this.lastParams
+    if (!base || !base.lod || !this.treeGroup) return null
+    const cfg = base.lod
+    const keep = level === 1 ? (cfg.keep1 === undefined ? 0.3 : cfg.keep1) : (cfg.keep2 === undefined ? 0.08 : cfg.keep2)
+    const detail = level === 1 ? (cfg.detail1 === undefined ? 0.6 : cfg.detail1) : (cfg.detail2 === undefined ? 0.3 : cfg.detail2)
+    const segScale = level === 1 ? 0.7 : 0.45
+    const p = cloneParams(base)
+    p.lod.leafRatio = Math.max(0.002, Math.min(1, (base.lod.leafRatio || 1) * Math.max(0.01, keep)))
+    p.lod.maxLeaves = Math.max(40, Math.round((base.lod.maxLeaves || 60000) * Math.max(0.01, keep)))
+    p.lod.barkDetail = Math.max(0.2, (base.lod.barkDetail || 1) * Math.max(0.15, detail))
+    // SpeedTree 远景会略微放大叶片, 用更少的卡片维持树冠轮廓
+    p.leaves.size = (base.leaves.size || 0.42) * (level === 1 ? 1.08 : 1.22)
+    // 同时降低纵向分段数与叶片细分: 只降周向分段的话, 树皮面数降不下来
+    p.trunk.segments = Math.max(4, Math.round((base.trunk.segments || 14) * segScale))
+    if (Array.isArray(p.branches.level)) {
+      for (const b of p.branches.level) {
+        if (b && Number.isFinite(b.segments)) b.segments = Math.max(4, Math.round(b.segments * segScale))
+      }
+    }
+    if (p.leaves && Number.isFinite(p.leaves.segments)) {
+      p.leaves.segments = Math.min(p.leaves.segments, level === 1 ? 3 : 2)
+    }
+    if (level === 2) p.flower.enabled = false
+    // 果实/橡果在小枝上往往贡献大量面数 (每个果实的车削面), 远景必须一起降级
+    if (p.fruit && p.fruit.enabled) {
+      if (level === 2) {
+        p.fruit.enabled = false
+      } else {
+        p.fruit.maxCount = Math.max(0, Math.round((base.fruit.maxCount || 0) * 0.4))
+        p.fruit.chance = Math.max(0, (base.fruit.chance === undefined ? 0.5 : base.fruit.chance) * 0.6)
+        if (Number.isFinite(p.fruit.radial)) p.fruit.radial = Math.min(p.fruit.radial, 6)
+      }
+    }
+    let r
+    try {
+      r = buildTree(p)
+    } catch (err) {
+      console.warn('[LOD] 生成失败:', err)
+      return null
+    }
+    const entry = {
+      level,
+      barkMesh: new THREE.Mesh(r.barkGeometry, this.materials.bark),
+      leafMesh: r.leafGeometry ? new THREE.Mesh(r.leafGeometry, this.materials.leaf) : null,
+      flowerMesh: r.flowerGeometry ? new THREE.Mesh(r.flowerGeometry, this.materials.flower || this.materials.leaf) : null,
+      stats: r.stats,
+    }
+    entry.barkMesh.name = 'Bark-LOD' + level
+    entry.barkMesh.castShadow = true
+    entry.barkMesh.receiveShadow = true
+    if (entry.leafMesh) {
+      entry.leafMesh.name = 'Leaves-LOD' + level
+      entry.leafMesh.castShadow = true
+      entry.leafMesh.receiveShadow = false
+    }
+    if (entry.flowerMesh) {
+      entry.flowerMesh.name = 'Flowers-LOD' + level
+      entry.flowerMesh.castShadow = true
+      entry.flowerMesh.receiveShadow = false
+    }
+    for (const m of [entry.barkMesh, entry.leafMesh, entry.flowerMesh]) {
+      if (!m) continue
+      m.visible = false
+      this.treeGroup.add(m)
+    }
+    this.lodCache.set(level, entry)
+    this.lodInfo = this._buildLodInfo()
+    if (this.callbacks.onLod) this.callbacks.onLod({ level: this.lodLevel, levels: this.lodInfo })
+    return entry
+  }
+
+  _buildLodInfo() {
+    const info = [{ level: 0, triangles: this._meshTriangles(this.barkMesh, this.leafMesh, this.flowerMesh), leaves: this.stats ? this.stats.leaves || 0 : 0 }]
+    for (const level of [...this.lodCache.keys()].sort((a, b) => a - b)) {
+      const e = this.lodCache.get(level)
+      info.push({
+        level,
+        triangles: this._meshTriangles(e.barkMesh, e.leafMesh, e.flowerMesh),
+        leaves: (e.stats && e.stats.leaves) || 0,
+      })
+    }
+    return info
+  }
+
+  /** 切换显示的 LOD 档位 (0 = 全模) */
+  applyLod(level) {
+    let target = Math.max(0, Math.min(2, Math.round(level || 0)))
+    if (target > 0 && !this._ensureLod(target)) target = 0
+    this.lodLevel = target
+    if (this.barkMesh) this.barkMesh.visible = target === 0
+    if (this.leafMesh) this.leafMesh.visible = target === 0
+    if (this.flowerMesh) this.flowerMesh.visible = target === 0
+    for (const e of this.lodCache.values()) {
+      const on = e.level === target
+      if (e.barkMesh) e.barkMesh.visible = on
+      if (e.leafMesh) e.leafMesh.visible = on
+      if (e.flowerMesh) e.flowerMesh.visible = on
+    }
+    this.applyShadowFlags()
+    this.lodInfo = this._buildLodInfo()
+    if (this.callbacks.onLod) this.callbacks.onLod({ level: target, levels: this.lodInfo })
+  }
+
+  /** 每帧检查相机距离, 在 LOD 档位之间切换 (带滞回, 避免边界抖动) */
+  updateLod() {
+    const cfg = this.lastParams && this.lastParams.lod
+    if (!cfg) return
+    const force = String(cfg.force === undefined ? 'auto' : cfg.force)
+    let desired = 0
+    if (!cfg.dynamic) {
+      desired = 0
+    } else if (this.selectMode !== 0 || this.wireBark || this.wireLeaf) {
+      // 选中高亮 / 线框叠加都基于 LOD0 的节点 id 与几何, 强制全模
+      desired = 0
+    } else if (force !== 'auto') {
+      desired = Math.max(0, Math.min(2, Math.round(Number(force) || 0)))
+    } else if (this.treeCenter && this.camera) {
+      const h = Math.max(0.5, this.treeHeight || 8)
+      const d1 = h * Math.max(0.2, cfg.distance1 === undefined ? 2.2 : cfg.distance1)
+      const d2 = h * Math.max(0.3, cfg.distance2 === undefined ? 4.5 : cfg.distance2)
+      const dist = this.camera.position.distanceTo(this.treeCenter)
+      const cur = this.lodLevel
+      desired = dist < d1 ? 0 : dist < d2 ? 1 : 2
+      // 滞回: 已经在该档附近时不要来回跳
+      if (cur === 0 && dist < d1 * 1.06) desired = 0
+      else if (cur === 1 && dist > d1 * 0.94 && dist < d2 * 1.06) desired = 1
+      else if (cur === 2 && dist > d2 * 0.94) desired = 2
+    }
+    if (desired !== this.lodLevel) this.applyLod(desired)
   }
 
   /* ------------------------------------------------------------------ */
@@ -325,6 +497,10 @@ export class TreeScene {
     const on = !!this.shadowsEnabled && !isolate
     if (this.barkMesh) this.barkMesh.castShadow = on
     if (this.leafMesh) this.leafMesh.castShadow = on
+    for (const e of this.lodCache.values()) {
+      if (e.leafMesh) e.leafMesh.castShadow = on
+      if (e.barkMesh) e.barkMesh.castShadow = on
+    }
   }
 
   /** 选中框 (世界坐标 min/max 数组) 或 null */
@@ -928,6 +1104,7 @@ export class TreeScene {
     }
     this.sky.position.copy(this.camera.position)
     this.controls.update()
+    this.updateLod()
     this.renderer.render(this.scene, this.camera)
     if (this.callbacks.onFrame) this.callbacks.onFrame(this.renderer.info.render)
   }
@@ -937,8 +1114,10 @@ export class TreeScene {
     cancelAnimationFrame(this._raf)
     this._ro.disconnect()
     this.controls.dispose()
+    this._disposeLods()
     this.barkMesh?.geometry.dispose()
     this.leafMesh?.geometry.dispose()
+    this.flowerMesh?.geometry.dispose()
     if (this.selBox) {
       this.scene.remove(this.selBox)
       this.selBox.geometry.dispose()

@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>speedtree: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+/* SpeedTree 风格功能自检: 动态 LOD + 程序化 AO
+ * 直接驱动真实 Three 场景 (dev API), 不依赖截图比对。
+ * 结果写 document.title: SPEEDTREE-OK / SPEEDTREE-FAIL */
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+let fail = 0
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+const check = (name, cond, detail = '') => {
+  if (!cond) fail++
+  line((cond ? '✔ ' : '✘ ') + name + (detail ? ' — ' + detail : ''))
+}
+async function waitFor(fn, timeout = 20000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { if (fn()) return true } catch (e) { /* ignore */ }
+    await sleep(120)
+  }
+  return false
+}
+let win, doc
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    for (let i = 0; i < 120 && !win; i++) await sleep(100)
+    await waitFor(() => win.__fastTree && win.__fastTree.ready && win.__fastTreeScene && win.__fastTreeSceneApi, 30000)
+    const state = win.__fastTree
+    const scene = win.__fastTreeScene
+    const api = win.__fastTreeSceneApi
+    if (!state || !scene || !api) throw new Error('dev API 未就绪 (需要 npm run dev)')
+    await sleep(500)
+
+    line('===== 动态 LOD =====')
+    check('默认开启动态 LOD', state.params.lod.dynamic === true)
+    check('LOD0 初始档位', scene.lodLevel === 0, 'level=' + scene.lodLevel)
+    const info0 = scene.lodInfo || []
+    check('LOD0 统计已上报到 state', state.lodInfo.length >= 1 && state.lodInfo[0].level === 0 && state.lodInfo[0].triangles > 0,
+      JSON.stringify(state.lodInfo))
+
+    // 拉远到 LOD2 距离: 树高 * distance2 以外
+    const h = scene.treeHeight
+    const cx = scene.treeCenter.x, cy = scene.treeCenter.y, cz = scene.treeCenter.z
+    const far = scene.treeHeight * (state.params.lod.distance2 + 1)
+    scene.camera.position.set(cx + far, cy + far * 0.3, cz + far)
+    scene.updateLod()
+    scene.updateLod()
+    check('相机拉远自动切到 LOD2', scene.lodLevel === 2, 'level=' + scene.lodLevel)
+    check('LOD2 几何已按需生成并缓存', scene.lodCache.size === 1, 'cache=' + scene.lodCache.size)
+    const info2 = state.lodInfo || []
+    const l0 = info2.find((x) => x.level === 0)
+    const l2 = info2.find((x) => x.level === 2)
+    check('LOD2 面数 < LOD0', !!l2 && !!l0 && l2.triangles < l0.triangles, `${l2 && l2.triangles} < ${l0 && l0.triangles}`)
+    check('LOD2 面数 ≤ LOD0 的 35% (远景真正省面)', !!l2 && !!l0 && l2.triangles <= l0.triangles * 0.35, `${l2 && l2.triangles}`)
+    check('LOD2 叶片数 < LOD0', !!l2 && !!l0 && l2.leaves < l0.leaves, `${l2 && l2.leaves} < ${l0 && l0.leaves}`)
+    check('LOD2 不再生成花朵几何', !scene.lodCache.get(2).flowerMesh)
+    check('低模可见 / 高模隐藏', scene.lodCache.get(2).barkMesh.visible === true && scene.barkMesh.visible === false)
+
+    // 中间距离 -> LOD1
+    const mid = scene.treeHeight * (state.params.lod.distance1 + 0.35)
+    scene.camera.position.set(cx + mid, cy + mid * 0.25, cz + mid)
+    scene.updateLod()
+    check('相机中距离切到 LOD1', scene.lodLevel === 1, 'level=' + scene.lodLevel)
+    const infoMid = state.lodInfo || []
+    const m0 = infoMid.find((x) => x.level === 0)
+    const m1 = infoMid.find((x) => x.level === 1)
+    const m2 = infoMid.find((x) => x.level === 2)
+    check('LOD1/2 均已缓存', scene.lodCache.size === 2, 'cache=' + scene.lodCache.size)
+    check('LOD1 面数 < LOD0', !!m1 && !!m0 && m1.triangles < m0.triangles, `${m1 && m1.triangles} < ${m0 && m0.triangles}`)
+    check('LOD2 面数 < LOD1', !!m2 && !!m1 && m2.triangles < m1.triangles, `${m2 && m2.triangles} < ${m1 && m1.triangles}`)
+    check('LOD1 叶片数 < LOD0', !!m1 && !!m0 && m1.leaves < m0.leaves, `${m1 && m1.leaves} < ${m0 && m0.leaves}`)
+
+    // 拉近 -> LOD0
+    scene.camera.position.set(cx + 2.5, cy + 1.5, cz + 2.5)
+    scene.updateLod()
+    check('相机拉近切回 LOD0', scene.lodLevel === 0, 'level=' + scene.lodLevel)
+    check('LOD0 主网格重新可见', scene.barkMesh.visible === true && scene.lodCache.get(2).barkMesh.visible === false)
+
+    // 选中高亮 / 线框时强制 LOD0
+    scene.camera.position.set(cx + far, cy + far * 0.3, cz + far)
+    scene.updateLod()
+    const before = scene.lodLevel
+    scene.setSelection({ ids: [0], mode: 'highlight', ranges: [[0, 1]] })
+    scene.updateLod()
+    check('选中高亮时强制回到 LOD0 (节点 id 基于全模)', scene.lodLevel === 0, 'was L' + before)
+    scene.setSelection({ ids: [], mode: 'highlight', ranges: [] })
+    scene.updateLod()
+    check('取消选中后恢复自动 LOD', scene.lodLevel === 2, 'level=' + scene.lodLevel)
+
+    // 缓存复用: 再次切换不应重新 build
+    const cacheKeys = [...scene.lodCache.keys()].join(',')
+    scene.camera.position.set(cx + mid, cy + mid * 0.25, cz + mid)
+    scene.updateLod()
+    scene.updateLod()
+    check('LOD 切换复用缓存 (不重复生成)', [...scene.lodCache.keys()].join(',') === cacheKeys && scene.lodLevel === 1)
+
+    line('\n===== 程序化 AO =====')
+    // 回 LOD0 并取树皮平均色
+    scene.camera.position.set(cx + 8, cy + 5, cz + 8)
+    scene.updateLod()
+    const avg = (arr) => { let s = 0; for (let i = 0; i < arr.length; i++) s += arr[i]; return s / arr.length }
+    state.params.ao.enabled = false
+    api.rebuildNow(false)
+    const barkNo = avg(scene.barkMesh.geometry.attributes.color.array)
+    const leafNo = avg(scene.leafMesh.geometry.attributes.color.array)
+    state.params.ao.enabled = true
+    state.params.ao.strength = 0.7
+    api.rebuildNow(false)
+    const barkYes = avg(scene.barkMesh.geometry.attributes.color.array)
+    const leafYes = avg(scene.leafMesh.geometry.attributes.color.array)
+    check('AO 开启后树皮顶点色变暗', barkYes < barkNo - 1e-3, `${barkYes.toFixed(3)} < ${barkNo.toFixed(3)}`)
+    check('AO 开启后树叶顶点色变暗', leafYes < leafNo - 1e-3, `${leafYes.toFixed(3)} < ${leafNo.toFixed(3)}`)
+    check('AO 统计上报到 state.stats', state.stats.ao && state.stats.ao.enabled === true && state.stats.ao.samples > 0,
+      JSON.stringify(state.stats.ao))
+    const before2 = scene.barkMesh.geometry.attributes.color.array.slice()
+    state.params.ao.strength = 0.15
+    api.rebuildNow(false)
+    const lowAo = avg(scene.barkMesh.geometry.attributes.color.array)
+    check('AO 强度可调 (0.15 比 0.7 亮)', lowAo > barkYes, `${lowAo.toFixed(3)} > ${barkYes.toFixed(3)}`)
+    state.params.ao.enabled = false
+    api.rebuildNow(false)
+    const offColor = avg(scene.barkMesh.geometry.attributes.color.array)
+    check('关闭 AO 可恢复原亮度', Math.abs(offColor - barkNo) < 0.02, `${offColor.toFixed(3)} vs ${barkNo.toFixed(3)}`)
+
+    line('\n结果: ' + (fail ? 'SPEEDTREE-FAIL ' + fail : 'SPEEDTREE-OK'))
+    document.title = (fail ? 'SPEEDTREE-FAIL(' + fail + ')' : 'SPEEDTREE-OK') + ' :: ' + R.filter((s) => s.startsWith('✘')).slice(0, 5).join(' | ')
+  } catch (e) {
+    document.title = 'SPEEDTREE-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 900)
+    line('EX: ' + (e && e.stack ? e.stack : e))
+  }
+}, 2200)
+</script></body></html>

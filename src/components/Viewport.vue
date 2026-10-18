@@ -16,6 +16,10 @@
       <div><span class="k">构建</span> <b>{{ state.stats.buildMs.toFixed(1) }} ms</b> · <span class="k">FPS</span> <b>{{ fps }}</b></div>
       <div><span class="k">树高</span> <b>{{ state.stats.height.toFixed(2) }} m</b> · <span class="k">冠幅</span> <b>{{ state.stats.spread.toFixed(2) }} m</b></div>
       <div><span class="k">绘制调用</span> <b>{{ state.renderInfo.calls }}</b></div>
+      <div v-if="state.params.lod.dynamic">
+        <span class="k">LOD</span> <b>L{{ state.lodLevel }}</b>
+        · <span class="k">当前面数</span> <b>{{ activeLodTriangles.toLocaleString() }}</b>
+      </div>
     </div>
 
     <div class="overlay help">
@@ -58,6 +62,10 @@ const fps = ref(0)
 
 const MODE_LABEL = { highlight: '高亮', isolate: '仅显示选中', dim: '其余变暗' }
 const modeLabel = computed(() => MODE_LABEL[state.selection.mode] || '高亮')
+const activeLodTriangles = computed(() => {
+  const e = (state.lodInfo || []).find((x) => x.level === state.lodLevel)
+  return e ? e.triangles : totalTriangles.value
+})
 
 function clearSelection() {
   clearSelectionAction()
@@ -80,6 +88,7 @@ onMounted(() => {
     },
     onGrowth: (v) => { state.params.growth.value = v },
     onModel: (m) => setNodeModel(m),
+    onLod: (m) => { state.lodLevel = m.level; state.lodInfo = m.levels },
   })
 
   sceneApi.exportGLB = (name) => scene.exportGLB(name)

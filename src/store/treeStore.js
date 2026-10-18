@@ -17,6 +17,9 @@ export const state = reactive({
     barkVertices: 0, leafVertices: 0, buildMs: 0, height: 0, spread: 0, nodeCount: 0,
   },
   renderInfo: { calls: 0, triangles: 0 },
+  // 动态 LOD: 当前档位 + 各级统计 (由 sceneManager 回调)
+  lodLevel: 0,
+  lodInfo: [],
   // 伪装卡生成结果 + 预览开关 (主预览区显示 2D 卡片还是 3D 树)
   impostorResult: null,
   impostorBusy: false,

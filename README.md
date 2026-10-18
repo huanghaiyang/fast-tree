@@ -211,6 +211,7 @@ src/
    ├─ bark.js          管状树皮几何 (平行移动坐标系, 支持星形截面/节瘤/外扩)
    ├─ leaf.js          叶片模板 (5 种轮廓) + 实例化写入
    ├─ treeBuilder.js   递归生长 + finalizeNodes (节点表/id 重排/统计/包围盒) + selectionRanges
+   ├─ ambientOcclusion.js  程序化 AO: 叶片点云空间哈希 + 顶点色烘焙 (Node 可复现)
    ├─ textures.js      程序化树皮/叶片贴图 (颜色+法线+粗糙度)
    ├─ materials.js     PBR + 风场/生长/自定义 GLSL + 节点选中高亮
    ├─ exporter.js      GLB / OBJ / JSON / PNG
@@ -218,7 +219,7 @@ src/
    ├─ appApi.js        浏览器侧命令执行器 + 本地桥客户端
    └─ sceneManager.js  渲染器/相机/灯光/天空/地面/动画循环/选中框/聚焦/相机基
 scripts/
-├─ selftest.mjs        184 项无浏览器自检 (含导出格式检查)
+├─ selftest.mjs        196 项无浏览器自检 (含导出格式、AO、LOD 抽样)
 ├─ paramAudit.mjs      参数有效性审计核心 (几何/材质/风场三路签名比对)
 ├─ audit-params.mjs    npm run audit 入口
 ├─ app-bridge-server.mjs  本地应用桥 / MCP 服务器 / 大模型代理 (Key 只在服务端)
@@ -231,9 +232,32 @@ scripts/
 
 ### 渲染开销
 整棵树只合并成 **2 个几何体 = 2 个 draw call**（树皮 1 + 树叶 1）。
-默认橡树约 190 根枝条 / 3.8k 叶片 / 48k 三角面，构建耗时 20–80ms；
+默认橡树约 190 根枝条 / 11.5k 叶片 / ~191k 三角面（含果实/花朵），构建耗时 20–80ms（AO 开启约 +30ms）；
+动态 LOD 远景 LOD1 ≈ 73k、LOD2 ≈ 24k 三角面。
 松树预设约 370 枝条 / 15k 针叶 / 165k 三角面。
 默认参数下 FPS 统计与绘制调用数显示在视口右下角。
+
+### SpeedTree 参考功能的落地 (动态 LOD / AO)
+
+对照 [SpeedTree Modeler 10 用户手册](https://docs.unity3d.com/speedtree-modeler/manual/) 梳理了生成器、
+Wind (Games)、Forces、Vertex Colors/AO、Level of Detail 与导出等章节，挑出对本项目最有价值、
+且不引入引擎依赖的部分补齐：
+
+| 手册主题 | 当前实现 |
+| --- | --- |
+| **Level of Detail (动态 LOD)** | `lod.dynamic` 默认开启: LOD0 全模 → LOD1 (~38% 面数) → LOD2 (~13% 面数), 按相机距离 × 树高切换并带滞回；LOD1/2 首次需要时才构建并缓存，不拖慢普通重建；远景同时降低树皮分段、叶片细分、叶片数与果实/花朵（果实面数是大头） |
+| **叶片抽稀不跳变** | `lod.leafRatio` 改为**确定性等间隔抽样**（不是随机丢弃），LOD1/2 的叶片位置与全模完全一致，只少画叶子 → 距离切换时树形不抖 |
+| **Vertex Colors / Ambient Occlusion** | `ao.enabled/strength/radius`: 用叶片/花朵中心点云 + 空间哈希估算互相遮挡，按几何体自身 85 分位归一化后乘进 `COLOR_0`；按实例区间烘焙（叶片/花朵每张卡只查一次），默认树仅增加 ~30ms；导出 GLB 自带烘焙后的顶点色 |
+| **Wind (Games)** | 已有: 风向/强度/阵风/湍流/顺风偏置/相位空间尺度/树干摆幅/叶片扇动/铰链俯仰；顶点着色器实时计算，参数实时生效 |
+| **Growth / Seasons** | 已有: 生长进度/自动播放；树种 × 5 阶段 × 4 季节，物候只改颜色/密度不改形态 |
+| **Billboard / 伪装卡** | 已有: 多视角图集 + 交叉卡 + 俯仰层，可预览/导出 |
+| 尚未实现（后续可做） | Rules 程序化规则、Forces/Zones 物体、Frond/Cap 生成器、Collision 导出、Lightmap UV(UV2)、.spm/Unity 原生格式 |
+
+**已知取舍**：LOD 只影响视口渲染，GLB/OBJ 导出的是 LOD0 全模（游戏引擎通常按 LOD 分文件导出）；
+选中高亮/隔离/线框模式会自动强制 LOD0（节点 id 与叠加几何基于全模）；AO 是点云近似，
+不是真正半球射线追踪，但确定、可复现且能导出。
+
+查看效果：`dev/speedtree-check.html` 会自动把相机拉远/拉近，断言 LOD 档位、面数递减与 AO 变暗。
 
 ### 顶点属性约定
 所有几何体共享同一套属性，因此可以一次性合并、一套着色器注入：
@@ -307,7 +331,7 @@ npm run chat:check   # 对话链路自检 (需要 Key + 网络)
 ## 自检与诊断
 
 ```bash
-npm run selftest     # 90 项断言
+npm run selftest     # 196 项断言
 npm run audit        # 参数有效性审计 (改了就一定变)
 ```
 
@@ -354,6 +378,7 @@ node scripts/shot-receiver.mjs        # 监听 127.0.0.1:5274, 把页面回传�
 - `dev/gallery-check.html` —— 批量生成"橡树 5 个生长阶段 + 4 个季节 + 其他树种"并逐个截图存档
 - `dev/classify-check.html` —— 点真实的树种/阶段/季节 chips, 验证重建/重新取景/生长进度不被重置
 - `dev/ui-check.html` —— hover 说明浮层 + 风向指示器箭头角度 + 不同风向下的屏幕摆动
+- `dev/speedtree-check.html` —— SpeedTree 风格功能自检: 相机拉远/拉近驱动动态 LOD (档位/面数递减/缓存复用/选中回全模)，AO 开关/强度/恢复对比
 - `dev/export-format-check.html` —— 导出数据格式自检: GLB 按 glTF 2.0 规范校验容器/accessor/min-max/贴图/节点并用官方 GLTFLoader 回读, OBJ 按 Wavefront 文法校验并用 OBJLoader 回读, PNG 校验签名/IHDR/CRC/IDAT/行滤波并确认非空帧, 参数 JSON 校验结构完整性与导入回环, 以及"特效全开时的富场景导出"
 - `dev/chat-check.html` —— 对话界面自检 (mock 流式接口): 历史记录/新对话隔离/图片多模态请求/思考过程/重新生成/引用/删除/收藏/置顶/归档/联网来源渲染, 不消耗真实模型调用
 - `dev/chat-live-check.html` —— 对话真实链路冒烟 (真实桥 + 真实模型): 文本对话/图片识别/联网搜索来源。先 `node scripts/app-bridge-server.mjs --port=5289` 再打开

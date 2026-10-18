@@ -421,6 +421,23 @@ export function defaultParams() {
       barkDetail: 1.0,   // 周向分段倍率
       leafRatio: 1.0,    // 保留叶片比例
       maxLeaves: 60000,
+      // SpeedTree 式动态 LOD: 相机远离时自动切到低模, 切近再切回全模
+      dynamic: true,
+      distance1: 2.2,    // LOD0 -> LOD1 的距离 (× 树高)
+      distance2: 4.5,    // LOD1 -> LOD2
+      keep1: 0.3,        // LOD1 叶片保留比例 (相对 LOD0)
+      keep2: 0.08,       // LOD2 叶片保留比例
+      detail1: 0.6,      // LOD1 树皮周向分段倍率
+      detail2: 0.3,      // LOD2 树皮周向分段倍率
+      force: 'auto',     // 调试/截图用: auto | 0 | 1 | 2
+    },
+
+    // ---------------- 程序化环境光遮蔽 (烘焙进顶点色) ----------------
+    // 参考 SpeedTree 的顶点色 AO: 用叶片点云近似互相遮挡, 树冠内部/枝条根部更暗。
+    ao: {
+      enabled: true,
+      strength: 0.55,    // 0 = 关闭, 1 = 最强
+      radius: 0.9,       // 遮挡采样半径 (米)
     },
   }
 }
@@ -467,7 +484,7 @@ export function normalizeParams(p) {
   return out
 }
 
-const GEOMETRY_KEYS = ['seed', 'auto', 'trunk', 'roots', 'branches', 'leaves', 'flower', 'fruit', 'lod']
+const GEOMETRY_KEYS = ['seed', 'auto', 'trunk', 'roots', 'branches', 'leaves', 'flower', 'fruit', 'lod', 'ao']
 const MATERIAL_KEYS = ['bark', 'leafMat', 'custom', 'particles', 'fall', 'litter', 'flowerFall', 'flowerLitter']
 const WIND_KEYS = ['wind']
 const SCENE_KEYS = ['scene', 'growth']

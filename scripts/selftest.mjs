@@ -16,6 +16,7 @@ import { sampleEmitPositions, buildParticleSeeds, createParticleMaterial, PARTIC
 import { buildFallingLeaves, fallRebuildKey, FALL_FRAG } from '../src/core/fallingLeaves.js'
 import { buildLeafLitter, litterRebuildKey } from '../src/core/litter.js'
 import { normalFromLuminance } from '../src/core/normalFromAlbedo.js'
+import { buildOcclusionGrid, occlusionAt, bakeOcclusion, bakeOcclusionByRanges } from '../src/core/ambientOcclusion.js'
 import { viewAngles, atlasLayout, crossCardQuads, alphaCoverage, elevationAngles } from '../src/core/impostor.js'
 import { ellipseLeafTexture, resolveEffectTexture, resolveEffectAspect } from '../src/core/leafTexture.js'
 import { LEAF_CARDS } from '../src/core/leafCards.generated.js'
@@ -1183,6 +1184,85 @@ console.log('\n[23] 导出数据格式')
     check(`${label}: 导出属性完整 (position/normal/uv/index)`, !!pos && !!nor && !!uv && !!idx)
     check(`${label}: 顶点有限 + 法线单位化 + 索引在范围`, finite && unit && zeroN === 0 && inRange, `zeroN=${zeroN}`)
   }
+}
+
+/* 24. 程序化 AO (顶点色烘焙; 参考 SpeedTree 顶点色 AO) */
+console.log('\n[24] 程序化 AO')
+{
+  const pOn = normalizeParams(applyPreset(defaultParams(), 'oak', 'mature', 'summer'))
+  const a = buildTree(pOn)
+  const a2 = buildTree(pOn)
+  check('AO 已烘焙 (点云 + 顶点数 > 0)', a.stats.ao.enabled === true && a.stats.ao.samples > 0 && a.stats.ao.affected > 0,
+    JSON.stringify(a.stats.ao))
+  check('AO 结果确定 (相同参数两次构建一致)', a.barkGeometry.attributes.color.array.every((v, i) => v === a2.barkGeometry.attributes.color.array[i]))
+
+  const pOff = normalizeParams(applyPreset(defaultParams(), 'oak', 'mature', 'summer'))
+  pOff.ao.enabled = false
+  const b = buildTree(pOff)
+  let diff = 0
+  let darker = 0
+  let outOfRange = 0
+  for (let i = 0; i < a.barkGeometry.attributes.color.array.length; i++) {
+    const on = a.barkGeometry.attributes.color.array[i]
+    const off = b.barkGeometry.attributes.color.array[i]
+    if (Math.abs(on - off) > 1e-6) diff++
+    if (on < off - 1e-6) darker++
+    if (on < off * 0.3 - 1e-6 || on > off + 1e-6) outOfRange++
+  }
+  check('AO 让顶点色变暗 (树皮)', diff > 1000 && darker > 0, `diff=${diff} darker=${darker}`)
+  check('AO 因子在合法范围 (0.3~1 × 原色)', outOfRange === 0, `outOfRange=${outOfRange}`)
+  let leafDiff = 0
+  if (a.leafGeometry && b.leafGeometry) {
+    for (let i = 0; i < a.leafGeometry.attributes.color.array.length; i++) {
+      if (Math.abs(a.leafGeometry.attributes.color.array[i] - b.leafGeometry.attributes.color.array[i]) > 1e-6) leafDiff++
+    }
+  }
+  check('AO 让顶点色变暗 (树叶)', leafDiff > 5000, `diff=${leafDiff}`)
+
+  // 点云/纯函数行为
+  const grid = buildOcclusionGrid([0, 0, 0, 0.1, 0, 0, 5, 0, 0], 1)
+  check('遮挡查询: 附近点贡献 > 远方点', occlusionAt(grid, 0, 0, 0) > occlusionAt(grid, 5, 0, 0))
+  check('AO 强度 = 0 时不做任何修改', bakeOcclusion(a.barkGeometry, grid, 0).affected === 0)
+
+  // 实例区间烘焙: 只影响对应顶点, 且按中心点遮挡
+  const THREE = await import('three')
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0.1, 0, 0, 0, 0.1, 0, 5, 0, 0, 5.1, 0, 0, 5, 0.1, 0], 3))
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(new Array(18).fill(1), 3))
+  const grid2 = buildOcclusionGrid([0, 0, 0, 0.1, 0, 0], 1)
+  const rr = bakeOcclusionByRanges(geo, grid2, 0.8, [[0, 3, 0, 0, 0], [3, 6, 5, 0, 0]])
+  const c = geo.attributes.color.array
+  check('实例区间烘焙: 只改区间内顶点 + 数量正确', rr.affected === 6 && c[0] < 1 - 1e-6 && Math.abs(c[9] - 1) < 1e-6,
+    `affected=${rr.affected} c0=${c[0].toFixed(3)} c3=${c[9].toFixed(3)}`)
+}
+
+/* 24b. 动态 LOD 的确定性叶片抽样 */
+console.log('\n[24b] 动态 LOD 叶片抽样')
+{
+  const mk = (ratio) => {
+    const p = normalizeParams(applyPreset(defaultParams(), 'oak', 'mature', 'summer'))
+    p.lod.leafRatio = ratio
+    return buildTree(p)
+  }
+  const full = mk(1)
+  const low = mk(0.35)
+  check('LOD 低模叶片数确实减少', low.stats.leaves < full.stats.leaves && low.stats.leaves > full.stats.leaves * 0.15,
+    `${low.stats.leaves} / ${full.stats.leaves}`)
+  const sameBark = full.barkGeometry.attributes.position.array.length === low.barkGeometry.attributes.position.array.length &&
+    full.barkGeometry.attributes.position.array.every((v, i) => v === low.barkGeometry.attributes.position.array[i])
+  check('叶片抽稀不影响树干/树枝 (只少画叶子)', sameBark)
+  // 关闭 AO 后顶点色也应完全一致 (AO 依赖叶片点云, 抽稀后遮挡量本就该变)
+  const mkNoAo = (ratio) => {
+    const p = normalizeParams(applyPreset(defaultParams(), 'oak', 'mature', 'summer'))
+    p.lod.leafRatio = ratio
+    p.ao.enabled = false
+    return buildTree(p)
+  }
+  const fullC = mkNoAo(1)
+  const lowC = mkNoAo(0.35)
+  check('关闭 AO 后叶片抽稀不改变树皮顶点色', fullC.barkGeometry.attributes.color.array.every((v, i) => v === lowC.barkGeometry.attributes.color.array[i]))
+  check('LOD 参数齐全 (动态距离/保留比例)', ['dynamic', 'distance1', 'distance2', 'keep1', 'keep2', 'detail1', 'detail2', 'force']
+    .every((k) => Object.prototype.hasOwnProperty.call(defaultParams().lod, k)))
 }
 
 /* 汇总 */

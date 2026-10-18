@@ -46,11 +46,39 @@
     </p>
   </Section>
 
+  <Section title="环境光遮蔽 (AO)" hint="Ambient Occlusion" :default-collapsed="true">
+    <ToggleRow label="烘焙 AO 到顶点色" v-model="ao.enabled"
+      hint="参考 SpeedTree 的顶点色 AO: 树冠内部/枝条根部更暗, 导出模型里也会带上" />
+    <template v-if="ao.enabled">
+      <SliderRow label="AO 强度" v-model="ao.strength" :min="0" :max="1" :step="0.01" />
+      <SliderRow label="AO 半径 (米)" v-model="ao.radius" :min="0.2" :max="3" :step="0.05"
+        hint="遮挡采样半径: 越大, 越远的叶片也会互相压暗" />
+      <p class="muted" style="margin: 0">
+        用叶片/花朵点云估算互相遮挡, 按几何体自身的 85 分位数归一化后乘进顶点色。
+        不依赖渲染器, 规则/可复现; 关闭后恢复原始顶点色。
+      </p>
+    </template>
+  </Section>
+
   <Section title="细节 / LOD" hint="LOD" :default-collapsed="true">
     <SliderRow label="树皮细节倍率" v-model="lod.barkDetail" :min="0.4" :max="2" :step="0.05"
       hint="1 = 按层级设定; 调低可提速" />
     <SliderRow label="叶片保留比例" v-model="lod.leafRatio" :min="0.05" :max="1" :step="0.05" />
     <SliderRow label="叶片数上限" v-model="lod.maxLeaves" :min="500" :max="200000" :step="500" />
+    <ToggleRow label="动态 LOD (按距离降级)" v-model="lod.dynamic"
+      hint="参考 SpeedTree: 相机远离时自动切到低模, 切近再切回全模" />
+    <template v-if="lod.dynamic">
+      <SliderRow label="LOD1 切换距离 (×树高)" v-model="lod.distance1" :min="0.6" :max="8" :step="0.1" />
+      <SliderRow label="LOD2 切换距离 (×树高)" v-model="lod.distance2" :min="1.2" :max="20" :step="0.1" />
+      <SliderRow label="LOD1 叶片保留" v-model="lod.keep1" :min="0.05" :max="1" :step="0.01" />
+      <SliderRow label="LOD2 叶片保留" v-model="lod.keep2" :min="0.01" :max="0.5" :step="0.01" />
+      <SelectRow label="LOD 档位" v-model="lod.force" :options="lodForceOptions" />
+      <p class="muted" style="margin: 0">
+        当前 <b>L{{ state.lodLevel }}</b>
+        <span v-for="e in state.lodInfo" :key="e.level"> · L{{ e.level }} {{ e.triangles.toLocaleString() }} 面</span>
+        <br />LOD1/2 首次需要时才构建并缓存; 选中高亮/线框模式会自动回到 LOD0。
+      </p>
+    </template>
   </Section>
 </template>
 
@@ -64,6 +92,7 @@ import { state } from '../../store/treeStore.js'
 
 const L = state.params.leaves
 const lod = state.params.lod
+const ao = state.params.ao
 const shapes = [
   { value: 'oval', label: '椭圆 oval' },
   { value: 'round', label: '圆叶 round' },
@@ -71,6 +100,12 @@ const shapes = [
   { value: 'maple', label: '枫叶 maple' },
   { value: 'lance', label: '披针 lance' },
   { value: 'needle', label: '针叶 needle' },
+]
+const lodForceOptions = [
+  { value: 'auto', label: '自动 (按距离)' },
+  { value: '0', label: '强制 LOD0 (全模)' },
+  { value: '1', label: '强制 LOD1' },
+  { value: '2', label: '强制 LOD2' },
 ]
 </script>
 

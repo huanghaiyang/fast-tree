@@ -206,6 +206,15 @@ export const STORE_LEVEL = {
   'wind.intensity': 'store.setWindIntensity 把它当作 autoWind() 的输入档位',
   'wind.timeScale': 'sceneManager.windTimeScale 控制 uTime 推进速度',
   'auto.chaos': 'store.doAutoGenerate 用它决定随机扰动幅度',
+  // 动态 LOD 是场景/相机级行为: 只影响运行时用哪套几何, 不改变 LOD0 本体
+  'lod.dynamic': 'sceneManager 运行时决定是否启用 LOD 切换',
+  'lod.distance1': 'sceneManager.updateLod 的 LOD0->LOD1 切换距离 (×树高)',
+  'lod.distance2': 'sceneManager.updateLod 的 LOD1->LOD2 切换距离 (×树高)',
+  'lod.keep1': '仅用于按需生成 LOD1 几何 (叶片保留比例)',
+  'lod.keep2': '仅用于按需生成 LOD2 几何 (叶片保留比例)',
+  'lod.detail1': '仅用于按需生成 LOD1 几何 (树皮分段倍率)',
+  'lod.detail2': '仅用于按需生成 LOD2 几何 (树皮分段倍率)',
+  'lod.force': '调试/截图时强制指定 LOD 档位, 由 sceneManager 消费',
 }
 
 /* ------------------------------------------------------------------ */

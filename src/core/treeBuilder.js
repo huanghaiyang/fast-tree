@@ -11,6 +11,7 @@ import { makeRng } from './rng.js'
 import { buildTube } from './bark.js'
 import { buildLeafTemplate, buildLeafCardTemplate, pushLeafInstance } from './leaf.js'
 import { buildFruitTemplate, pushFruitInstance } from './fruit.js'
+import { buildOcclusionGrid, bakeOcclusion, bakeOcclusionByRanges } from './ambientOcclusion.js'
 import {
   GeoAcc, growFrames, sampleFrame, anyPerp, azimuthPerp, rotateTowardUp,
   clamp01, lerp, boxInfo, UP,
@@ -152,6 +153,12 @@ export function buildTree(params) {
   const maxLeaves = Math.max(0, Math.round((P.lod && P.lod.maxLeaves) || 60000))
   const leafRng = makeRng(P.seed, 'leaves')
   const fruitRng = makeRng(P.seed, 'fruit')
+  // 叶片保留比例用"确定性抽样"而不是 rng.chance: 不同 LOD 只少画叶子,
+  // 叶片位置/其余随机流完全不变 -> 远景/近景切换时树形不跳变
+  const leafKeepEvery = P.lod && P.lod.leafRatio < 1
+    ? Math.max(1, Math.round(1 / Math.max(0.001, P.lod.leafRatio)))
+    : 1
+  let leafDrawIndex = 0
   let fruitCount = 0
   const fruitAttach = []   // 挂果点 (自检用)
   const fruitOrient = []   // [果柄端到挂果点距离, 坚果底到挂果点距离] (自检用)
@@ -179,6 +186,11 @@ export function buildTree(params) {
 
   const leafBase = new THREE.Color(L.color)
   const leafTip = new THREE.Color(L.colorTip)
+  // AO 遮挡点云: 记录叶片/花朵中心 (世界坐标), 生成完后统一烘焙
+  const aoSamples = []
+  // 叶片/花朵的顶点区间: AO 按"每个实例一次查询"烘焙, 比逐顶点快一个量级
+  const leafAoRanges = []
+  const flowerAoRanges = []
 
   /* ------------------------------------------------------------------ */
   /* 叶片                                                                */
@@ -211,7 +223,7 @@ export function buildTree(params) {
 
       for (let c = 0; c < clusterCount; c++) {
         if (leafCount >= maxLeaves) return
-        if (P.lod.leafRatio < 1 && !rng.chance(P.lod.leafRatio)) continue
+        if (leafKeepEvery > 1 && leafDrawIndex++ % leafKeepEvery !== 0) continue
 
         const az = azimuthBase + rng.range(-1.3, 1.3)
         const sideAxis = perp.clone().applyAxisAngle(dir, az)
@@ -269,14 +281,19 @@ export function buildTree(params) {
 
         // 叶形混合: 同一棵树可以混用多种叶形 (不同树种叶形差别很大)
         const tpl = leafTemplates.length > 1 ? rng.pick(leafTemplates) : leafTemplate
-        if (L.enabled) pushLeafInstance(
-          leafAcc, tpl,
-          { x: xA, y: yA, z: zA }, scale, pos,
-          tintA, tintB, wind, phase,
-          pos.clone(), g0, g1, leafSlot,
-          tpl.stamenRange ? stamenColor : null,
-        )
+        if (L.enabled) {
+          const v0 = leafAcc.vertexCount
+          pushLeafInstance(
+            leafAcc, tpl,
+            { x: xA, y: yA, z: zA }, scale, pos,
+            tintA, tintB, wind, phase,
+            pos.clone(), g0, g1, leafSlot,
+            tpl.stamenRange ? stamenColor : null,
+          )
+          leafAoRanges.push([v0, leafAcc.vertexCount, pos.x, pos.y, pos.z])
+        }
         if (L.enabled && slots[leafSlot]) slots[leafSlot].meta.leaves++
+        if (L.enabled) aoSamples.push(pos.x, pos.y, pos.z)
         leafCount++
       }
     }
@@ -769,6 +786,7 @@ export function buildTree(params) {
           const spin = (FL.twist || 0) + fRng.signed() * rollVar
           const bxRot = bx.clone().applyAxisAngle(byRot, spin)
           const bzRot = new THREE.Vector3().crossVectors(bxRot, byRot).normalize()
+          const v0 = flowerAcc.vertexCount
           pushLeafInstance(
             flowerAcc, tpl,
             { x: bxRot, y: byRot, z: bzRot }, scale, pos,
@@ -776,7 +794,9 @@ export function buildTree(params) {
             br.wind1 || 0, fRng.range(0, Math.PI * 2), pos.clone(), 0.5, 1, flowerSlot,
             tpl.stamenRange ? stamenCol : null,
           )
+          flowerAoRanges.push([v0, flowerAcc.vertexCount, pos.x, pos.y, pos.z])
           flowerCount++
+          aoSamples.push(pos.x, pos.y, pos.z)
         }
       }
     }
@@ -785,6 +805,23 @@ export function buildTree(params) {
       slots[flowerSlot].meta.clusters = flowerBranches.length
     }
     if (flowerAcc.vertexCount > 0) flowerGeometry = flowerAcc.build()
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 程序化 AO: 用叶片/花朵点云估算遮挡, 乘进顶点色 (可导出到 GLB)          */
+  /* ------------------------------------------------------------------ */
+  const aoStats = { enabled: false, samples: aoSamples.length / 3, threshold: 0 }
+  const AO = P.ao || {}
+  if (AO.enabled !== false && (AO.strength || 0) > 0 && aoSamples.length >= 9) {
+    const grid = buildOcclusionGrid(aoSamples, AO.radius === undefined ? 0.9 : AO.radius)
+    const strength = Math.max(0, Math.min(1, AO.strength))
+    // 树皮: 逐顶点 (枝条本身就是大面积表面); 叶片/花朵: 每个实例只查一次中心
+    const b = bakeOcclusion(barkGeometry, grid, strength)
+    const l = leafGeometry ? bakeOcclusionByRanges(leafGeometry, grid, strength, leafAoRanges) : null
+    const f = flowerGeometry ? bakeOcclusionByRanges(flowerGeometry, grid, strength * 0.7, flowerAoRanges) : null
+    aoStats.enabled = true
+    aoStats.threshold = b.threshold
+    aoStats.affected = (b.affected || 0) + (l ? l.affected : 0) + (f ? f.affected : 0)
   }
 
   const { nodes, groups } = finalizeNodes(slots, barkGeometry, leafGeometry)
@@ -820,6 +857,7 @@ export function buildTree(params) {
       trunkLength: t.height,
       levelCount: branchParams.levels,
       nodeCount: nodes.length,
+      ao: aoStats,
     },
   }
 }
