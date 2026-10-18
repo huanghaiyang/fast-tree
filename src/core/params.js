@@ -273,12 +273,26 @@ export function defaultParams() {
     // ---------------- 花朵 (独立于树叶, 但基础功能继承树叶) ----------------
     flower: {
       enabled: false,        // 与树叶可同时开启
-      inheritLeaves: true,   // true = 未显式设置的字段沿用 leaves 的值
       levels: [false, true, true, true, true],
       perBranch: 4,          // 每个枝端的花簇数
       density: 1,            // 开花密度 (按比例从树叶位置采样)
       clusterCount: 2,       // 每个点位几朵花
       size: 0.42,            // 花朵尺寸 (通常比叶大)
+      sizeVariance: 0.2,     // 花朵尺寸随机
+      clusterRadius: 0.16,   // 每簇花朵散布半径
+      clusterSpread: 0.6,    // 花朵离散度
+      pitch: 55,             // 花朵朝向俯仰角
+      pitchVariance: 20,
+      droop: 0,              // 花朵下垂
+      rollVariance: 0.6,     // 朝向随机
+      faceUp: true,          // 花朵尽量朝上
+      twist: 0,
+      segments: 3,           // 程序化花形分段
+      curl: 0.1,
+      fold: 0.05,
+      petiole: 0,
+      cardCurl: 0.1,
+      cardFold: 0.12,
       width: 1.0,
       shape: 'trumpet',
       shapeMix: [{ shape: 'trumpet', weight: 3 }, { shape: 'bell', weight: 1 }],
@@ -464,7 +478,7 @@ export function normalizeParams(p) {
 }
 
 const GEOMETRY_KEYS = ['seed', 'auto', 'trunk', 'roots', 'branches', 'leaves', 'flower', 'fruit', 'lod']
-const MATERIAL_KEYS = ['bark', 'leafMat', 'custom', 'particles', 'fall', 'litter']
+const MATERIAL_KEYS = ['bark', 'leafMat', 'custom', 'particles', 'fall', 'litter', 'flowerFall', 'flowerLitter']
 const WIND_KEYS = ['wind']
 const SCENE_KEYS = ['scene', 'growth']
 

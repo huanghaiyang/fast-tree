@@ -68,7 +68,7 @@ export function buildTree(params) {
   // 花朵: 独立累加器 + 复用树叶的"记录附件点 -> 后置生成"策略
   const FL = P.flower || {}
   const flowerAcc = FL.enabled ? new GeoAcc() : null
-  const flowerSpots = []
+  const flowerBranches = []
   const makeFlowerTemplate = (shape) => (FL.cardMode
     ? buildLeafCardTemplate({
         aspect: FL.cardAspect || 1, cols: 1, rows: 3,
@@ -77,7 +77,7 @@ export function buildTree(params) {
       })
     : buildLeafTemplate({
         shape,
-        segments: FL.segments,
+        segments: FL.segments, curl: FL.curl, fold: FL.fold, petiole: FL.petiole,
         flower3d: FL.flower3d, flowerLobes: FL.flowerLobes, flowerThickness: FL.flowerThickness,
         flowerStamen: FL.flowerStamen, flowerTilt: FL.flowerTilt, flowerQuality: FL.flowerQuality,
         flowerPetals: FL.flowerPetals, flowerCluster: FL.flowerCluster,
@@ -145,6 +145,8 @@ export function buildTree(params) {
   const spawnLeaves = (frames, level, branchWind, parentSlot) => {
     // 花朵独立: 即使树叶关闭, 也要跑位置采集 (否则花朵没有附着点)
     if ((!L.enabled && !FL.enabled) || leafCount >= maxLeaves) return
+    // 记录这条可开花的枝条: 花朵用自己的 perBranch/clusterCount/startT/endT 采样
+    if (flowerAcc) flowerBranches.push({ frames, level, wind1: branchWind })
     const rng = leafRng
     const perBranch = Math.max(1, Math.round(L.perBranch))
     const clusterCount = Math.max(1, Math.round(L.clusterCount))
@@ -234,13 +236,6 @@ export function buildTree(params) {
           tpl.stamenRange ? stamenColor : null,
         )
         if (L.enabled && slots[leafSlot]) slots[leafSlot].meta.leaves++
-        // 记录一个可开花的位置 (花朵后置生成, 与树叶几何完全分离)
-        if (flowerAcc) {
-          flowerSpots.push({
-            xA: xA.clone(), yA: yA.clone(), zA: zA.clone(), pos: pos.clone(),
-            wind, phase, origin: pos.clone(), g0, g1,
-          })
-        }
         leafCount++
       }
     }
@@ -671,10 +666,10 @@ export function buildTree(params) {
   })()
   const leafGeometry = leafAcc.vertexCount > 0 ? leafAcc.build() : null
 
-  /* ---- 花朵: 从记录的位置里按密度采样, 用花朵自己的模板/尺寸/颜色生成 ---- */
+  /* ---- 花朵: 用花朵自己的设置独立采样 (层级/每枝数量/每簇数/分布起止/朝向) ---- */
   let flowerGeometry = null
   let flowerCount = 0
-  if (flowerAcc && flowerSpots.length && FL.enabled) {
+  if (flowerAcc && flowerBranches.length && FL.enabled) {
     const fMix = Array.isArray(FL.shapeMix)
       ? FL.shapeMix.filter((m) => m && m.shape && (m.weight === undefined || m.weight > 0))
       : []
@@ -691,27 +686,71 @@ export function buildTree(params) {
     })
     const fSize = FL.size === undefined ? 0.42 : FL.size
     const fWidth = FL.width === undefined ? 1 : FL.width
-    const fScale = new THREE.Vector3(fSize * fWidth, fSize, fSize * fWidth)
+    const sizeVar = FL.sizeVariance === undefined ? 0.2 : FL.sizeVariance
     const c0 = new THREE.Color(FL.color || '#f2a7c3')
     const c1 = new THREE.Color(FL.colorTip || '#fbe3ec')
     const stamenCol = new THREE.Color(FL.flowerStamenColor || '#f4e6a6')
+    const levelsOn = Array.isArray(FL.levels) ? FL.levels : null
+    const perBranch = Math.max(1, Math.round(FL.perBranch === undefined ? 4 : FL.perBranch))
+    const perCluster = Math.max(1, Math.min(12, Math.round(FL.clusterCount === undefined ? 2 : FL.clusterCount)))
+    const tA = Math.min(FL.startT === undefined ? 0.2 : FL.startT, FL.endT === undefined ? 1 : FL.endT)
+    const tB = Math.max(FL.startT === undefined ? 0.2 : FL.startT, FL.endT === undefined ? 1 : FL.endT)
     const density = Math.max(0.02, Math.min(1, FL.density === undefined ? 1 : FL.density))
-    const stride = Math.max(1, Math.round(1 / density))
+    const clusterR = (FL.clusterRadius === undefined ? 0.16 : FL.clusterRadius) * (FL.clusterSpread === undefined ? 1 : FL.clusterSpread)
+    const pitchRad = ((FL.pitch === undefined ? 55 : FL.pitch) * Math.PI) / 180
+    const pitchVar = ((FL.pitchVariance === undefined ? 20 : FL.pitchVariance) * Math.PI) / 180
+    const rollVar = FL.rollVariance === undefined ? 0.6 : FL.rollVariance
+    const droopAmt = FL.droop === undefined ? 0 : FL.droop
+    const upVec = new THREE.Vector3(0, 1, 0)
     const fRng = makeRng(P.seed, 'flowers')
-    for (let i = 0; i < flowerSpots.length; i += stride) {
-      const s = flowerSpots[i]
-      const tpl = fTpls[Math.floor(fRng.next() * fTpls.length) % fTpls.length]
-      const jitter = 1 + fRng.signed() * (FL.colorVariance === undefined ? 0.16 : FL.colorVariance) * 0.3
-      pushLeafInstance(
-        flowerAcc, tpl,
-        { x: s.xA, y: s.yA, z: s.zA }, fScale, s.pos,
-        c0.clone().multiplyScalar(jitter), c1.clone().multiplyScalar(jitter),
-        s.wind, s.phase, s.origin, s.g0, s.g1, flowerSlot,
-        tpl.stamenRange ? stamenCol : null,
-      )
-      flowerCount++
+    for (const br of flowerBranches) {
+      const lvIdx = Math.max(0, Math.min((levelsOn ? levelsOn.length : 5) - 1, (br.level || 1) - 1))
+      if (levelsOn && levelsOn[lvIdx] === false) continue
+      for (let i = 0; i < perBranch; i++) {
+        if (!fRng.chance(density)) continue
+        const u = (i + 0.5) / perBranch
+        let tt = tA + (tB - tA) * u + fRng.signed() * 0.04
+        tt = Math.min(0.999, Math.max(0.01, tt))
+        const fr = sampleFrame(br.frames, tt)
+        if (!fr) continue
+        const dir = fr.dir.clone()
+        const perp = anyPerp(dir)
+        const azimuthBase = i * 137.5 * DEG + fRng.range(0, Math.PI * 2)
+        for (let c = 0; c < perCluster; c++) {
+          const tpl = fTpls[Math.floor(fRng.next() * fTpls.length) % fTpls.length]
+          const jitter = 1 + fRng.signed() * (FL.colorVariance === undefined ? 0.16 : FL.colorVariance) * 0.3
+          const sv = fSize * (1 + fRng.signed() * sizeVar)
+          const scale = new THREE.Vector3(sv * fWidth, sv, sv * fWidth)
+          // 位置: 枝条表面 + 簇内散布
+          const az = azimuthBase + (c / perCluster) * Math.PI * 2
+          const radial = perp.clone().multiplyScalar(Math.cos(az)).add(new THREE.Vector3().crossVectors(dir, perp).multiplyScalar(Math.sin(az)))
+          const pos = fr.pos.clone().add(radial.multiplyScalar(clusterR * fRng.range(0.2, 1)))
+          // 朝向: 花轴 = 枝条方向 -> faceUp 朝上 -> 加俯仰 -> 下垂 -> 自转
+          const by = dir.clone()
+          if (FL.faceUp !== false) by.lerp(upVec, 0.45).normalize()
+          const pitch = pitchRad + fRng.signed() * pitchVar
+          const bx = perp.clone()
+          const bz = new THREE.Vector3().crossVectors(bx, by).normalize()
+          const byRot = by.clone().multiplyScalar(Math.sin(pitch)).add(bz.clone().multiplyScalar(Math.cos(pitch))).normalize()
+          if (droopAmt) byRot.add(upVec.clone().multiplyScalar(-droopAmt * 0.4)).normalize()
+          const spin = (FL.twist || 0) + fRng.signed() * rollVar
+          const bxRot = bx.clone().applyAxisAngle(byRot, spin)
+          const bzRot = new THREE.Vector3().crossVectors(bxRot, byRot).normalize()
+          pushLeafInstance(
+            flowerAcc, tpl,
+            { x: bxRot, y: byRot, z: bzRot }, scale, pos,
+            c0.clone().multiplyScalar(jitter), c1.clone().multiplyScalar(jitter),
+            br.wind1 || 0, fRng.range(0, Math.PI * 2), pos.clone(), 0.5, 1, flowerSlot,
+            tpl.stamenRange ? stamenCol : null,
+          )
+          flowerCount++
+        }
+      }
     }
-    if (flowerSlot >= 0 && slots[flowerSlot]) slots[flowerSlot].meta.leaves = flowerCount
+    if (flowerSlot >= 0 && slots[flowerSlot]) {
+      slots[flowerSlot].meta.leaves = flowerCount
+      slots[flowerSlot].meta.clusters = flowerBranches.length
+    }
     if (flowerAcc.vertexCount > 0) flowerGeometry = flowerAcc.build()
   }
 

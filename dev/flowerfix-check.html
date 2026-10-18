@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>ffix: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1100px;height:700px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state, sc
+f.addEventListener('load', () => { win = f.contentWindow; state = win.__fastTree; sc = win.__fastTreeScene; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(800)
+    state.params.flower.enabled = true
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1200)
+
+    // ① 落花勾选是否生效 (通过 UI 复选框点击)
+    const tab = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('花朵'))
+    if (tab) tab.click(); await sleep(1200)
+    const findToggle = (label) => [...doc.querySelectorAll('label')].find((l) => l.textContent.trim().startsWith(label))
+    const cbFall = [...doc.querySelectorAll('input[type=checkbox]')].find((c) => (c.closest('.row') || {}).textContent?.includes('启用落花') && !(c.closest('.row') || {}).textContent?.includes('堆积'))
+    bar('① 找到落花勾选框=' + !!cbFall)
+    if (cbFall) { cbFall.click(); await sleep(1500) }
+    bar('① 落花 enabled=' + state.params.flowerFall.enabled + ' mesh=' + !!sc.flowerFallMesh +
+        ' 点数=' + (sc.flowerFallMesh ? sc.flowerFallMesh.geometry.attributes.position.count : 0))
+    const cbLitter = [...doc.querySelectorAll('input[type=checkbox]')].find((c) => (c.closest('.row') || {}).textContent?.includes('启用落花堆积'))
+    bar('② 找到落花堆积勾选框=' + !!cbLitter)
+    if (cbLitter) { cbLitter.click(); await sleep(1500) }
+    bar('② 落花堆积 enabled=' + state.params.flowerLitter.enabled + ' mesh=' + !!sc.flowerLitterMesh +
+        ' 顶点=' + (sc.flowerLitterMesh ? sc.flowerLitterMesh.geometry.attributes.position.count : 0))
+    // 取消勾选应移除
+    if (cbFall) { cbFall.click(); await sleep(1200) }
+    bar('② 取消落花后 mesh 可见=' + (!!sc.flowerFallMesh && sc.flowerFallMesh.visible))
+
+    // ③ 花朵形状支持贴图: 喇叭形(3D) + 椭圆(平面) 都应挂上花朵贴图
+    const mod = await import('/src/core/leafCards.generated.js')
+    const card = mod.LEAF_CARDS.find((c) => c.batch === 'fl_batch2')
+    state.params.flower.texture = card.url
+    state.params.flower.cardMode = false
+    for (const shape of ['trumpet', 'bell', 'oval']) {
+      state.params.flower.shape = shape
+      win.__fastTreeSceneApi.rebuildNow(true); await sleep(1100)
+      const fm = sc.materials.flower
+      const nm = fm && fm.map && fm.map.image ? (fm.map.image.src || '').split('/').pop() : '-'
+      bar('③ 花朵形状=' + shape + ' 贴图=' + nm + ' alphaTest=' + (fm ? fm.alphaTest : '?') + ' 花数=' + state.stats.flowers)
+    }
+    let bad = 0
+    for (const p of (sc.renderer.info.programs || [])) if (p.diagnostics && (p.diagnostics.vertexShader || p.diagnostics.fragmentShader || p.diagnostics.programLog)) bad++
+    bar('④ 着色器编译失败=' + bad)
+    bar('errs=none')
+    document.title = 'FFIX-OK :: ' + L.join(' || ').slice(0, 1300)
+  } catch (e) { document.title = 'FFIX-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 300) }
+}, 3000)
+</script></body></html>

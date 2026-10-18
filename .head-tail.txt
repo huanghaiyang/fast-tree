@@ -1,0 +1,28 @@
+const leafGeometry = leafAcc.vertexCount > 0 ? leafAcc.build() : null
+
+  /* ---- 花朵: 从记录的位置里按密度采样, 用花朵自己的模板/尺寸/颜色生成 ---- */
+  let flowerGeometry = null
+  let flowerCount = 0
+  if (flowerAcc && flowerSpots.length && FL.enabled) {
+    const fMix = Array.isArray(FL.shapeMix)
+      ? FL.shapeMix.filter((m) => m && m.shape && (m.weight === undefined || m.weight > 0))
+      : []
+    const fTpls = fMix.length
+      ? fMix.flatMap((m) => {
+          const tpl = makeFlowerTemplate(m.shape)
+          const n = Math.max(1, Math.round((m.weight === undefined ? 1 : m.weight) * 8))
+          return new Array(n).fill(tpl)
+        })
+      : [makeFlowerTemplate(FL.shape || 'trumpet')]
+    const flowerSlot = addSlot({
+      type: 'flowers', level: FL.level || 3, group: 'flowers', name: '花朵',
+      parent: trunkSlot, meta: { leaves: 0, clusters: 0 },
+    })
+    const fSize = FL.size === undefined ? 0.42 : FL.size
+    const fWidth = FL.width === undefined ? 1 : FL.width
+    const fScale = new THREE.Vector3(fSize * fWidth, fSize, fSize * fWidth)
+    const c0 = new THREE.Color(FL.color || '#f2a7c3')
+    const c1 = new THREE.Color(FL.colorTip || '#fbe3ec')
+    const stamenCol = new THREE.Color(FL.flowerStamenColor || '#f4e6a6')
+    const density = Math.max(0.02, Math.min(1, FL.density === undefined ? 1 : FL.density))
+    const stride = Math.max(1, Math.round(1 / density))

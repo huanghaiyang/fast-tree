@@ -1,10 +1,31 @@
 <template>
   <Section title="花朵" hint="Flower">
     <ToggleRow label="启用花朵" v-model="f.enabled" hint="与树叶可同时开启 (独立网格, 材质继承树叶)" />
-    <ToggleRow label="继承树叶设置" v-model="f.inheritLeaves" hint="开: 未单独设置的字段沿用树叶 (叶形/密度等)" />
     <SliderRow label="花朵尺寸" v-model="f.size" :min="0.1" :max="1.2" :step="0.02" />
+    <SliderRow label="花朵大小随机" v-model="f.sizeVariance" :min="0" :max="0.8" :step="0.01" />
     <SliderRow label="花朵宽度" v-model="f.width" :min="0.5" :max="1.6" :step="0.02" />
+    <SliderRow label="花朵朝向俯仰角" v-model="f.pitch" :min="0" :max="180" :step="1" unit="°" />
+    <SliderRow label="朝向随机" v-model="f.pitchVariance" :min="0" :max="90" :step="1" unit="°" />
+    <SliderRow label="花朵下垂" v-model="f.droop" :min="-1" :max="1" :step="0.02" />
+    <SliderRow label="朝向离散" v-model="f.rollVariance" :min="0" :max="1" :step="0.01" />
+    <ToggleRow label="花朵尽量朝上" v-model="f.faceUp" hint="花朵法线尽量朝向天空 (真实花多向上开)" />
+    <SliderRow label="花朵分段" v-model="f.segments" :min="2" :max="12" :step="1" />
+    <SliderRow label="花朵纵向弯曲" v-model="f.curl" :min="-0.6" :max="0.6" :step="0.01" />
+    <SliderRow label="花朵横向折叠" v-model="f.fold" :min="-0.4" :max="0.8" :step="0.01" />
+    <SliderRow label="花朵柄长比例" v-model="f.petiole" :min="0" :max="0.4" :step="0.01" />
+    <SliderRow label="卡片卷曲" v-model="f.cardCurl" :min="-0.6" :max="0.6" :step="0.01" />
+    <SliderRow label="卡片折叠" v-model="f.cardFold" :min="-0.4" :max="0.8" :step="0.01" />
+    <SliderRow label="花朵簇半径" v-model="f.clusterRadius" :min="0" :max="0.8" :step="0.01" unit="m" />
+    <div class="row-head"><label>生长在哪几层枝条上</label></div>
+    <div class="chips">
+      <label v-for="(on, i) in f.levels" :key="i" class="chip" :class="{ active: on }">
+        <input type="checkbox" v-model="f.levels[i]" style="display:none" />L{{ i + 1 }}
+      </label>
+    </div>
     <SliderRow label="每枝花朵数" v-model="f.perBranch" :min="0" :max="24" :step="1" />
+    <SliderRow label="每簇花朵数" v-model="f.clusterCount" :min="1" :max="12" :step="1" />
+    <SliderRow label="分布起始位置" v-model="f.startT" :min="0" :max="1" :step="0.01" />
+    <SliderRow label="分布结束位置" v-model="f.endT" :min="0" :max="1" :step="0.01" />
     <SliderRow label="花朵密度" v-model="f.density" :min="0.05" :max="1" :step="0.05"
       hint="按比例从树叶位置采样开花 (1 = 每个叶位都开)" />
     <SelectRow label="花朵形状" v-model="f.shape" :options="shapes" />
@@ -20,6 +41,7 @@
     <ColorRow label="花色 B" v-model="f.colorTip" />
     <SliderRow label="花色差异" v-model="f.colorVariance" :min="0" :max="1" :step="0.01" />
     <SliderRow label="花朵透光" v-model="f.translucency" :min="0" :max="1" :step="0.01" />
+    <SliderRow label="卡片比例 (宽/高)" v-model="f.cardAspect" :min="0.3" :max="2.5" :step="0.02" />
     <ToggleRow label="花朵卡片模式" v-model="f.cardMode" hint="用照片花朵卡片代替程序化花冠" />
     <div class="pick-label">内置花朵卡片（樱花 6 批 + 其他 · 点缩略图应用）</div>
     <div class="chips">

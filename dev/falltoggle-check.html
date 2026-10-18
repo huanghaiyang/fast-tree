@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>ft: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1100px;height:700px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, state, sc
+f.addEventListener('load', () => { win = f.contentWindow; state = win.__fastTree; sc = win.__fastTreeScene })
+const tick = async (ms) => { const n = Math.ceil(ms / 100); for (let i = 0; i < n; i++) await sleep(100) }
+setTimeout(async () => {
+  try {
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(900)
+    state.params.flower.enabled = true
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1200)
+    bar('初始: 落花=' + !!sc.flowerFallMesh + ' 落花堆积=' + !!sc.flowerLitterMesh)
+    // 只改参数 (模拟勾选), 不手动 rebuild -> 依赖 watcher
+    state.params.flowerFall.enabled = true
+    await tick(1500)
+    bar('① 勾选落花(仅改参数): mesh=' + !!sc.flowerFallMesh + ' 点数=' + (sc.flowerFallMesh ? sc.flowerFallMesh.geometry.attributes.position.count : 0))
+    state.params.flowerLitter.enabled = true
+    await tick(1500)
+    bar('② 勾选落花堆积(仅改参数): mesh=' + !!sc.flowerLitterMesh + ' 顶点=' + (sc.flowerLitterMesh ? sc.flowerLitterMesh.geometry.attributes.position.count : 0))
+    // 取消勾选
+    state.params.flowerFall.enabled = false
+    await tick(1200)
+    bar('③ 取消落花: mesh=' + !!sc.flowerFallMesh + ' 可见=' + (!!sc.flowerFallMesh && sc.flowerFallMesh.visible))
+    state.params.flowerLitter.enabled = false
+    await tick(1200)
+    bar('③ 取消落花堆积: mesh=' + !!sc.flowerLitterMesh + ' 可见=' + (!!sc.flowerLitterMesh && sc.flowerLitterMesh.visible))
+    // 重新勾选次数/尺寸也要生效
+    state.params.flowerFall.enabled = true
+    state.params.flowerFall.count = 300
+    await tick(1600)
+    bar('④ 改数量=300: 点数=' + (sc.flowerFallMesh ? sc.flowerFallMesh.geometry.attributes.position.count : 0) + ' (每朵2三角=6顶点)')
+    bar('errs=none')
+    document.title = 'FT-OK :: ' + L.join(' || ').slice(0, 1100)
+  } catch (e) { document.title = 'FT-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 300) }
+}, 3000)
+</script></body></html>

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>fs: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1100px;height:760px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state
+f.addEventListener('load', () => { win = f.contentWindow; state = win.__fastTree; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    const tab = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('花朵'))
+    if (tab) tab.click(); await sleep(1500)
+    const labels = [...doc.querySelectorAll('.row-head label')].map((e) => e.textContent.trim())
+    bar('① 花朵面板控件数=' + labels.length)
+    bar('① 无"继承树叶设置"=' + !labels.some((x) => x.includes('继承树叶')))
+    const need = ['生长在哪几层枝条上', '每枝花朵数', '每簇花朵数', '花朵密度', '分布起始位置', '分布结束位置', '花朵尺寸', '花朵大小随机', '花朵宽度', '花朵形状', '花朵分段', '花朵纵向弯曲', '花朵横向折叠', '花朵柄长比例', '花朵朝向俯仰角', '朝向随机', '花朵下垂', '花朵离散', '花朵尽量朝上', '花朵簇半径', '花朵簇离散', '花色 A', '花色 B', '花色差异', '花朵透光', '卡片比例 (宽/高)']
+    const missing = need.filter((n) => !labels.includes(n))
+    bar('① 缺失设置项=' + (missing.length ? missing.join(', ') : '无'))
+    // ② 层级勾选可点击
+    const levelChips = [...doc.querySelectorAll('.chip')].filter((c) => /^L\d$/.test(c.textContent.trim()))
+    bar('② 层级按钮=' + JSON.stringify(levelChips.map((c) => c.textContent.trim())))
+    if (levelChips.length >= 3) {
+      levelChips[2].click(); await sleep(900)
+      bar('② 点 L3 后 levels=' + JSON.stringify(state.params.flower.levels))
+    }
+    bar('errs=none')
+    document.title = 'FS-OK :: ' + L.join(' || ').slice(0, 1200)
+  } catch (e) { document.title = 'FS-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 300) }
+}, 3000)
+</script></body></html>
