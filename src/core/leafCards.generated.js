@@ -13,6 +13,13 @@ export const LEAF_CARD_SETS = [
   { id: 'batch2', dir: 'batch2', prefix: 'v2_leaf2', rows: 6, cols: 9, name: '② 绿色系' },
   { id: 'v4_batch1', dir: 'v4_batch1', prefix: 'v4_leaf1', rows: 6, cols: 12, name: '③ 桦树 A' },
   { id: 'v4_batch2', dir: 'v4_batch2', prefix: 'v4_leaf2', rows: 6, cols: 13, name: '④ 桦树 B' },
+  // ---- 樱花 (作为"叶片卡片"使用: 花枝/花簇直接当叶形) ----
+  { id: 'fl_batch1', dir: 'fl_batch1', prefix: 'flower1', rows: 6, cols: 9, name: '⑤ 樱花 A' },
+  { id: 'fl_batch2', dir: 'fl_batch2', prefix: 'flower2', rows: 7, cols: 9, name: '⑥ 樱花 B' },
+  { id: 'fl_v2_batch1', dir: 'fl_v2_batch1', prefix: 'leafyflower1', rows: 9, cols: 9, name: '⑦ 樱花 V2A' },
+  { id: 'fl_v2_batch2', dir: 'fl_v2_batch2', prefix: 'leafyflower2', rows: 6, cols: 9, name: '⑧ 樱花 V2B' },
+  { id: 'fl_v3_batch1', dir: 'fl_v3_batch1', prefix: 'bunch1', rows: 6, cols: 11, name: '⑨ 樱花 V3A' },
+  { id: 'fl_v3_batch2', dir: 'fl_v3_batch2', prefix: 'bunch2', rows: 6, cols: 9, name: '⑩ 樱花 V3B' },
 ]
 
 function pad2(n) {

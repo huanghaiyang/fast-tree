@@ -28,6 +28,7 @@
 
     <aside class="sidebar">
       <PropertySearch />
+      <ChatPanel />
       <ControlPanel />
     </aside>
 
@@ -43,6 +44,7 @@
 import { computed, onBeforeUnmount, onMounted } from 'vue'
 import ControlPanel from './components/ControlPanel.vue'
 import PropertySearch from './components/PropertySearch.vue'
+import ChatPanel from './components/ChatPanel.vue'
 import Viewport from './components/Viewport.vue'
 import NodeDock from './components/NodeDock.vue'
 import ParamTip from './components/ParamTip.vue'

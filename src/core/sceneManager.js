@@ -5,7 +5,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { buildTree } from './treeBuilder.js'
 import {
-  createSharedUniforms, createBarkMaterial, createLeafMaterial,
+  createSharedUniforms, createBarkMaterial, createLeafMaterial, createFlowerMaterial,
   updateMaterials, updateWindUniforms, updateGrowthUniforms, rebindCustomShader,
 } from './materials.js'
 import { exportGLB, exportOBJ, exportScreenshot } from './exporter.js'
@@ -135,6 +135,7 @@ export class TreeScene {
     this.materials = null
     this.barkMesh = null
     this.leafMesh = null
+    this.flowerMesh = null
     // three r186 起 THREE.Clock 已废弃, 这里自己计时
     this.lastTime = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000
     this.playing = true
@@ -169,6 +170,7 @@ export class TreeScene {
       this.materials = {
         bark: createBarkMaterial(params, this.uniforms),
         leaf: createLeafMaterial(params, this.uniforms),
+        flower: createFlowerMaterial(params, this.uniforms),
         uniforms: this.uniforms,
       }
     }
@@ -178,11 +180,14 @@ export class TreeScene {
   updateMaterialParams(params) {
     this.updateParticles(params)
     this.updateFall(params)
+    this.updateFlowerFall(params)
     this.updateLitter(params)
+    this.updateFlowerLitter(params)
     const mats = this.ensureMaterials(params)
     updateMaterials(mats, params)
     if (this.barkMesh) this.barkMesh.material = mats.bark
     if (this.leafMesh) this.leafMesh.material = mats.leaf
+    if (this.flowerMesh) this.flowerMesh.material = mats.flower || mats.leaf
   }
 
   rebindCustomShader(params) {
@@ -220,6 +225,13 @@ export class TreeScene {
       this.leafMesh.geometry.dispose()
       this.leafMesh = null
     }
+    if (this.flowerMesh) {
+      this.treeGroup.remove(this.flowerMesh)
+      this.flowerMesh.geometry.dispose()
+      // 花朵与树叶共用材质实例 -> 只释放几何, 不 dispose 材质
+      this.flowerMesh.material = null
+      this.flowerMesh = null
+    }
 
     this.barkMesh = new THREE.Mesh(result.barkGeometry, this.materials.bark)
     this.barkMesh.castShadow = true
@@ -234,13 +246,23 @@ export class TreeScene {
       this.leafMesh.name = 'Leaves'
       this.treeGroup.add(this.leafMesh)
     }
+    // 花朵: 独立网格, 材质继承树叶 (基础功能继承) —— 与树叶是否启用无关
+    if (result.flowerGeometry) {
+      this.flowerMesh = new THREE.Mesh(result.flowerGeometry, this.materials.flower || this.materials.leaf)
+      this.flowerMesh.castShadow = true
+      this.flowerMesh.receiveShadow = false
+      this.flowerMesh.name = 'Flowers'
+      this.treeGroup.add(this.flowerMesh)
+    }
     this.applyShadowFlags()
     // 叶片粒子发射 (从叶片位置采样发射点)
     this.rebuildParticles(params)
     // 落叶 (真实叶片卡片, 从树冠落下)
     this.rebuildFall(params)
+    this.rebuildFlowerFall(params)
     // 地面落叶堆积
     this.rebuildLitter(params)
+    this.rebuildFlowerLitter(params)
 
     if (this.wireBark || this.wireLeaf || (params.scene && params.scene.wireframe && params.scene.wireframe !== 'off')) {
       this.applyWireframe(params.scene && params.scene.wireframe)
@@ -545,6 +567,102 @@ export class TreeScene {
   }
 
   /* ------------------------------------------------------------------ */
+  /* 落花 / 落花堆积 (参照落叶实现, 参数/贴图独立)                       */
+  /* ------------------------------------------------------------------ */
+  /** 把花朵参数映射成落叶构建器认识的"fall 形状" */
+  _flowerFallParams(params) {
+    const FF = params.flowerFall || {}
+    const F = params.flower || {}
+    return {
+      ...params,
+      fall: { ...params.fall, ...FF },
+      // 让重建键/取贴图都跟着"花朵贴图"走
+      leafMat: { ...params.leafMat, texture: F.texture || '' },
+    }
+  }
+  _flowerLitterParams(params) {
+    const FL2 = params.flowerLitter || {}
+    const F = params.flower || {}
+    return {
+      ...params,
+      litter: { ...params.litter, ...FL2 },
+      leafMat: { ...params.leafMat, texture: F.texture || '' },
+    }
+  }
+  _flowerCanopyGeometry() {
+    if (this.flowerMesh) return this.flowerMesh.geometry
+    return this.leafMesh ? this.leafMesh.geometry : null
+  }
+  rebuildFlowerFall(params) {
+    if (!this.treeGroup) return
+    if (this.flowerFallMesh) {
+      this.treeGroup.remove(this.flowerFallMesh)
+      this.flowerFallMesh.geometry.dispose()
+      this.flowerFallMesh.material.dispose()
+      this.flowerFallMesh = null
+    }
+    const FF = params.flowerFall || {}
+    if (!FF.enabled) return
+    const geo = this._flowerCanopyGeometry()
+    if (!geo) return
+    if (!geo.boundingBox) geo.computeBoundingBox()
+    const followMap = (this.materials.flower && this.materials.flower.map) || null
+    const adapted = this._flowerFallParams(params)
+    this.flowerFallMesh = buildFallingLeaves(geo, adapted, this.uniforms, followMap, geo.boundingBox)
+    this.flowerFallMesh.renderOrder = 2
+    this.treeGroup.add(this.flowerFallMesh)
+  }
+  updateFlowerFall(params) {
+    const FF = params.flowerFall || {}
+    if (!FF.enabled) {
+      if (this.flowerFallMesh) this.flowerFallMesh.visible = false
+      return
+    }
+    const adapted = this._flowerFallParams(params)
+    const key = fallRebuildKey(adapted)
+    if (!this.flowerFallMesh || key !== this._flowerFallKey) {
+      this._flowerFallKey = key
+      this.rebuildFlowerFall(params)
+      return
+    }
+    updateFallingLeaves(this.flowerFallMesh, adapted)
+  }
+  rebuildFlowerLitter(params) {
+    if (!this.treeGroup) return
+    if (this.flowerLitterMesh) {
+      this.treeGroup.remove(this.flowerLitterMesh)
+      this.flowerLitterMesh.geometry.dispose()
+      this.flowerLitterMesh.material.dispose()
+      this.flowerLitterMesh = null
+    }
+    const FL2 = params.flowerLitter || {}
+    if (!FL2.enabled) return
+    const geo = this._flowerCanopyGeometry()
+    if (!geo) return
+    if (!geo.boundingBox) geo.computeBoundingBox()
+    const followMap = (this.materials.flower && this.materials.flower.map) || null
+    const adapted = this._flowerLitterParams(params)
+    this.flowerLitterMesh = buildLeafLitter(adapted, followMap, geo.boundingBox)
+    this.flowerLitterMesh.renderOrder = 1
+    this.treeGroup.add(this.flowerLitterMesh)
+  }
+  updateFlowerLitter(params) {
+    const FL2 = params.flowerLitter || {}
+    if (!FL2.enabled) {
+      if (this.flowerLitterMesh) this.flowerLitterMesh.visible = false
+      return
+    }
+    const adapted = this._flowerLitterParams(params)
+    const key = litterRebuildKey(adapted)
+    if (!this.flowerLitterMesh || key !== this._flowerLitterKey) {
+      this._flowerLitterKey = key
+      this.rebuildFlowerLitter(params)
+      return
+    }
+    this.flowerLitterMesh.visible = true
+  }
+
+  /* ------------------------------------------------------------------ */
   /* 地面落叶堆积                                                        */
   /* ------------------------------------------------------------------ */
   rebuildLitter(params) {
@@ -594,7 +712,7 @@ export class TreeScene {
     if (this.leafMesh) box.expandByObject(this.leafMesh)
     if (box.isEmpty()) throw new Error('还没有可用的树')
     const bbox = { min: box.min, max: box.max }
-    const hide = [this.ground, this.grid, this.sky, this.particles, this.fallMesh, this.litterMesh, this._impostorGroup]
+    const hide = [this.ground, this.grid, this.sky, this.particles, this.fallMesh, this.litterMesh, this.flowerMesh, this.flowerFallMesh, this.flowerLitterMesh, this._impostorGroup]
     return generateImpostor({
       renderer: this.renderer,
       scene: this.scene,

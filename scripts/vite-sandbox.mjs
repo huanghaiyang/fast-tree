@@ -22,6 +22,21 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+// MCP / 大模型代理随应用一起启动 (仅 dev)
+if ((process.argv[2] || 'dev') === 'dev') {
+  try {
+    const { spawn } = await import('node:child_process')
+    const child = spawn(process.execPath, ['scripts/app-bridge-server.mjs'], {
+      cwd: process.cwd(), stdio: 'ignore', detached: true,
+    })
+    child.unref()
+    console.log('[vite-sandbox] 应用桥/MCP 已启动 (127.0.0.1:5275)')
+  } catch (e) {
+    console.warn('[vite-sandbox] 应用桥启动失败:', e.message)
+  }
+}
+
+
 const cwd = process.cwd()
 const origNative = fs.realpathSync.native
 let probePending = true

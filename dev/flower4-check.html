@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>fl4: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1000px;height:640px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, sc, state
+f.addEventListener('load', () => { win = f.contentWindow; state = win.__fastTree; sc = win.__fastTreeScene })
+setTimeout(async () => {
+  try {
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(700)
+    const lv = state.params.leaves
+    lv.cardMode = false; lv.shape = 'trumpet'; lv.flower3d = true
+    const tri = () => { const g = sc.leafMesh.geometry; return g.index ? g.index.count / 3 : g.attributes.position.count / 3 }
+    const run = async (patch, label) => {
+      Object.assign(lv, patch)
+      win.__fastTreeSceneApi.rebuildNow(true); await sleep(1100)
+      const t = tri(), n = state.stats.leaves
+      bar(label + ': 每朵≈' + (t / n).toFixed(1) + ' 三角形  总叶面=' + t)
+    }
+    await run({ flowerQuality: 'high', flowerPetals: true, flowerCluster: 1 }, '① 质量=高 花瓣层=开 花簇=1')
+    await run({ flowerPetals: false }, '② 关花瓣层')
+    await run({ flowerQuality: 'medium' }, '③ 质量=中')
+    await run({ flowerQuality: 'low' }, '④ 质量=低 (远景档)')
+    await run({ flowerQuality: 'high', flowerCluster: 3 }, '⑤ 花簇=3 朵')
+    await run({ flowerCluster: 1 })
+    // 花蕊颜色: 检查顶点色里是否出现淡黄 (r,g 高 b 低)
+    const col = sc.leafMesh.geometry.attributes.color.array
+    let yellow = 0
+    for (let i = 0; i < col.length; i += 3) {
+      if (col[i] > 0.7 && col[i+1] > 0.65 && col[i+2] < 0.5) yellow++
+    }
+    bar('⑥ 淡黄色顶点数(花蕊)=' + yellow + ' 花蕊颜色=' + state.params.leaves.flowerStamenColor)
+    let bad = 0
+    for (const p of (sc.renderer.info.programs || [])) if (p.diagnostics && (p.diagnostics.vertexShader || p.diagnostics.fragmentShader || p.diagnostics.programLog)) bad++
+    bar('⑦ 着色器编译失败=' + bad)
+    bar('errs=none')
+    document.title = 'FL4-OK :: ' + L.join(' || ').slice(0, 1300)
+  } catch (e) { document.title = 'FL4-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 300) }
+}, 3000)
+</script></body></html>

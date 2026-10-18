@@ -43,6 +43,7 @@
 </template>
 
 <script setup>
+import { startBridgeClient } from '../core/appApi.js'
 import { onBeforeUnmount, onMounted, ref, watch, computed } from 'vue'
 import { TreeScene } from '../core/sceneManager.js'
 import { serializeGroup } from '../core/params.js'
@@ -70,6 +71,7 @@ let fpsFrames = 0
 let lastCustomCode = ''
 
 onMounted(() => {
+  startBridgeClient()
   scene = new TreeScene(host.value, {
     onStats: (s) => { state.stats = s; state.ready = true },
     onShaderError: (msg) => { state.shaderError = msg },

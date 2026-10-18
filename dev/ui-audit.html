@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>ui-audit: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:11.5px monospace">
+<iframe id="f" src="/" style="width:1200px;height:760px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+let win, doc
+const errors = []
+f.addEventListener('load', () => {
+  win = f.contentWindow
+  doc = f.contentDocument
+  win.addEventListener('error', (e) => errors.push('error: ' + (e.message || '')))
+  win.addEventListener('unhandledrejection', (e) => errors.push('reject: ' + (e.reason && e.reason.message ? e.reason.message : e.reason)))
+})
+setTimeout(async () => {
+  try {
+    await sleep(2500)
+    const tabs = [...doc.querySelectorAll('.tab')].map((t) => ({ el: t, name: t.textContent.trim() }))
+    line('检查标签页数=' + tabs.length)
+    let totalIssues = 0
+    for (const t of tabs) {
+      t.el.click()
+      await sleep(900)
+      const panel = doc.querySelector('.sidebar') || doc.body
+      const issues = []
+      // 1) 竖排/被压扁的按钮: 宽 < 22 或 高 > 2.4 倍字号
+      for (const b of panel.querySelectorAll('.chip, button')) {
+        if (!b.offsetParent) continue
+        const cs = win.getComputedStyle(b)
+        const fs2 = parseFloat(cs.fontSize) || 11
+        const r = b.getBoundingClientRect()
+        if (r.width > 0 && r.width < 22) issues.push('窄按钮 ' + (b.textContent || '').trim().slice(0, 8) + ' w=' + Math.round(r.width))
+        else if (r.height > fs2 * 3.2) issues.push('高按钮 ' + (b.textContent || '').trim().slice(0, 8) + ' h=' + Math.round(r.height))
+      }
+      // 2) 破图
+      for (const im of panel.querySelectorAll('img')) {
+        if (im.complete && im.naturalWidth === 0 && im.parentElement.style.display !== 'none') issues.push('破图 ' + (im.src || '').split('/').pop())
+      }
+      // 3) 横向溢出
+      if (panel.scrollWidth > panel.clientWidth + 4) {
+        const pr = panel.getBoundingClientRect()
+        const cands = []
+        for (const el of panel.querySelectorAll('*')) {
+          if (!el.offsetParent) continue
+          const cs = win.getComputedStyle(el)
+          if (cs.position === 'fixed' || cs.position === 'absolute') continue
+          if (el.closest('.chat-fab')) continue
+          const r = el.getBoundingClientRect()
+          const over = r.right - pr.right
+          if (over > 2) cands.push({ el, over })
+        }
+        cands.sort((a, b) => b.over - a.over)
+        const worst = cands[0]
+        issues.push('横向溢出 ' + (panel.scrollWidth - panel.clientWidth) + 'px' + (worst ? ' 元凶=' + cands.slice(0, 3).map((c) => c.el.tagName.toLowerCase() + '.' + (c.el.className || '').split(' ')[0] + '+' + Math.round(c.over)).join(' ') : ''))
+      }
+      // 4) NaN / undefined 文本
+      const txt = panel.innerText || ''
+      if (/NaN|undefined/.test(txt)) issues.push('文本含 NaN/undefined')
+      totalIssues += issues.length
+      line((issues.length ? '❌ ' : '✅ ') + t.name + (issues.length ? ' — ' + issues.slice(0, 4).join(' | ') : ''))
+    }
+    line('--- 运行时错误: ' + (errors.length ? errors.slice(0, 3).join(' | ') : '无'))
+    line('--- 合计问题数=' + totalIssues)
+    document.title = (totalIssues === 0 && errors.length === 0 ? 'UI-AUDIT-OK' : 'UI-AUDIT-ISSUES:' + totalIssues) + ' :: ' + R.join(' || ').slice(0, 1500)
+  } catch (e) {
+    document.title = 'UI-AUDIT-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 300)
+  }
+}, 2500)
+</script></body></html>

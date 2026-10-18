@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>flower: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1100px;height:700px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let doc, win, state
+f.addEventListener('load', () => { win = f.contentWindow; state = win.__fastTree; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(600)
+    const tabMat = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('材质'))
+    tabMat.click(); await sleep(7000)
+    const chips = [...doc.querySelectorAll('.chip')].map((c) => c.textContent.trim()).filter((t) => /秋色系|绿色系|桦树|樱花/.test(t))
+    bar('批次按钮=' + JSON.stringify(chips))
+    // 点「⑤ 樱花 A」-> 缩略图应是 flower1 前缀, 破图 0
+    const fl = [...doc.querySelectorAll('.chip')].find((c) => c.textContent.includes('樱花 A'))
+    if (fl) { fl.click(); await sleep(2000) }
+    const imgs = [...doc.querySelectorAll('.chip.dot img')]
+    const broken = imgs.filter((i) => i.complete && i.naturalWidth === 0 && i.parentElement.style.display !== 'none')
+    const names = imgs.map((i) => i.src.split('/').pop()).filter((n) => n.includes('flower'))
+    bar('樱花缩略图=' + names.length + ' 样例=' + JSON.stringify(names.slice(0, 3)) + ' 破图=' + broken.length)
+    // 应用第一张樱花卡 -> 叶片材质贴图应换成樱花
+    const mod = await import('/src/core/leafCards.generated.js')
+    const card = mod.LEAF_CARDS.find((c) => c.batch === 'fl_batch1')
+    win.__fastTreeApi.applyLeafCard(card.id)
+    await sleep(2200)
+    const lm = win.__fastTreeScene.materials.leaf
+    bar('应用樱花卡 ' + card.id + ': map=' + !!lm.map + ' 文件名=' + (lm.map && lm.map.image ? (lm.map.image.src || '').split('/').pop() : '-') + ' 叶片数=' + win.__fastTree.stats.leaves)
+    bar('errs=none')
+    document.title = 'FLOWER-OK :: ' + L.join(' || ').slice(0, 1200)
+  } catch (e) { document.title = 'FLOWER-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 300) }
+}, 3000)
+</script></body></html>

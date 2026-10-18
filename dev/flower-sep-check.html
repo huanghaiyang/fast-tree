@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>sep: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1100px;height:700px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state, sc
+f.addEventListener('load', () => { win = f.contentWindow; state = win.__fastTree; sc = win.__fastTreeScene; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(800)
+    // 三个系统同时开启: 树叶 + 花朵 + 果实
+    state.params.leaves.enabled = true
+    state.params.flower.enabled = true
+    state.params.fruit.enabled = true
+    state.params.leaves.cardMode = false
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1500)
+    const m = sc
+    bar('① 网格: 树叶=' + !!m.leafMesh + ' 花朵=' + !!m.flowerMesh + ' 果实=' + !!m.fruitMesh + ' 树干=' + !!m.barkMesh)
+    bar('① 统计: 叶=' + state.stats.leaves + ' 花=' + state.stats.flowers + ' 果=' + (state.stats.fruits !== undefined ? state.stats.fruits : state.stats.fruit) +
+        ' 叶三角=' + state.stats.leafTriangles + ' 花三角=' + state.stats.flowerTriangles)
+    bar('① 三者同时存在=' + (!!m.leafMesh && !!m.flowerMesh && state.stats.leaves > 0 && state.stats.flowers > 0))
+    // ② 独立开关: 只关树叶, 花朵应保留
+    state.params.leaves.enabled = false
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1200)
+    bar('② 关树叶后: 树叶网格=' + !!sc.leafMesh + ' 花朵网格=' + !!sc.flowerMesh + ' 花朵数=' + state.stats.flowers)
+    // ③ 只关花朵, 树叶应回来
+    state.params.leaves.enabled = true
+    state.params.flower.enabled = false
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1200)
+    bar('③ 关花朵后: 树叶网格=' + !!sc.leafMesh + ' 花朵网格=' + !!sc.flowerMesh + ' 叶数=' + state.stats.leaves)
+    // ④ 花朵面板存在且可改参数
+    state.params.flower.enabled = true
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1000)
+    const tab = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('花朵'))
+    if (tab) tab.click(); await sleep(1200)
+    const labels = [...doc.querySelectorAll('.row-head label')].map((e) => e.textContent.trim())
+    bar('④ 花朵面板标签数=' + labels.length + ' 样例=' + JSON.stringify(labels.slice(0, 6)))
+    let bad = 0
+    for (const p of (sc.renderer.info.programs || [])) if (p.diagnostics && (p.diagnostics.vertexShader || p.diagnostics.fragmentShader || p.diagnostics.programLog)) bad++
+    bar('⑤ 着色器编译失败=' + bad)
+    bar('errs=none')
+    document.title = 'SEP-OK :: ' + L.join(' || ').slice(0, 1300)
+  } catch (e) { document.title = 'SEP-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 300) }
+}, 3000)
+</script></body></html>

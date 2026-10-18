@@ -11,7 +11,11 @@
     "selftest": "node scripts/selftest.mjs",
     "audit": "node scripts/audit-params.mjs",
     "sandbox:dev": "node scripts/vite-sandbox.mjs dev",
-    "sandbox:build": "node scripts/vite-sandbox.mjs build"
+    "sandbox:build": "node scripts/vite-sandbox.mjs build",
+    "mcp": "node scripts/app-bridge-server.mjs",
+    "mcp:check": "node scripts/mcp-selfcheck.mjs",
+    "review": "node scripts/code-review.mjs",
+    "check": "node scripts/code-review.mjs && node scripts/selftest.mjs && node scripts/audit-params.mjs && node scripts/vite-sandbox.mjs build && node scripts/mcp-selfcheck.mjs"
   },
   "dependencies": {
     "three": "^0.186.1",

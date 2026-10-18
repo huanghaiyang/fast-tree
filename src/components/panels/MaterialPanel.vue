@@ -164,17 +164,17 @@
   <Section title="内置叶片卡片" hint="Leaf Cards" :default-collapsed="true">
     <ToggleRow label="贴图卡片模式" v-model="lv.cardMode"
       hint="叶形轮廓直接用贴图 alpha (照片级); 关闭则用程序化叶形轮廓" />
-    <div class="inline">
+    <div class="chips">
       <span class="muted">批次</span>
       <button v-for="bt in batches" :key="bt" class="chip" :class="{ active: batch === bt }"
         @click="batch = bt; row = leafCardRows(bt)[0]; col = 1">{{ batchLabel(bt) }} · {{ batchRealCount(bt) === null ? batchCount(bt) + '…' : batchRealCount(bt) }}</button>
     </div>
-    <div class="inline">
+    <div class="chips">
       <span class="muted">叶形</span>
       <button v-for="r in leafCardRows(batch)" :key="r" class="chip" :class="{ active: row === r }"
         @click="row = r; col = 1">#{{ r }}</button>
     </div>
-    <div class="inline">
+    <div class="chips">
       <span class="muted">颜色变体</span>
       <button v-for="cd in variantCards" :key="cd.id" class="chip dot"
         :class="{ active: lm.texture === cd.url }" :style="{ background: 'transparent' }"

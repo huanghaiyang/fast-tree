@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>fltex: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1000px;height:640px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state, sc
+f.addEventListener('load', () => { win = f.contentWindow; state = win.__fastTree; sc = win.__fastTreeScene; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(700)
+    // 三维花冠 + 樱花照片贴图
+    state.params.leaves.cardMode = false
+    state.params.leaves.shape = 'trumpet'
+    state.params.leaves.flower3d = true
+    state.params.leaves.flowerLobes = 5
+    state.params.leaves.flowerThickness = 0.05
+    const mod = await import('/src/core/leafCards.generated.js')
+    win.__fastTreeApi.applyLeafCard(mod.LEAF_CARDS.find((c) => c.batch === 'fl_batch1').id)
+    await sleep(600)
+    state.params.leaves.cardMode = false      // 保持三维花冠几何
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1500)
+    const lm = sc.materials.leaf
+    bar('① 三维花冠 + 贴图: map=' + !!lm.map + ' 文件名=' + (lm.map && lm.map.image ? (lm.map.image.src || '').split('/').pop() : '-'))
+    bar('① alphaTest=' + lm.alphaTest.toFixed(2) + ' (三维花冠应为 0, 否则贴图 alpha 会打洞)')
+    const g = sc.leafMesh.geometry
+    const pos = g.attributes.position.array
+    let zmin = 1e9, zmax = -1e9
+    for (let i = 2; i < pos.length; i += 3) { if (pos[i] < zmin) zmin = pos[i]; if (pos[i] > zmax) zmax = pos[i] }
+    bar('② 三维程度: Z 跨度=' + (zmax - zmin).toFixed(2) + ' 顶点=' + (pos.length / 3) + ' 三角形=' + (g.index ? g.index.count / 3 : pos.length / 9))
+    bar('② 叶片数=' + state.stats.leaves + ' 总三角形=' + (state.stats.barkTriangles + state.stats.leafTriangles))
+    // ③ 关掉三维 -> 退回平面卡片 (Z 跨度显著变小)
+    state.params.leaves.flower3d = false
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1200)
+    const g2 = sc.leafMesh.geometry
+    const p2 = g2.attributes.position.array
+    let z2min = 1e9, z2max = -1e9
+    for (let i = 2; i < p2.length; i += 3) { if (p2[i] < z2min) z2min = p2[i]; if (p2[i] > z2max) z2max = p2[i] }
+    bar('③ 关闭三维花冠: Z 跨度=' + (z2max - z2min).toFixed(2) + ' 三角形=' + (g2.index ? g2.index.count / 3 : p2.length / 9))
+    let bad = 0
+    for (const p of (sc.renderer.info.programs || [])) if (p.diagnostics && (p.diagnostics.vertexShader || p.diagnostics.fragmentShader || p.diagnostics.programLog)) bad++
+    bar('④ 着色器编译失败=' + bad)
+    bar('errs=none')
+    document.title = 'FLTEX-OK :: ' + L.join(' || ').slice(0, 1200)
+  } catch (e) { document.title = 'FLTEX-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 300) }
+}, 3000)
+</script></body></html>

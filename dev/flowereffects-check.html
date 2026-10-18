@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>feff: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1100px;height:700px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state, sc
+f.addEventListener('load', () => { win = f.contentWindow; state = win.__fastTree; sc = win.__fastTreeScene; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(800)
+    state.params.flower.enabled = true
+    // 用樱花卡片当花朵贴图
+    const mod = await import('/src/core/leafCards.generated.js')
+    win.__fastTreeApi.applyFlowerCard(mod.LEAF_CARDS.find((c) => c.batch === 'fl_batch1').id)
+    state.params.flower.cardMode = false
+    await sleep(600)
+    // 落花 + 落花堆积
+    state.params.flowerFall.enabled = true
+    state.params.flowerLitter.enabled = true
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(2000)
+    bar('① 花朵: 数=' + state.stats.flowers + ' mesh=' + !!sc.flowerMesh + ' 贴图=' + ((sc.materials.flower && sc.materials.flower.map && sc.materials.flower.map.image) ? '有' : '无'))
+    bar('② 落花: mesh=' + !!sc.flowerFallMesh + ' 点数=' + (sc.flowerFallMesh ? sc.flowerFallMesh.geometry.attributes.position.count : 0))
+    bar('③ 落花堆积: mesh=' + !!sc.flowerLitterMesh + ' 顶点=' + (sc.flowerLitterMesh ? sc.flowerLitterMesh.geometry.attributes.position.count : 0))
+    bar('④ 落叶/堆积仍独立: 落叶=' + !!sc.fallMesh + ' 堆积=' + !!sc.litterMesh)
+    // ⑤ 换花朵贴图 -> 落花贴图也应跟着换
+    const before = sc.flowerFallMesh && sc.flowerFallMesh.material.uniforms.uMap ? sc.flowerFallMesh.material.uniforms.uMap.value : null
+    win.__fastTreeApi.applyFlowerCard(mod.LEAF_CARDS.filter((c) => c.batch === 'fl_batch2')[3].id)
+    await sleep(2500)
+    const after = sc.flowerFallMesh && sc.flowerFallMesh.material.uniforms.uMap ? sc.flowerFallMesh.material.uniforms.uMap.value : null
+    bar('⑤ 换花朵卡片后 落花贴图更新=' + (!!before && !!after && before !== after))
+    let bad = 0
+    for (const p of (sc.renderer.info.programs || [])) if (p.diagnostics && (p.diagnostics.vertexShader || p.diagnostics.fragmentShader || p.diagnostics.programLog)) bad++
+    bar('⑥ 着色器编译失败=' + bad)
+    bar('errs=none')
+    document.title = 'FEFF-OK :: ' + L.join(' || ').slice(0, 1200)
+  } catch (e) { document.title = 'FEFF-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 300) }
+}, 3000)
+</script></body></html>

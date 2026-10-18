@@ -50,6 +50,11 @@ const typeOptions = [
 </script>
 
 <style scoped>
+:deep(.inline), :deep(.chips) { flex-wrap: wrap; }
+:deep(.row), :deep(.grid-2) { min-width: 0; }
+:deep(select), :deep(input), :deep(textarea) { max-width: 100%; }
+:deep(.row-head label) { overflow: hidden; text-overflow: ellipsis; }
+
 .chips { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .chip {
   padding: 2px 8px; font-size: 11px; color: var(--text-2);

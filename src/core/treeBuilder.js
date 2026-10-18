@@ -65,6 +65,23 @@ export function buildTree(params) {
 
   const barkParts = []
   const leafAcc = new GeoAcc()
+  // 花朵: 独立累加器 + 复用树叶的"记录附件点 -> 后置生成"策略
+  const FL = P.flower || {}
+  const flowerAcc = FL.enabled ? new GeoAcc() : null
+  const flowerSpots = []
+  const makeFlowerTemplate = (shape) => (FL.cardMode
+    ? buildLeafCardTemplate({
+        aspect: FL.cardAspect || 1, cols: 1, rows: 3,
+        curl: FL.cardCurl === undefined ? 0.1 : FL.cardCurl,
+        fold: FL.cardFold === undefined ? 0.12 : FL.cardFold,
+      })
+    : buildLeafTemplate({
+        shape,
+        segments: FL.segments,
+        flower3d: FL.flower3d, flowerLobes: FL.flowerLobes, flowerThickness: FL.flowerThickness,
+        flowerStamen: FL.flowerStamen, flowerTilt: FL.flowerTilt, flowerQuality: FL.flowerQuality,
+        flowerPetals: FL.flowerPetals, flowerCluster: FL.flowerCluster,
+      }))
   const makeTemplate = (shape) => (L.cardMode
     ? buildLeafCardTemplate({
         aspect: L.cardAspect || 1,
@@ -75,6 +92,8 @@ export function buildTree(params) {
       })
     : buildLeafTemplate({
         shape, segments: L.segments, curl: L.curl, fold: L.fold, petiole: L.petiole,
+        flower3d: L.flower3d, flowerLobes: L.flowerLobes, flowerThickness: L.flowerThickness, flowerStamen: L.flowerStamen, flowerTilt: L.flowerTilt,
+        flowerQuality: L.flowerQuality, flowerPetals: L.flowerPetals, flowerCluster: L.flowerCluster,
       }))
   const leafTemplate = makeTemplate(L.shape)
   // 叶形混合: shapeMix 里每一项都生成一个模板, 实例化时按权重随机挑
@@ -90,6 +109,7 @@ export function buildTree(params) {
     : [leafTemplate]
   const maxLeaves = Math.max(0, Math.round((P.lod && P.lod.maxLeaves) || 60000))
   const leafRng = makeRng(P.seed, 'leaves')
+  const stamenColor = new THREE.Color(L.flowerStamenColor || '#f4e6a6')
   const fruitRng = makeRng(P.seed, 'fruit')
   let fruitCount = 0
   const fruitAttach = []   // 挂果点 (自检用)
@@ -123,7 +143,8 @@ export function buildTree(params) {
   /* 叶片                                                                */
   /* ------------------------------------------------------------------ */
   const spawnLeaves = (frames, level, branchWind, parentSlot) => {
-    if (!L.enabled || leafCount >= maxLeaves) return
+    // 花朵独立: 即使树叶关闭, 也要跑位置采集 (否则花朵没有附着点)
+    if ((!L.enabled && !FL.enabled) || leafCount >= maxLeaves) return
     const rng = leafRng
     const perBranch = Math.max(1, Math.round(L.perBranch))
     const clusterCount = Math.max(1, Math.round(L.clusterCount))
@@ -191,7 +212,7 @@ export function buildTree(params) {
         const g0 = Math.min(0.98, 0.5 + rng.next() * 0.4)
         const g1 = Math.min(1.0, g0 + 0.14)
 
-        if (leafSlot < 0) {
+        if (L.enabled && leafSlot < 0) {
           levelLeafCounter[level] = (levelLeafCounter[level] || 0) + 1
           leafSlot = addSlot({
             type: 'leaves',
@@ -205,13 +226,21 @@ export function buildTree(params) {
 
         // 叶形混合: 同一棵树可以混用多种叶形 (不同树种叶形差别很大)
         const tpl = leafTemplates.length > 1 ? rng.pick(leafTemplates) : leafTemplate
-        pushLeafInstance(
+        if (L.enabled) pushLeafInstance(
           leafAcc, tpl,
           { x: xA, y: yA, z: zA }, scale, pos,
           tintA, tintB, wind, phase,
           pos.clone(), g0, g1, leafSlot,
+          tpl.stamenRange ? stamenColor : null,
         )
-        if (slots[leafSlot]) slots[leafSlot].meta.leaves++
+        if (L.enabled && slots[leafSlot]) slots[leafSlot].meta.leaves++
+        // 记录一个可开花的位置 (花朵后置生成, 与树叶几何完全分离)
+        if (flowerAcc) {
+          flowerSpots.push({
+            xA: xA.clone(), yA: yA.clone(), zA: zA.clone(), pos: pos.clone(),
+            wind, phase, origin: pos.clone(), g0, g1,
+          })
+        }
         leafCount++
       }
     }
@@ -322,7 +351,8 @@ export function buildTree(params) {
 
     if (level < branchParams.levels) spawnChildren(frames, level, length, rng, wind0, wind1, mySlot)
     const leafIdx = level - 1
-    if (L.enabled && L.levels[leafIdx]) spawnLeaves(frames, level, wind1, mySlot)
+    // 花朵独立: 树叶关闭时仍要跑 spawnLeaves 采集开花位置 (只是不写入叶片几何)
+    if ((L.enabled || FL.enabled) && L.levels[leafIdx]) spawnLeaves(frames, level, wind1, mySlot)
     if (F.enabled && effFruitLevels[leafIdx]) spawnFruit(frames, level, wind1, mySlot)
   }
 
@@ -641,6 +671,50 @@ export function buildTree(params) {
   })()
   const leafGeometry = leafAcc.vertexCount > 0 ? leafAcc.build() : null
 
+  /* ---- 花朵: 从记录的位置里按密度采样, 用花朵自己的模板/尺寸/颜色生成 ---- */
+  let flowerGeometry = null
+  let flowerCount = 0
+  if (flowerAcc && flowerSpots.length && FL.enabled) {
+    const fMix = Array.isArray(FL.shapeMix)
+      ? FL.shapeMix.filter((m) => m && m.shape && (m.weight === undefined || m.weight > 0))
+      : []
+    const fTpls = fMix.length
+      ? fMix.flatMap((m) => {
+          const tpl = makeFlowerTemplate(m.shape)
+          const n = Math.max(1, Math.round((m.weight === undefined ? 1 : m.weight) * 8))
+          return new Array(n).fill(tpl)
+        })
+      : [makeFlowerTemplate(FL.shape || 'trumpet')]
+    const flowerSlot = addSlot({
+      type: 'flowers', level: FL.level || 3, group: 'flowers', name: '花朵',
+      parent: trunkSlot, meta: { leaves: 0, clusters: 0 },
+    })
+    const fSize = FL.size === undefined ? 0.42 : FL.size
+    const fWidth = FL.width === undefined ? 1 : FL.width
+    const fScale = new THREE.Vector3(fSize * fWidth, fSize, fSize * fWidth)
+    const c0 = new THREE.Color(FL.color || '#f2a7c3')
+    const c1 = new THREE.Color(FL.colorTip || '#fbe3ec')
+    const stamenCol = new THREE.Color(FL.flowerStamenColor || '#f4e6a6')
+    const density = Math.max(0.02, Math.min(1, FL.density === undefined ? 1 : FL.density))
+    const stride = Math.max(1, Math.round(1 / density))
+    const fRng = makeRng(P.seed, 'flowers')
+    for (let i = 0; i < flowerSpots.length; i += stride) {
+      const s = flowerSpots[i]
+      const tpl = fTpls[Math.floor(fRng.next() * fTpls.length) % fTpls.length]
+      const jitter = 1 + fRng.signed() * (FL.colorVariance === undefined ? 0.16 : FL.colorVariance) * 0.3
+      pushLeafInstance(
+        flowerAcc, tpl,
+        { x: s.xA, y: s.yA, z: s.zA }, fScale, s.pos,
+        c0.clone().multiplyScalar(jitter), c1.clone().multiplyScalar(jitter),
+        s.wind, s.phase, s.origin, s.g0, s.g1, flowerSlot,
+        tpl.stamenRange ? stamenCol : null,
+      )
+      flowerCount++
+    }
+    if (flowerSlot >= 0 && slots[flowerSlot]) slots[flowerSlot].meta.leaves = flowerCount
+    if (flowerAcc.vertexCount > 0) flowerGeometry = flowerAcc.build()
+  }
+
   const { nodes, groups } = finalizeNodes(slots, barkGeometry, leafGeometry)
 
   const bInfo = boxInfo(barkGeometry)
@@ -652,11 +726,12 @@ export function buildTree(params) {
   return {
     barkGeometry,
     leafGeometry,
+    flowerGeometry,
     nodes,
     groups,
     stats: {
       branches: branchCount,
-      leaves: leafCount,
+      leaves: L.enabled ? leafCount : 0,
     fruit: fruitCount,
     fruitAttach,
     fruitOrient,
@@ -664,6 +739,9 @@ export function buildTree(params) {
       leafTriangles: leafGeometry && leafGeometry.index ? leafGeometry.index.count / 3 : 0,
       barkVertices: barkGeometry.attributes.position ? barkGeometry.attributes.position.count : 0,
       leafVertices: leafGeometry ? leafGeometry.attributes.position.count : 0,
+    flowers: flowerCount,
+    flowerTriangles: flowerGeometry && flowerGeometry.index ? flowerGeometry.index.count / 3 : 0,
+    flowerVertices: flowerGeometry ? flowerGeometry.attributes.position.count : 0,
       buildMs: now() - t0,
       height: maxY - minY,
       spread: maxXZ,

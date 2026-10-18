@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>trumpet: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1000px;height:640px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state, sc
+f.addEventListener('load', () => { win = f.contentWindow; state = win.__fastTree; sc = win.__fastTreeScene; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    // 樱花树种 + 关闭卡片模式 (走程序化喇叭形)
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring')
+    await sleep(800)
+    state.params.leaves.cardMode = false
+    state.params.leaves.shape = 'trumpet'
+    state.params.leafMat.texture = ''
+    win.__fastTreeSceneApi.rebuildNow(true)
+    await sleep(1200)
+    bar('① 樱花+喇叭形: 叶片数=' + state.stats.leaves + ' 叶形=' + state.params.leaves.shape + ' 卡片模式=' + state.params.leaves.cardMode)
+    const leaf = sc.materials.leaf
+    bar('① 程序化贴图已生成=' + !!(leaf.map && leaf.map.image) + ' 尺寸=' + (leaf.map && leaf.map.image ? leaf.map.image.width + 'x' + leaf.map.image.height : '-'))
+    // 取贴图的 alpha 轮廓: 底部窄、顶部宽 = 喇叭
+    const img = leaf.map.image
+    const cv = doc.createElement('canvas'); cv.width = 64; cv.height = 64
+    const cx = cv.getContext('2d'); cx.drawImage(img, 0, 0, 64, 64)
+    const px = cx.getImageData(0, 0, 64, 64).data
+    const rowWidth = (y) => { let n = 0; for (let x = 0; x < 64; x++) if (px[(y * 64 + x) * 4 + 3] > 40) n++; return n }
+    const topW = rowWidth(8), midW = rowWidth(32), botW = rowWidth(58)
+    bar('① alpha 轮廓 顶部宽=' + topW + ' 中部=' + midW + ' 底部=' + botW)
+    bar('① 是喇叭形(底部细<顶部宽)=' + (botW < topW * 0.6 && topW > 8))
+    // ② 钟形
+    state.params.leaves.shape = 'bell'
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1000)
+    bar('② 钟形叶形可用=' + !!(sc.materials.leaf.map && sc.materials.leaf.map.image))
+    // ③ 编译检查
+    let bad = 0
+    for (const p of (sc.renderer.info.programs || [])) if (p.diagnostics && (p.diagnostics.vertexShader || p.diagnostics.fragmentShader || p.diagnostics.programLog)) bad++
+    bar('③ 着色器编译失败=' + bad)
+    bar('errs=none')
+    document.title = 'TRUMPET-OK :: ' + L.join(' || ').slice(0, 1100)
+  } catch (e) { document.title = 'TRUMPET-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 300) }
+}, 3000)
+</script></body></html>

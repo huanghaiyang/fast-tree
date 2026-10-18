@@ -149,7 +149,16 @@ export function defaultParams() {
       size: 0.42,          // 叶片长度(米)
       sizeVariance: 0.28,
       width: 0.78,         // 宽/长
-      shape: 'oval',       // oval | birch | maple | needle | lance
+      shape: 'oval',       // oval | birch | maple | needle | lance | trumpet | bell
+      flower3d: true,      // 喇叭/钟形花: true = 真三维漏斗网格 (双壳有厚度); false = 平面卡片
+      flowerLobes: 5,      // 花瓣数 (3~8)
+      flowerThickness: 0.05, // 花冠壁厚 (0 = 单层面)
+      flowerStamen: true,   // 花冠中心的花蕊
+      flowerTilt: 45,       // 花冠上仰角 (度): 花口朝上而不是顺枝朝外
+      flowerQuality: 'high', // 花冠质量档 (近似 LOD): high 双壳+花蕊+花瓣层 / medium 单壳+花蕊 / low 单壳无细节
+      flowerPetals: true,   // 花瓣分层 (花口向外翻出的独立花瓣)
+      flowerCluster: 1,     // 一簇几朵花 (1~5)
+      flowerStamenColor: '#f4e6a6', // 花蕊颜色 (独立于花瓣色)
       segments: 5,
       curl: 0.18,          // 纵向弯曲
       fold: 0.28,          // 横向 V 形折叠
@@ -259,6 +268,69 @@ export function defaultParams() {
       texture: '',         // 用户上传的贴图(dataURL)
       normalTexture: '',
       procedural: { enabled: true, style: 'rough', scale: 1.0, contrast: 0.5 },
+    },
+
+    // ---------------- 花朵 (独立于树叶, 但基础功能继承树叶) ----------------
+    flower: {
+      enabled: false,        // 与树叶可同时开启
+      inheritLeaves: true,   // true = 未显式设置的字段沿用 leaves 的值
+      levels: [false, true, true, true, true],
+      perBranch: 4,          // 每个枝端的花簇数
+      density: 1,            // 开花密度 (按比例从树叶位置采样)
+      clusterCount: 2,       // 每个点位几朵花
+      size: 0.42,            // 花朵尺寸 (通常比叶大)
+      width: 1.0,
+      shape: 'trumpet',
+      shapeMix: [{ shape: 'trumpet', weight: 3 }, { shape: 'bell', weight: 1 }],
+      color: '#f2a7c3',
+      colorTip: '#fbe3ec',
+      colorVariance: 0.16,
+      translucency: 0.7,
+      cardMode: false,       // 花朵默认用程序化三维花冠
+      texture: '',           // 花朵贴图 (与树叶独立; 三维花冠会把它作为表面花纹包裹)
+      tintMode: 'texture',   // 花朵贴图染色模式 (同树叶)
+      alphaTest: 0,          // 花朵贴图 alpha 裁切 (平面花卡模式才需要)
+      normalFromAlbedo: 0,   // 花朵贴图自动法线 (可选)
+      cardId: '',
+      cardAspect: 1,
+      flower3d: true,
+      flowerQuality: 'high',
+      flowerPetals: true,
+      flowerLobes: 5,
+      flowerThickness: 0.05,
+      flowerStamen: true,
+      flowerStamenColor: '#f4e6a6',
+      flowerTilt: 45,
+      flowerCluster: 1,
+    },
+
+    // ---------------- 落花 / 落花堆积 (参照落叶实现) ----------------
+    flowerFall: {
+      enabled: false,
+      cardId: '',          // 空 = 跟随花朵贴图
+      count: 140,
+      speed: 0.9,
+      size: 0.5,
+      swirl: 0.8,
+      spinSpeed: 1.6,
+      stagger: 0.55,
+      spread: 1.1,
+      windFollow: 0.85,
+      color: '#f6c6d8',
+      opacity: 0.95,
+      alphaTest: 0.3,
+    },
+    flowerLitter: {
+      enabled: false,
+      cardId: '',          // 空 = 跟随花朵贴图
+      count: 320,
+      radius: 1.25,
+      size: 0.42,
+      thickness: 0.02,
+      color: '#f2b8cf',
+      colorVariance: 0.35,
+      alphaTest: 0.3,
+      shade: 0.82,
     },
 
     // ---------------- 树叶材质 ----------------
@@ -391,7 +463,7 @@ export function normalizeParams(p) {
   return out
 }
 
-const GEOMETRY_KEYS = ['seed', 'auto', 'trunk', 'roots', 'branches', 'leaves', 'fruit', 'lod']
+const GEOMETRY_KEYS = ['seed', 'auto', 'trunk', 'roots', 'branches', 'leaves', 'flower', 'fruit', 'lod']
 const MATERIAL_KEYS = ['bark', 'leafMat', 'custom', 'particles', 'fall', 'litter']
 const WIND_KEYS = ['wind']
 const SCENE_KEYS = ['scene', 'growth']

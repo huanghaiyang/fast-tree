@@ -6,3 +6,6 @@ dist/
 *.log
 .DS_Store
 Thumbs.db
+
+# 大模型 Key (仅本地, 不提交)
+config/llm.json

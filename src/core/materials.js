@@ -410,6 +410,35 @@ export function createBarkMaterial(params, sharedUniforms) {
   return mat
 }
 
+/** 花朵材质参数: 在树叶材质参数基础上, 用花朵自己的贴图/染色/裁切覆盖 */
+function flowerLeafParams(params) {
+  const f = params.flower || {}
+  return {
+    ...params,
+    leafMat: {
+      ...params.leafMat,
+      texture: f.texture || '',
+      normalTexture: f.normalTexture || '',
+      tintMode: f.tintMode || 'texture',
+      alphaTest: f.alphaTest === undefined ? 0 : f.alphaTest,
+      normalFromAlbedo: f.normalFromAlbedo || 0,
+      translucency: f.translucency === undefined ? params.leafMat.translucency : f.translucency,
+    },
+  }
+}
+
+/** 花朵材质 (独立实例: 可以有和树叶不同的贴图/着色) */
+export function createFlowerMaterial(params, sharedUniforms) {
+  const mat = createLeafMaterial(flowerLeafParams(params), sharedUniforms)
+  mat.userData.kind = 'flower'
+  return mat
+}
+
+export function updateFlowerMaterial(mat, params, sharedUniforms) {
+  updateLeafMaterial(mat, flowerLeafParams(params), sharedUniforms)
+  return mat
+}
+
 export function createLeafMaterial(params, sharedUniforms) {
   const p = params.leafMat
   const mat = new THREE.MeshStandardMaterial({
@@ -524,7 +553,13 @@ export function updateLeafMaterial(mat, params, sharedUniforms) {
   const p = params.leafMat
   mat.roughness = p.roughness
   mat.metalness = p.metalness
-  mat.alphaTest = p.alphaTest
+  // 三维花冠的 UV 是"绕周向+沿轴向"的包裹贴图, 贴图的 alpha 不再代表轮廓 ->
+  // 这时不能用 alphaTest (否则照片卡片会在花冠上打出一堆洞)
+  const lv = params.leaves || {}
+  const isFlower = lv.shape === 'trumpet' || lv.shape === 'bell' ||
+    (Array.isArray(lv.shapeMix) && lv.shapeMix.some((x) => x && (x.shape === 'trumpet' || x.shape === 'bell')))
+  const is3dFlower = lv.flower3d !== false && isFlower
+  mat.alphaTest = is3dFlower ? 0 : p.alphaTest
   mat.side = p.doubleSided ? THREE.DoubleSide : THREE.FrontSide
   mat.color.set(0xffffff)
   // 叶片自发光: 用叶色做底, 强度由滑杆控制 (让背光/阴影里的叶子不至于死黑)
@@ -606,6 +641,7 @@ export function updateGrowthUniforms(uniforms, growth, value) {
 export function updateMaterials(mats, params) {
   updateBarkMaterial(mats.bark, params, mats.uniforms)
   updateLeafMaterial(mats.leaf, params, mats.uniforms)
+  if (mats.flower) updateFlowerMaterial(mats.flower, params, mats.uniforms)
   updateWindUniforms(mats.uniforms, params.wind)
   mats.uniforms.uSeed.value = params.seed % 1000
   return mats

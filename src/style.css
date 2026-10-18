@@ -240,7 +240,8 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-.inline { display: flex; align-items: center; gap: 8px; }
+.inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.chip { white-space: nowrap; }
 .wrap { display: flex; flex-wrap: wrap; gap: 6px; }
 .muted { color: var(--fg-dim); font-size: 11px; }
 .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
@@ -412,3 +413,8 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
   0% { background: rgba(80, 220, 170, 0.30); }
   100% { background: transparent; }
 }
+
+/* 行内容器允许收缩, 数字输入限制宽度 (避免窄侧栏被撑出横向滚动) */
+.row, .row-head, .grid-2, .section-body { min-width: 0; }
+.row-head { flex-wrap: wrap; }
+input.num { width: 64px; max-width: 40%; min-width: 0; }

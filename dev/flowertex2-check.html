@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>fltex2: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1100px;height:700px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state, sc
+f.addEventListener('load', () => { win = f.contentWindow; state = win.__fastTree; sc = win.__fastTreeScene; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(700)
+    state.params.leaves.enabled = true
+    state.params.flower.enabled = true
+    state.params.leaves.cardMode = false
+    // 树叶用一张樱花卡, 花朵用另一张 -> 两者材质贴图必须不同
+    const mod = await import('/src/core/leafCards.generated.js')
+    const fl = mod.LEAF_CARDS.filter((c) => c.batch === 'fl_batch1')
+    const leafCard = mod.LEAF_CARDS.find((c) => c.batch === 'batch2')
+    win.__fastTreeApi.applyLeafCard(leafCard.id)
+    await sleep(500)
+    state.params.flower.texture = fl[5].url
+    state.params.flower.cardMode = false
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1600)
+    const lm = sc.materials.leaf, fm = sc.materials.flower
+    const name = (m) => (m && m.map && m.map.image ? (m.map.image.src || '').split('/').pop() : '-')
+    bar('① 树叶材质贴图=' + name(lm))
+    bar('① 花朵材质贴图=' + name(fm) + ' (独立材质=' + (!!fm && fm !== lm) + ')')
+    bar('① 两者贴图不同=' + (name(lm) !== name(fm)))
+    bar('① 花朵网格用花朵材质=' + (sc.flowerMesh && sc.flowerMesh.material === fm))
+    // ② 关掉花朵贴图应回到无贴图
+    state.params.flower.texture = ''
+    sc.updateMaterialParams(state.params); await sleep(800)
+    bar('② 清空花朵贴图后 花朵 map=' + !!sc.materials.flower.map + ' 树叶 map=' + !!sc.materials.leaf.map)
+    // ③ 花朵独立透明度/透光不影响树叶
+    state.params.flower.translucency = 0.2
+    state.params.leafMat.translucency = 0.9
+    sc.updateMaterialParams(state.params); await sleep(500)
+    const fu = sc.materials.flower.userData.uniforms, lu = sc.materials.leaf.userData.uniforms
+    bar('③ 透光: 花朵=' + fu.uTranslucency.value + ' 树叶=' + lu.uTranslucency.value + ' 独立=' + (fu.uTranslucency.value !== lu.uTranslucency.value))
+    let bad = 0
+    for (const p of (sc.renderer.info.programs || [])) if (p.diagnostics && (p.diagnostics.vertexShader || p.diagnostics.fragmentShader || p.diagnostics.programLog)) bad++
+    bar('④ 着色器编译失败=' + bad)
+    bar('errs=none')
+    document.title = 'FLTEX2-OK :: ' + L.join(' || ').slice(0, 1300)
+  } catch (e) { document.title = 'FLTEX2-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 300) }
+}, 3000)
+</script></body></html>

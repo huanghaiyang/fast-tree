@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>fp: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1100px;height:700px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state
+f.addEventListener('load', () => { win = f.contentWindow; state = win.__fastTree; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    // 打开花朵面板, 检查是否报错 (ref is not defined 会让面板整个渲染失败)
+    const tab = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('花朵'))
+    if (tab) tab.click()
+    await sleep(1800)
+    const labels = [...doc.querySelectorAll('.row-head label, .pick-label')].map((e) => e.textContent.trim())
+    bar('① 花朵面板元素数=' + labels.length)
+    bar('① 有"内置花朵卡片"=' + labels.some((x) => x.includes('内置花朵卡片')))
+    bar('① 有"启用落花"=' + labels.includes('启用落花'))
+    bar('① 有"启用落花堆积"=' + labels.includes('启用落花堆积'))
+    const chips = [...doc.querySelectorAll('.chip')].filter((c) => /樱花|秋色|桦树|绿色/.test(c.textContent))
+    bar('② 批次按钮=' + JSON.stringify(chips.slice(0, 4).map((c) => c.textContent.trim())))
+    const imgs = [...doc.querySelectorAll('.chip.dot img')]
+    const broken = imgs.filter((i) => i.complete && i.naturalWidth === 0 && i.parentElement.style.display !== 'none')
+    bar('② 花朵卡片缩略图=' + imgs.length + ' 破图=' + broken.length)
+    // ③ 点一张樱花卡 -> 花朵贴图应更新
+    const fl = [...doc.querySelectorAll('.chip')].find((c) => c.textContent.includes('樱花 A'))
+    if (fl) { fl.click(); await sleep(900) }
+    const card = doc.querySelector('.chip.dot')
+    if (card) { card.click(); await sleep(1200) }
+    bar('③ 点卡片后 花朵贴图=' + (state.params.flower.texture || '(空)').split('/').pop() + ' cardMode=' + state.params.flower.cardMode)
+    bar('errs=none')
+    document.title = 'FP-OK :: ' + L.join(' || ').slice(0, 1100)
+  } catch (e) { document.title = 'FP-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 300) }
+}, 3000)
+</script></body></html>

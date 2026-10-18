@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>funnel: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1000px;height:640px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state, sc
+f.addEventListener('load', () => { win = f.contentWindow; state = win.__fastTree; sc = win.__fastTreeScene; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(700)
+    state.params.leaves.cardMode = false
+    state.params.leaves.shape = 'trumpet'
+    state.params.leafMat.texture = ''
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1200)
+    const leaf = sc.leafMesh
+    const g = leaf.geometry
+    const pos = g.attributes.position.array
+    const n = g.attributes.count !== undefined ? g.attributes.count : pos.length / 3
+    // 统计 Z 方向厚度 (平面卡片 ~0, 三维花冠明显)
+    let zmin = 1e9, zmax = -1e9
+    for (let i = 2; i < pos.length; i += 3) { if (pos[i] < zmin) zmin = pos[i]; if (pos[i] > zmax) zmax = pos[i] }
+    bar('① 叶片网格: 顶点=' + (pos.length / 3) + ' 三角形=' + (g.index ? g.index.count / 3 : pos.length / 9))
+    bar('① Z 方向跨度=' + (zmax - zmin).toFixed(2) + ' (平面卡片接近 0, 三维花冠应有明显跨度)')
+    bar('① 是三维=' + (zmax - zmin > 1))
+    bar('① 叶片数=' + state.stats.leaves + ' 叶片三角形=' + state.stats.leafTriangles + ' 总三角形=' + (state.stats.barkTriangles + state.stats.leafTriangles))
+    // ② 单朵花的局部厚度: 统计 UV 相同环上的半径变化不好算, 用整体 Z 跨度/树高近似
+    bar('② 树高=' + state.stats.height.toFixed(2) + 'm  Z 跨度/树高=' + ((zmax - zmin) / state.stats.height).toFixed(2))
+    let bad = 0
+    for (const p of (sc.renderer.info.programs || [])) if (p.diagnostics && (p.diagnostics.vertexShader || p.diagnostics.fragmentShader || p.diagnostics.programLog)) bad++
+    bar('③ 着色器编译失败=' + bad)
+    bar('errs=none')
+    document.title = 'FUNNEL-OK :: ' + L.join(' || ').slice(0, 1100)
+  } catch (e) { document.title = 'FUNNEL-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 300) }
+}, 3000)
+</script></body></html>

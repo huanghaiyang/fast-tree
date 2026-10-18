@@ -371,6 +371,28 @@ export function applyLeafCard(cardId, opts = {}) {
 }
 
 /** 随机换一张内置叶片卡片 (可指定批次/叶形) */
+/** 应用一张内置卡片作为花朵贴图 (参照树叶 applyLeafCard) */
+export function applyFlowerCard(cardId) {
+  const card = LEAF_CARD_BY_ID.get(cardId) || LEAF_CARDS.find((c) => c.id === cardId)
+  if (!card) return false
+  const f = state.params.flower
+  f.texture = card.url
+  f.cardId = card.id
+  f.cardMode = true
+  f.cardAspect = card.aspect || 1
+  f.tintMode = 'texture'
+  f.alphaTest = 0.35
+  if (!f.enabled) f.enabled = true
+  return true
+}
+
+/** 随机一张花朵卡片 */
+export function randomFlowerCard() {
+  const pool = LEAF_CARDS.filter((c) => /^fl_|flower/i.test(c.batch) || c.batch.startsWith('fl_') || c.batch === 'batch1' || c.batch === 'batch2')
+  const card = pool[Math.floor(Math.random() * pool.length)]
+  return card ? applyFlowerCard(card.id) : false
+}
+
 /** 生成伪装卡 (atlas = 图集伪装卡, cross = 交叉卡) */
 export function doGenerateImpostor(opts = {}) {
   state.impostorBusy = true
@@ -493,6 +515,7 @@ if (typeof window !== 'undefined' && import.meta.env && import.meta.env.DEV) {
   window.__fastTreeApi = {
     pushUndo, doAutoGenerate, doApplyPreset, setSeed, randomizeSeed,
     doGenerateImpostor, downloadImpostor, setImpostorPreview,
+    applyFlowerCard, randomFlowerCard,
     applyClassification, randomClassification, applyLeafCard, randomLeafCard,
   }
 }

@@ -100,6 +100,48 @@ export const CONDITIONS = {
   'leafMat.vertexColorMix': { 'leafMat.tintMode': 'custom' },
   // 无贴图时 texture/season 都会回落到 1, 靠 custom 模式 + 自定义强度体现差异
   'leafMat.tintMode': { 'leafMat.vertexColorMix': 0.3 },
+  // 花冠参数只在喇叭/钟形下生效
+  'leaves.flower3d': { 'leaves.shape': 'trumpet' },
+  'leaves.flowerLobes': { 'leaves.shape': 'trumpet' },
+  'leaves.flowerThickness': { 'leaves.shape': 'trumpet' },
+  'leaves.flowerStamen': { 'leaves.shape': 'trumpet' },
+  'leaves.flowerTilt': { 'leaves.shape': 'trumpet' },
+  // 花朵默认关闭: 审计花朵参数时先启用
+  'flower.enabled': { 'leaves.enabled': true },
+  'flower.inheritLeaves': { 'flower.enabled': true },
+  'flower.levels': { 'flower.enabled': true },
+  'flower.perBranch': { 'flower.enabled': true },
+  'flower.clusterCount': { 'flower.enabled': true },
+  'flower.size': { 'flower.enabled': true },
+  'flower.width': { 'flower.enabled': true },
+  'flower.shape': { 'flower.enabled': true },
+  'flower.shapeMix': { 'flower.enabled': true },
+  'flower.color': { 'flower.enabled': true },
+  'flower.colorTip': { 'flower.enabled': true },
+  'flower.colorVariance': { 'flower.enabled': true },
+  'flower.translucency': { 'flower.enabled': true },
+  'flower.cardMode': { 'flower.enabled': true },
+  'flower.cardId': { 'flower.enabled': true },
+  'flower.cardAspect': { 'flower.enabled': true },
+  'flower.flower3d': { 'flower.enabled': true },
+  'flower.flowerQuality': { 'flower.enabled': true },
+  'flower.flowerPetals': { 'flower.enabled': true },
+  'flower.flowerLobes': { 'flower.enabled': true },
+  'flower.flowerThickness': { 'flower.enabled': true },
+  'flower.flowerStamen': { 'flower.enabled': true },
+  'flower.flowerStamenColor': { 'flower.enabled': true },
+  'flower.flowerTilt': { 'flower.enabled': true },
+  'flower.flowerCluster': { 'flower.enabled': true },
+  'flower.density': { 'flower.enabled': true },
+  'flower.texture': { 'flower.enabled': true },
+  'flower.tintMode': { 'flower.enabled': true },
+  'flower.vertexColorMix': { 'flower.enabled': true },
+  'flower.alphaTest': { 'flower.enabled': true },
+  'flower.normalFromAlbedo': { 'flower.enabled': true },
+  'leaves.flowerQuality': { 'leaves.shape': 'trumpet' },
+  'leaves.flowerPetals': { 'leaves.shape': 'trumpet' },
+  'leaves.flowerCluster': { 'leaves.shape': 'trumpet' },
+  'leaves.flowerStamenColor': { 'leaves.shape': 'trumpet' },
   // 卡片几何子参数只在"卡片模式"下生效
   'leaves.cardAspect': { 'leaves.cardMode': true },
   'leaves.cardCurl': { 'leaves.cardMode': true },
@@ -129,11 +171,13 @@ export const DOM_DEPENDENT = new Set([
   'bark.procedural.enabled', 'bark.procedural.style', 'bark.procedural.scale', 'bark.procedural.contrast',
   'bark.texture', 'bark.normalTexture', 'bark.normalFromAlbedo', 'bark.uvWarp', 'bark.uvWarpScale',
   'leafMat.texture', 'leafMat.normalTexture', 'leafMat.normalFromAlbedo',
+  'flower.texture', 'flower.normalFromAlbedo', 'flower.alphaTest',
   // 粒子是场景级效果 (Points + 顶点着色器动画, 需要渲染器), Node 侧无法比较
   'particles.enabled', 'particles.count', 'particles.size', 'particles.speed', 'particles.fall',
   'particles.sway', 'particles.swirl', 'particles.color', 'particles.opacity', 'particles.glow',
   'particles.spread', 'particles.windFollow',
   // 落叶是场景级效果 (合批几何 + 顶点着色器动画), Node 侧无法比较
+  'flowerFall.enabled', 'flowerFall.cardId', 'flowerFall.count', 'flowerFall.speed', 'flowerFall.size', 'flowerFall.swirl', 'flowerFall.spinSpeed', 'flowerFall.stagger', 'flowerFall.spread', 'flowerFall.windFollow', 'flowerFall.color', 'flowerFall.opacity', 'flowerFall.alphaTest', 'flowerLitter.enabled', 'flowerLitter.cardId', 'flowerLitter.count', 'flowerLitter.radius', 'flowerLitter.size', 'flowerLitter.thickness', 'flowerLitter.color', 'flowerLitter.colorVariance', 'flowerLitter.alphaTest', 'flowerLitter.shade',
   'fall.enabled', 'fall.count', 'fall.speed', 'fall.size', 'fall.swirl', 'fall.spinSpeed',
   'fall.cardId', 'fall.stagger', 'fall.spread', 'fall.windFollow', 'fall.color', 'fall.opacity', 'fall.alphaTest',
   // 落叶堆积同样是场景级 (合批几何 + 地面贴图)
@@ -173,12 +217,15 @@ function geometrySignature(params) {
       .map((k) => (geo.attributes[k] ? hashArray(geo.attributes[k].array) : '-'))
       .join(',')
     : 'none'
+  const fl = r.flowerGeometry
   return [
     g.attributes.position.count,
     attrs(g),
     l ? l.attributes.position.count + '|' + attrs(l) : 'noleaf',
+    fl ? fl.attributes.position.count + '|' + attrs(fl) : 'noflower',
     r.stats.branches,
     r.stats.leaves,
+    r.stats.flowers,
     r.stats.height.toFixed(3),
     r.stats.spread.toFixed(3),
     r.nodes.length,
@@ -193,6 +240,7 @@ const SPECIAL_PERTURB = {
   'lod.maxLeaves': [5, 30],        // 只有上限真的卡住时才看得出来
   'leafMat.tintMode': ['custom', 'texture'],
   'leaves.shapeMix': [[{ shape: 'oak', weight: 2 }, { shape: 'needle', weight: 1 }]],
+  'flower.shapeMix': [[{ shape: 'bell', weight: 2 }, { shape: 'trumpet', weight: 1 }]],
   'trunk.knots': [9],              // 0/1 附近不明显
   'roots.count': [11],
 }
@@ -421,6 +469,10 @@ export const AUDIT_EXEMPT = {
   'custom.fragment': '自定义 GLSL 片段 (同上)',
   'custom.enabled': '自定义 GLSL 开关 (同上)',
   'seed': '改变整棵树的随机子流 (几何签名已覆盖)',
+  'flower.shapeMix[0].weight': '混合权重只决定模板重复比例; 基准参数只有 1 项混合时不可观测 (形状由 flower.shape 覆盖)',
+  'flower.shapeMix[0].shape': '混合里的单项形状; 基准只有 1 项时等价于 flower.shape (已单独审计)',
+  'leaves.shapeMix[0].weight': '同 flower.shapeMix: 单项时权重不可观测',
+  'leaves.shapeMix[0].shape': '同 flower.shapeMix: 单项形状等价于 leaves.shape',
 }
 
 export function runAudit(opts = {}) {

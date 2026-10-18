@@ -57,6 +57,30 @@ export const LEAF_OUTLINES = {
     const dry = 0.86 + 0.14 * Math.cos(t * Math.PI * 7 + 1.3)
     return base * dry * 0.5
   },
+  /**
+   * 喇叭花冠 (trumpet / 漏斗形): 花梗端细长, 向上迅速外扩成喇叭口,
+   * 口沿有 5 裂的轻微起伏 —— 用于樱花之外的"喇叭状花朵"叶形
+   * (t=0 花梗端, t=1 花口)
+   */
+  trumpet: (t) => {
+    // 花梗段 (前 18%): 细管
+    if (t < 0.18) return 0.028 + 0.012 * (t / 0.18)
+    const k = (t - 0.18) / 0.82            // 0..1 从花管到花口
+    // 指数扩张 -> 底部收得紧、口部张得开 (真正的喇叭曲线)
+    const flare = Math.pow(k, 2.1)
+    const width = 0.055 + 0.46 * flare
+    // 口沿 5 裂起伏 (瓣裂)
+    const lip = 1 + 0.10 * Math.sin(k * Math.PI * 5) * Math.pow(k, 3)
+    return width * lip
+  },
+  /** 钟形/风铃花 (bell): 比 trumpet 更圆, 口部略收 */
+  bell: (t) => {
+    if (t < 0.16) return 0.03
+    const k = (t - 0.16) / 0.84
+    const width = 0.06 + 0.42 * Math.pow(k, 1.5) - 0.10 * Math.pow(k, 6)
+    const lobes = 1 + 0.07 * Math.sin(k * Math.PI * 4 + 0.6)
+    return Math.max(0.02, width) * lobes
+  },
 }
 
 export const LEAF_SHAPE_KEYS = Object.keys(LEAF_OUTLINES)
@@ -110,10 +134,141 @@ export function buildLeafCardTemplate(o = {}) {
 }
 
 /**
- * 单位叶片模板 (无索引 -> 由 pushLeafInstance 直接写入三角面)
- * @returns {{positions:number[], normals:number[], uvs:number[], index:number[], vertexCount:number}}
+ * 三维喇叭/钟形花冠模板
+ * ------------------------------------------------------------
+ * 用旋转体 (funnel) 网格代替平面卡片: 轴向 Y 从 0(花梗) 到 1(花口),
+ * 半径由 LEAF_OUTLINES[shape] 给出, 口沿再叠加 5 瓣起伏。
+ * 顶点数可控 (rings × radial), 默认 4×8 = 32 顶点 / 48 三角形。
+ * @returns {{positions:number[], normals:number[], uvs:number[], index:number[], vertexCount:number, is3d:boolean}}
  */
+export function buildFunnelTemplate(o = {}) {
+  const shape = LEAF_OUTLINES[o.shape] || LEAF_OUTLINES.trumpet
+  // 质量档 (近似 LOD): high = 双壳+花蕊+花瓣层; medium = 单壳+花蕊; low = 单壳无细节
+  const quality = o.flowerQuality || 'high'
+  const rings = quality === 'low' ? 1 : Math.max(2, Math.round(o.flowerRings || 2))
+  const radial = Math.max(5, Math.round(o.flowerRadial || 6))
+  const lobes = Math.max(3, Math.min(8, Math.round(o.flowerLobes || 5)))
+  const thickness = quality === 'low' ? 0 : (o.flowerThickness === undefined ? 0.05 : o.flowerThickness)
+  const wantPetals = quality === 'high' && o.flowerPetals !== false
+  const wantStamen = quality !== 'low' && o.flowerStamen !== false
+  const cluster = Math.max(1, Math.min(5, Math.round(o.flowerCluster || 1)))
+  const tilt = ((o.flowerTilt === undefined ? 45 : o.flowerTilt) * Math.PI) / 180
+  const ct = Math.cos(tilt), st = Math.sin(tilt)
+  const tiltPoint = (p) => [p[0], p[1] * ct - p[2] * st, p[1] * st + p[2] * ct]
+
+  const positions = []
+  const uvs = []
+  const index = []
+  let stamenRange = null
+
+  const shells = thickness > 0.001 && quality !== 'low' ? [0, 1] : [0]
+  const ringPoint = (t, a, inner) => {
+    const r0 = shape(t)
+    const lobe = 1 + 0.18 * Math.pow(Math.abs(Math.cos((lobes * a) / 2)), 2) * Math.pow(t, 2.5)
+    const thick = inner ? -thickness * Math.pow(t, 0.6) : 0
+    const r = Math.max(0.004, r0 * lobe + thick)
+    const y = t + 0.06 * Math.pow(t, 3) * Math.cos(lobes * a) + (inner ? thickness * 0.5 * Math.pow(t, 1.2) : 0)
+    return tiltPoint([r * Math.cos(a), y, r * Math.sin(a)])
+  }
+
+  // 花簇: 一簇 N 朵, 围绕原点小范围错开 (各自有一点旋转/缩放差异)
+  for (let k = 0; k < cluster; k++) {
+    const ca = (k / cluster) * Math.PI * 2 + 0.7
+    const cd = cluster > 1 ? 0.16 : 0
+    const off = [Math.cos(ca) * cd, cluster > 1 ? 0.06 * (k % 2) : 0, Math.sin(ca) * cd]
+    const scl = cluster > 1 ? 0.78 : 1
+    const base = positions.length / 3
+    for (const inner of shells) {
+      const b2 = positions.length / 3
+      for (let i = 0; i <= rings; i++) {
+        const t = i / rings
+        for (let j = 0; j <= radial; j++) {
+          const a = (j / radial) * Math.PI * 2
+          const [x, y, z] = ringPoint(t, a, inner === 1)
+          positions.push(off[0] + x * scl, off[1] + y * scl, off[2] + z * scl)
+          uvs.push(j / radial, t)
+        }
+      }
+      for (let i = 0; i < rings; i++) {
+        for (let j = 0; j < radial; j++) {
+          const a0 = b2 + i * (radial + 1) + j
+          const a1 = a0 + 1
+          const b0 = b2 + (i + 1) * (radial + 1) + j
+          const b1 = b0 + 1
+          if (inner === 1) { index.push(a0, a1, b0); index.push(a1, b1, b0) }
+          else { index.push(a0, b0, a1); index.push(a1, b0, b1) }
+        }
+      }
+    }
+    // 花口封边
+    if (shells.length === 2) {
+      const ob = base
+      const ib = base + (rings + 1) * (radial + 1)
+      for (let j = 0; j < radial; j++) {
+        const o0 = ob + rings * (radial + 1) + j
+        const i0 = ib + rings * (radial + 1) + j
+        index.push(o0, i0, o0 + 1)
+        index.push(o0 + 1, i0, i0 + 1)
+      }
+    }
+    // 花瓣分层: 花口外再向外翻出 lobes 片花瓣 (每片 2 三角形, 带一点外卷)
+    if (wantPetals) {
+      const pb = positions.length / 3
+      for (let p = 0; p < lobes; p++) {
+        const a0 = (p / lobes) * Math.PI * 2
+        const a1 = ((p + 1) / lobes) * Math.PI * 2
+        const rIn = shape(1) * scl
+        const rOut = rIn * 1.55
+        const yIn = 1.0 * scl
+        const yOut = (1.0 + 0.16) * scl     // 花瓣外翻上翘
+        const pts = [
+          tiltPoint([Math.cos(a0) * rIn + off[0], yIn + off[1], Math.sin(a0) * rIn + off[2]]),
+          tiltPoint([Math.cos(a1) * rIn + off[0], yIn + off[1], Math.sin(a1) * rIn + off[2]]),
+          tiltPoint([Math.cos(a1) * rOut + off[0], yOut + off[1], Math.sin(a1) * rOut + off[2]]),
+          tiltPoint([Math.cos(a0) * rOut + off[0], yOut + off[1], Math.sin(a0) * rOut + off[2]]),
+        ]
+        for (const pt of pts) { positions.push(pt[0], pt[1], pt[2]); uvs.push(0.5, 1) }
+        index.push(pb + p * 4, pb + p * 4 + 1, pb + p * 4 + 2)
+        index.push(pb + p * 4, pb + p * 4 + 2, pb + p * 4 + 3)
+      }
+    }
+    // 花蕊: 记录顶点范围, 让实例化时用独立的颜色
+    if (wantStamen) {
+      const sBase = positions.length / 3
+      const segs = 5
+      const sr = 0.05 * scl
+      const y0 = 0.34, y1 = 0.82
+      for (let i = 0; i <= 1; i++) {
+        const rr = sr * (1 - 0.75 * i)
+        const y = y0 + (y1 - y0) * i
+        for (let j = 0; j <= segs; j++) {
+          const a = (j / segs) * Math.PI * 2
+          const pt = tiltPoint([off[0] + rr * Math.cos(a), off[1] + y * scl, off[2] + rr * Math.sin(a)])
+          positions.push(pt[0], pt[1], pt[2])
+          uvs.push(j / segs, 0.5 + 0.5 * i)
+        }
+      }
+      for (let j = 0; j < segs; j++) {
+        index.push(sBase + j, sBase + (segs + 1) + j, sBase + j + 1)
+        index.push(sBase + j + 1, sBase + (segs + 1) + j, sBase + (segs + 1) + j + 1)
+      }
+      stamenRange = [sBase, (segs + 1) * 2]
+    }
+  }
+
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+  geo.setIndex(index)
+  geo.computeVertexNormals()
+  const normals = Array.from(geo.attributes.normal.array)
+  geo.dispose()
+  return { positions, normals, uvs, index, vertexCount: positions.length / 3, is3d: true, stamenRange }
+}
+
 export function buildLeafTemplate(o = {}) {
+  // 喇叭/钟形花朵: 默认用真正的三维漏斗网格; 关掉 flower3d 则退回平面轮廓
+  if ((o.shape === 'trumpet' || o.shape === 'bell') && o.flower3d !== false) return buildFunnelTemplate(o)
   const shape = LEAF_OUTLINES[o.shape] || LEAF_OUTLINES.oval
   const rows = Math.max(2, Math.round(o.segments || 5))
   const curl = o.curl === undefined ? 0.18 : o.curl // 纵向弯曲 (单位空间, 会被 size 缩放)
@@ -172,8 +327,8 @@ export function buildLeafTemplate(o = {}) {
  * @param {THREE.Color} color0  叶基颜色
  * @param {THREE.Color} color1  叶尖颜色
  */
-export function pushLeafInstance(acc, tmpl, basis, scale, pos, color0, color1, wind, phase, origin, grow0, grow1, nodeId = 0) {
-  const { positions, normals, uvs, index } = tmpl
+export function pushLeafInstance(acc, tmpl, basis, scale, pos, color0, color1, wind, phase, origin, grow0, grow1, nodeId = 0, stamenColor = null) {
+  const { positions, normals, uvs, index, stamenRange } = tmpl
   const base = acc.vertexCount
   const n = tmpl.vertexCount
   for (let i = 0; i < n; i++) {
@@ -197,9 +352,11 @@ export function pushLeafInstance(acc, tmpl, basis, scale, pos, color0, color1, w
 
     const v = uvs[i * 2 + 1]
     const k = Math.pow(v, 0.75)
-    const r = color0.r + (color1.r - color0.r) * k
-    const g = color0.g + (color1.g - color0.g) * k
-    const b = color0.b + (color1.b - color0.b) * k
+    // 花蕊顶点用独立颜色 (不受花瓣调色板影响)
+    const inStamen = stamenColor && stamenRange && i >= stamenRange[0] && i < stamenRange[0] + stamenRange[1]
+    const r = inStamen ? stamenColor.r : color0.r + (color1.r - color0.r) * k
+    const g = inStamen ? stamenColor.g : color0.g + (color1.g - color0.g) * k
+    const b = inStamen ? stamenColor.b : color0.b + (color1.b - color0.b) * k
 
     acc.vertex(
       wx, wy, wz, nx, ny, nz,

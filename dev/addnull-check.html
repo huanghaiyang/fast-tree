@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>addnull: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1100px;height:700px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state, sc
+const errs = []
+f.addEventListener('load', () => {
+  win = f.contentWindow; doc = f.contentDocument
+  win.addEventListener('error', (e) => errs.push('error: ' + (e.message || '')))
+  win.addEventListener('unhandledrejection', (e) => errs.push('reject: ' + (e.reason && e.reason.message ? e.reason.message : e.reason)))
+})
+setTimeout(async () => {
+  try {
+    state = win.__fastTree; sc = win.__fastTreeScene
+    // 复现报错场景: 关树叶但开花朵, 且开落花/堆积
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(700)
+    state.params.leaves.enabled = false
+    state.params.flower.enabled = true
+    state.params.flowerFall.enabled = true
+    state.params.flowerLitter.enabled = true
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1600)
+    bar('① 关树叶+开花朵+落花+堆积: 树叶=' + !!sc.leafMesh + ' 花朵=' + !!sc.flowerMesh + ' 落花=' + !!sc.flowerFallMesh + ' 落花堆积=' + !!sc.flowerLitterMesh)
+    // 再切回来
+    state.params.leaves.enabled = true
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1500)
+    bar('② 恢复树叶: 树叶=' + !!sc.leafMesh + ' 花朵=' + !!sc.flowerMesh)
+    // 全部关闭
+    state.params.leaves.enabled = false
+    state.params.flower.enabled = false
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1500)
+    bar('③ 全关: 树叶=' + !!sc.leafMesh + ' 花朵=' + !!sc.flowerMesh + ' 落花=' + !!sc.flowerFallMesh)
+    bar('④ 运行时错误=' + (errs.length ? errs.slice(0, 3).join(' | ') : '无'))
+    document.title = (errs.length === 0 ? 'ADDN-NULL-OK' : 'ADDN-NULL-ERR') + ' :: ' + L.join(' || ').slice(0, 1000)
+  } catch (e) { document.title = 'ADDN-NULL-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 300) }
+}, 3000)
+</script></body></html>

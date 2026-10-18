@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>stamen: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1000px;height:640px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, sc, state
+f.addEventListener('load', () => { win = f.contentWindow; state = win.__fastTree; sc = win.__fastTreeScene })
+setTimeout(async () => {
+  try {
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(700)
+    state.params.leaves.cardMode = false
+    state.params.leaves.shape = 'trumpet'
+    state.params.leaves.flower3d = true
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1400)
+    const tri = () => { const g = sc.leafMesh.geometry; return g.index ? g.index.count / 3 : g.attributes.position.count / 3 }
+    const withS = tri(), leaves = state.stats.leaves
+    bar('① 含花蕊: 叶片三角形=' + withS + ' 叶片数=' + leaves + ' 每朵≈' + (withS / leaves).toFixed(1) + ' 三角形')
+    state.params.leaves.flowerStamen = false
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1200)
+    const withoutS = tri()
+    bar('② 关闭花蕊: 叶片三角形=' + withoutS + ' 每朵≈' + (withoutS / state.stats.leaves).toFixed(1))
+    bar('② 花蕊面数增量=' + (withS - withoutS) + ' (每朵 12)')
+    bar('② 花蕊真实生效=' + (withS > withoutS))
+    state.params.leaves.flowerStamen = true
+    state.params.leaves.flowerThickness = 0
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1200)
+    bar('③ 壁厚=0 (单层): 每朵≈' + (tri() / state.stats.leaves).toFixed(1) + ' 三角形')
+    state.params.leaves.flowerLobes = 8
+    state.params.leaves.flowerThickness = 0.05
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1200)
+    bar('④ 花瓣数=8: 每朵≈' + (tri() / state.stats.leaves).toFixed(1) + ' 三角形')
+    let bad = 0
+    for (const p of (sc.renderer.info.programs || [])) if (p.diagnostics && (p.diagnostics.vertexShader || p.diagnostics.fragmentShader || p.diagnostics.programLog)) bad++
+    bar('⑤ 着色器编译失败=' + bad)
+    bar('errs=none')
+    document.title = 'STAMEN-OK :: ' + L.join(' || ').slice(0, 1100)
+  } catch (e) { document.title = 'STAMEN-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 300) }
+}, 3000)
+</script></body></html>

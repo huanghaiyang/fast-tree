@@ -22,6 +22,24 @@
     <SliderRow label="大小随机" v-model="L.sizeVariance" :min="0" :max="0.8" :step="0.01" />
     <SliderRow label="宽/长比" v-model="L.width" :min="0.05" :max="1.6" :step="0.01" />
     <SelectRow label="叶片形状" v-model="L.shape" :options="shapes" />
+    <ToggleRow v-if="L.shape === 'trumpet' || L.shape === 'bell'" label="三维花冠" v-model="L.flower3d"
+      hint="开 = 真三维漏斗网格 (双壳有厚度, 内外壁都可见); 关 = 平面卡片" />
+    <SliderRow v-if="L.flower3d !== false && (L.shape === 'trumpet' || L.shape === 'bell')" label="花瓣数"
+      v-model="L.flowerLobes" :min="3" :max="8" :step="1" />
+    <SliderRow v-if="L.flower3d !== false && (L.shape === 'trumpet' || L.shape === 'bell')" label="花冠壁厚"
+      v-model="L.flowerThickness" :min="0" :max="0.15" :step="0.005" hint="0 = 单层面 (省面数); 越大越有厚度感" />
+    <SelectRow v-if="L.flower3d !== false && (L.shape === 'trumpet' || L.shape === 'bell')" label="花冠质量"
+      v-model="L.flowerQuality" :options="flowerQualityOptions" />
+    <ToggleRow v-if="L.flower3d !== false && (L.shape === 'trumpet' || L.shape === 'bell')" label="花瓣分层"
+      v-model="L.flowerPetals" hint="花口向外翻出独立花瓣 (每片 2 三角形)" />
+    <SliderRow v-if="L.flower3d !== false && (L.shape === 'trumpet' || L.shape === 'bell')" label="花簇数量"
+      v-model="L.flowerCluster" :min="1" :max="5" :step="1" hint="一个叶片点位放几朵花 (簇状更自然, 面数按倍数增长)" />
+    <ToggleRow v-if="L.flower3d !== false && (L.shape === 'trumpet' || L.shape === 'bell')" label="花蕊"
+      v-model="L.flowerTilt" :min="0" :max="90" :step="5" unit="°" hint="花口朝向: 0 = 顺枝条朝外, 45 = 斜向上 (樱花多数如此), 90 = 正朝上" />
+    <ToggleRow v-if="L.flower3d !== false && (L.shape === 'trumpet' || L.shape === 'bell')" label="花蕊"
+      v-model="L.flowerStamen" hint="花冠中心加一小簇雄蕊" />
+    <ColorRow v-if="L.flower3d !== false && L.flowerStamen !== false && (L.shape === 'trumpet' || L.shape === 'bell')" label="花蕊颜色"
+      v-model="L.flowerStamenColor" />
     <SliderRow label="叶片分段" v-model="L.segments" :min="2" :max="12" :step="1" />
     <SliderRow label="纵向弯曲 (curl)" v-model="L.curl" :min="-0.6" :max="0.6" :step="0.01" />
     <SliderRow label="横向折叠 (fold)" v-model="L.fold" :min="-0.4" :max="0.8" :step="0.01" />
@@ -64,12 +82,19 @@ import { state } from '../../store/treeStore.js'
 const L = state.params.leaves
 const lod = state.params.lod
 
+const flowerQualityOptions = [
+  { value: 'high', label: '高 (双壳+花蕊+花瓣层)' },
+  { value: 'medium', label: '中 (单壳+花蕊)' },
+  { value: 'low', label: '低 (单壳, 省面数)' },
+]
 const shapes = [
   { value: 'oval', label: '椭圆 oval' },
   { value: 'birch', label: '桦叶 birch' },
   { value: 'maple', label: '枫叶 maple' },
   { value: 'lance', label: '披针 lance' },
   { value: 'needle', label: '针叶 needle' },
+  { value: 'trumpet', label: '喇叭花 trumpet' },
+  { value: 'bell', label: '钟形花 bell' },
 ]
 </script>
 
