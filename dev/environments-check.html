@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>env: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+/* 环境预设自检: 白昼/黄昏/森林/雨林/沙漠/雪地/高原/黑夜/群星
+ * 驱动真实 Three 场景 + 真实 UI 按钮，逐项校验配色/光照/雾/地面/星空。 */
+import { ENVIRONMENTS } from '/src/core/environments.js'
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+let fail = 0
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+const check = (name, cond, detail = '') => {
+  if (!cond) fail++
+  line((cond ? '✔ ' : '✘ ') + name + (detail ? ' — ' + detail : ''))
+}
+async function waitFor(fn, timeout = 20000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { if (fn()) return true } catch (e) { /* ignore */ }
+    await sleep(100)
+  }
+  return false
+}
+const hex = (c) => (c && c.getHexString ? c.getHexString() : String(c || ''))
+const near = (a, b, eps = 0.02) => Math.abs(Number(a) - Number(b)) <= eps
+let win, doc
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    for (let i = 0; i < 120 && !win; i++) await sleep(100)
+    await waitFor(() => win.__fastTree && win.__fastTree.ready && win.__fastTreeScene, 30000)
+    const state = win.__fastTree
+    const scene = win.__fastTreeScene
+    const sceneP = state.params.scene
+    await sleep(400)
+
+    line('===== 环境预设 (共 ' + ENVIRONMENTS.length + ' 种) =====')
+    const treeMeshUuid = scene.barkMesh.uuid
+    const statsBefore = JSON.stringify({ tri: scene.stats.barkTriangles, leaves: scene.stats.leaves })
+    const backgrounds = new Set()
+
+    // 逐个套用并直接更新场景
+    for (const env of ENVIRONMENTS) {
+      Object.assign(sceneP, env.scene)
+      sceneP.env = env.id
+      scene.updateScene(sceneP)
+      await sleep(40)
+      backgrounds.add(env.scene.background.toLowerCase())
+      const bgOk = hex(scene.scene.background) === env.scene.background.replace('#', '').toLowerCase()
+      const sunOk = near(scene.sun.intensity, env.scene.sunIntensity, 0.01) &&
+        hex(scene.sun.color) === env.scene.sunColor.replace('#', '').toLowerCase()
+      const hemiOk = hex(scene.hemi.color) === env.scene.hemiSky.replace('#', '').toLowerCase() &&
+        hex(scene.hemi.groundColor) === env.scene.hemiGround.replace('#', '').toLowerCase()
+      const groundOk = hex(scene.groundMat.color) === env.scene.groundColor.replace('#', '').toLowerCase()
+      const exposureOk = near(scene.renderer.toneMappingExposure, env.scene.exposure, 0.001)
+      const starOk = env.scene.stars > 0
+        ? (scene.stars.visible === true && scene.starsMat.opacity > 0.2)
+        : scene.stars.visible === false
+      const fogOk = env.scene.fog === false ? scene.scene.fog === null : (!!scene.scene.fog && hex(scene.scene.fog.color) === env.scene.fogColor.replace('#', '').toLowerCase())
+      check(`[${env.icon} ${env.name}] 背景/太阳/环境光/地面/曝光/雾/星空`,
+        bgOk && sunOk && hemiOk && groundOk && exposureOk && starOk && fogOk,
+        `bg=${bgOk} sun=${sunOk} hemi=${hemiOk} ground=${groundOk} exp=${exposureOk} fog=${fogOk} stars=${starOk}`)
+    }
+
+    // 环境之间确实有视觉差异
+    check('所有环境背景色互不相同', backgrounds.size === ENVIRONMENTS.length, `${backgrounds.size}/${ENVIRONMENTS.length}`)
+    const night = ENVIRONMENTS.find((e) => e.id === 'night')
+    const day = ENVIRONMENTS.find((e) => e.id === 'daylight')
+    const snow = ENVIRONMENTS.find((e) => e.id === 'snow')
+    Object.assign(sceneP, night.scene); sceneP.env = 'night'; scene.updateScene(sceneP)
+    const nightLum = scene.scene.background.r + scene.scene.background.g + scene.scene.background.b
+    Object.assign(sceneP, day.scene); sceneP.env = 'daylight'; scene.updateScene(sceneP)
+    const dayLum = scene.scene.background.r + scene.scene.background.g + scene.scene.background.b
+    check('白昼背景明显比黑夜亮', dayLum > nightLum + 0.8, `${dayLum.toFixed(2)} vs ${nightLum.toFixed(2)}`)
+    check('切换环境不重建树几何 (网格 uuid 不变)', scene.barkMesh.uuid === treeMeshUuid)
+    check('切换环境不改变统计', JSON.stringify({ tri: scene.stats.barkTriangles, leaves: scene.stats.leaves }) === statsBefore)
+
+    // 星空点云
+    Object.assign(sceneP, ENVIRONMENTS.find((e) => e.id === 'starry').scene); sceneP.env = 'starry'; scene.updateScene(sceneP)
+    await sleep(120)
+    const starPos = scene.stars.geometry.attributes.position
+    check('群星: 星空点云已生成 (>=1000 颗)', !!starPos && starPos.count >= 1000, 'count=' + (starPos ? starPos.count : 0))
+    check('群星: 材质与可见性就绪', scene.stars.visible && scene.starsMat.size > 1.5 && scene.starsMat.opacity > 0.8)
+    await sleep(250)
+    check('星空跟随相机 (避免拉远消失)', scene.stars.position.distanceTo(scene.camera.position) < 0.05,
+      'd=' + scene.stars.position.distanceTo(scene.camera.position).toFixed(3))
+
+    // 真实 UI: 切到"场景"标签，点"雪地" chip
+    line('\n===== UI 预设按钮 =====')
+    const tabs = [...doc.querySelectorAll('.tab')]
+    const sceneTab = tabs.find((t) => (t.textContent || '').includes('场景'))
+    check('存在"场景"标签页', !!sceneTab)
+    sceneTab.click()
+    await sleep(300)
+    const chips = [...doc.querySelectorAll('.env-chip')]
+    check('环境按钮渲染完整', chips.length === ENVIRONMENTS.length, `chips=${chips.length}`)
+    const snowChip = chips.find((b) => (b.textContent || '').includes('雪地'))
+    check('存在"雪地"按钮', !!snowChip)
+    snowChip.click()
+    await sleep(500)
+    check('点击雪地按钮后 params.env = snow', sceneP.env === 'snow')
+    check('点击后场景背景已变白', hex(scene.scene.background) === snow.scene.background.replace('#', '').toLowerCase(),
+      '#' + hex(scene.scene.background))
+    check('点击后太阳/环境光同步更新',
+      near(scene.sun.intensity, snow.scene.sunIntensity, 0.01) && hex(scene.sun.color) === snow.scene.sunColor.replace('#', '').toLowerCase())
+    check('雪地按钮高亮 (active)', snowChip.classList.contains('active'))
+    check('雪地地面颜色已应用', hex(scene.groundMat.color) === snow.scene.groundColor.replace('#', '').toLowerCase())
+
+    // 手动微调仍可生效
+    sceneP.exposure = 1.5
+    scene.updateScene(sceneP)
+    check('预设后仍可手动微调 (曝光)', near(scene.renderer.toneMappingExposure, 1.5, 0.001))
+    sceneP.stars = 0.9
+    scene.updateScene(sceneP)
+    check('手动打开星空生效', scene.stars.visible === true)
+
+    line('\n结果: ' + (fail ? 'ENV-FAIL ' + fail : 'ENV-OK'))
+    document.title = (fail ? 'ENV-FAIL(' + fail + ')' : 'ENV-OK') + ' :: ' + R.filter((s) => s.startsWith('✘')).slice(0, 5).join(' | ')
+  } catch (e) {
+    document.title = 'ENV-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 900)
+    line('EX: ' + (e && e.stack ? e.stack : e))
+  }
+}, 2200)
+</script></body></html>

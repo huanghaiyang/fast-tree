@@ -398,6 +398,7 @@ export function defaultParams() {
 
     // ---------------- 场景 ----------------
     scene: {
+      env: 'custom',       // 最近一次应用的环境预设 (daylight/forest/...), 手动微调后保留名字
       background: '#111820',
       skyTop: '#2a3c52',
       skyBottom: '#111820',
@@ -407,12 +408,18 @@ export function defaultParams() {
       grid: true,
       wireframe: 'off',   // off | overlay (实体+线框) | only (仅线框看三角面)
       fog: true,
+      fogColor: '#111820',
+      fogScale: 1.0,      // 雾距离倍率: <1 雾更近, >1 雾更远
       shadows: true,
+      sunColor: '#fff2e0',
       sunAzimuth: 35,
       sunElevation: 40,
       sunIntensity: 3.3,
       ambient: 1.05,
       exposure: 1.25,
+      hemiSky: '#c8dcff',
+      hemiGround: '#3a2f24',
+      stars: 0,           // 星空强度 0..1
       autoRotate: false,
     },
 

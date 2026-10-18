@@ -3,7 +3,8 @@
  * 运行: npm run selftest
  */
 import { buildTree, selectionRanges } from '../src/core/treeBuilder.js'
-import { defaultParams, normalizeParams, MAX_LEVELS, GROUP_KEYS } from '../src/core/params.js'
+import { defaultParams, cloneParams, normalizeParams, MAX_LEVELS, GROUP_KEYS } from '../src/core/params.js'
+import { ENVIRONMENTS, ENV_IDS, envById, applyEnvironment } from '../src/core/environments.js'
 import { autoGenerate, autoWind, applyPreset, PRESETS } from '../src/core/presets.js'
 import {
   SPECIES, GROWTH_STAGES, SEASONS, composeTree, classificationName, allCombinations,
@@ -1263,6 +1264,59 @@ console.log('\n[24b] 动态 LOD 叶片抽样')
   check('关闭 AO 后叶片抽稀不改变树皮顶点色', fullC.barkGeometry.attributes.color.array.every((v, i) => v === lowC.barkGeometry.attributes.color.array[i]))
   check('LOD 参数齐全 (动态距离/保留比例)', ['dynamic', 'distance1', 'distance2', 'keep1', 'keep2', 'detail1', 'detail2', 'force']
     .every((k) => Object.prototype.hasOwnProperty.call(defaultParams().lod, k)))
+}
+
+/* 25. 环境预设 (天空/光照/雾/地面/星空) */
+console.log('\n[25] 环境预设')
+{
+  check('环境预设数量足够 (含需求里的 8 种)', ENVIRONMENTS.length >= 8, `${ENVIRONMENTS.length} 个: ${ENV_IDS.join(', ')}`)
+  check('环境 id / 名称唯一', new Set(ENV_IDS).size === ENVIRONMENTS.length && new Set(ENVIRONMENTS.map((e) => e.name)).size === ENVIRONMENTS.length)
+  const baseScene = defaultParams().scene
+  const knownKeys = new Set(Object.keys(baseScene))
+  const hexRe = /^#[0-9a-fA-F]{6}$/
+  let badKey = ''
+  let badColor = ''
+  let badRange = ''
+  for (const env of ENVIRONMENTS) {
+    for (const [k, v] of Object.entries(env.scene)) {
+      if (!knownKeys.has(k)) badKey += `${env.id}.${k} `
+      if (typeof v === 'string' && v.startsWith('#') && !hexRe.test(v)) badColor += `${env.id}.${k} `
+      if (k === 'stars' && !(typeof v === 'number' && v >= 0 && v <= 1)) badRange += `${env.id}.${k} `
+      if (k === 'sunElevation' && !(typeof v === 'number' && v >= -5 && v <= 88)) badRange += `${env.id}.${k} `
+    }
+  }
+  check('预设字段都属于 scene 参数 (无拼写错误)', badKey === '', badKey)
+  check('预设颜色都是合法 HEX', badColor === '', badColor)
+  check('星空/太阳高度数值在合法范围', badRange === '', badRange)
+
+  const p = defaultParams()
+  check('应用"雪地"设置 env 与配色', applyEnvironment(p.scene, 'snow') && p.scene.env === 'snow' && p.scene.groundColor === '#e6eef5')
+  check('未知预设返回 false 且不改参数', applyEnvironment(p.scene, 'nope') === false && p.scene.env === 'snow')
+  const pNight = defaultParams()
+  applyEnvironment(pNight.scene, 'night')
+  const pStars = defaultParams()
+  applyEnvironment(pStars.scene, 'starry')
+  const pDay = defaultParams()
+  applyEnvironment(pDay.scene, 'daylight')
+  check('黑夜/群星开启星空, 白昼关闭', pNight.scene.stars > 0 && pStars.scene.stars > pNight.scene.stars && pDay.scene.stars === 0,
+    `night=${pNight.scene.stars} starry=${pStars.scene.stars} day=${pDay.scene.stars}`)
+  const lum = (hex) => {
+    const c = hex.replace('#', '')
+    return (parseInt(c.slice(0, 2), 16) * 0.2126 + parseInt(c.slice(2, 4), 16) * 0.7152 + parseInt(c.slice(4, 6), 16) * 0.0722) / 255
+  }
+  check('雪地/沙漠比黑夜/群星亮', lum(pDay.scene.background) > 0.5 && lum(pNight.scene.background) < 0.1 && lum(pStars.scene.background) < 0.05)
+  const bgSet = new Set(ENVIRONMENTS.map((e) => e.scene.background))
+  check('环境之间有视觉区分 (背景色不重复)', bgSet.size === ENVIRONMENTS.length, `${bgSet.size}/${ENVIRONMENTS.length}`)
+
+  // 环境预设只影响场景, 不改变树几何
+  const baseP = normalizeParams(applyPreset(defaultParams(), 'oak', 'mature', 'summer'))
+  const g1 = buildTree(baseP)
+  const eParams = cloneParams(baseP)
+  applyEnvironment(eParams.scene, 'desert')
+  const g2 = buildTree(eParams)
+  const same = g1.barkGeometry.attributes.position.array.length === g2.barkGeometry.attributes.position.array.length &&
+    g1.barkGeometry.attributes.position.array.every((v, i) => v === g2.barkGeometry.attributes.position.array[i])
+  check('切换环境不改变树几何 (只改场景参数)', same)
 }
 
 /* 汇总 */

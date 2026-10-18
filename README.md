@@ -212,6 +212,7 @@ src/
    ├─ leaf.js          叶片模板 (5 种轮廓) + 实例化写入
    ├─ treeBuilder.js   递归生长 + finalizeNodes (节点表/id 重排/统计/包围盒) + selectionRanges
    ├─ ambientOcclusion.js  程序化 AO: 叶片点云空间哈希 + 顶点色烘焙 (Node 可复现)
+   ├─ environments.js  环境预设 (白昼/黄昏/森林/雨林/沙漠/雪地/高原/黑夜/群星)
    ├─ textures.js      程序化树皮/叶片贴图 (颜色+法线+粗糙度)
    ├─ materials.js     PBR + 风场/生长/自定义 GLSL + 节点选中高亮
    ├─ exporter.js      GLB / OBJ / JSON / PNG
@@ -219,7 +220,7 @@ src/
    ├─ appApi.js        浏览器侧命令执行器 + 本地桥客户端
    └─ sceneManager.js  渲染器/相机/灯光/天空/地面/动画循环/选中框/聚焦/相机基
 scripts/
-├─ selftest.mjs        196 项无浏览器自检 (含导出格式、AO、LOD 抽样)
+├─ selftest.mjs        207 项无浏览器自检 (含导出格式、AO、LOD、环境预设)
 ├─ paramAudit.mjs      参数有效性审计核心 (几何/材质/风场三路签名比对)
 ├─ audit-params.mjs    npm run audit 入口
 ├─ app-bridge-server.mjs  本地应用桥 / MCP 服务器 / 大模型代理 (Key 只在服务端)
@@ -270,6 +271,30 @@ Wind (Games)、Forces、Vertex Colors/AO、Level of Detail 与导出等章节，
 | `aOrigin` | 该枝条基点（生长动画的收缩目标） |
 | `aGrow` | 生长区间 `[start, end]` |
 | `aNodeId` | 所属模型节点 id（节点树的选中 / 高亮 / 隔离） |
+
+---
+
+## 环境预设
+
+「左侧参数面板 → 场景 → 环境预设」提供 9 个一键环境（[environments.js](src/core/environments.js)），
+切换只改场景参数、**不重建几何**，之后仍可逐项微调：
+
+| 预设 | 氛围 | 关键设置 |
+| --- | --- | --- |
+| ☀️ 白昼 | 晴朗正午 | 蓝天渐变 + 暖白太阳 + 草地 + 远景薄雾 |
+| 🌇 黄昏 | 低角度暖阳 | 橙紫渐变、长影、暖色雾 |
+| 🌲 森林 | 林下绿光 | 深绿天空/地面、林中薄雾、柔和暖阳 |
+| 🌴 雨林 | 高湿浓雾 | 顶部强光 + 深绿浓雾 + 低曝光 |
+| 🏜️ 沙漠 | 沙尘暖调 | 沙色天空/地面、强阳光、偏黄雾 |
+| ❄️ 雪地 | 冷色雪原 | 冷白天空/雪地、高环境光、低角度冬阳 |
+| 🏔️ 高原 | 高原强光 | 深蓝天空、强太阳、岩石草甸、几乎无雾 |
+| 🌙 黑夜 | 月光夜 | 冷色微光、暗地面、稀疏星空 |
+| ✨ 群星 | 深空星夜 | 极弱月光 + 2200 颗种子固定的星空点云（跟随相机） |
+
+新增场景参数：`sunColor`、`hemiSky`、`hemiGround`、`fogColor`、`fogScale`、`stars`、`env`；
+场景面板里都可以继续手动调。星空点云不参与阴影/雾，关闭时零绘制。
+
+> 环境目前只影响天空/光照/雾/地面/星空；雨雪沙尘等粒子天气、远景树种剪影尚未实现（可后续接现有粒子系统）。
 
 ---
 
@@ -331,7 +356,7 @@ npm run chat:check   # 对话链路自检 (需要 Key + 网络)
 ## 自检与诊断
 
 ```bash
-npm run selftest     # 196 项断言
+npm run selftest     # 207 项断言
 npm run audit        # 参数有效性审计 (改了就一定变)
 ```
 
@@ -379,6 +404,7 @@ node scripts/shot-receiver.mjs        # 监听 127.0.0.1:5274, 把页面回传�
 - `dev/classify-check.html` —— 点真实的树种/阶段/季节 chips, 验证重建/重新取景/生长进度不被重置
 - `dev/ui-check.html` —— hover 说明浮层 + 风向指示器箭头角度 + 不同风向下的屏幕摆动
 - `dev/speedtree-check.html` —— SpeedTree 风格功能自检: 相机拉远/拉近驱动动态 LOD (档位/面数递减/缓存复用/选中回全模)，AO 开关/强度/恢复对比
+- `dev/environments-check.html` —— 环境预设自检: 9 种环境的背景/太阳/环境光/地面/曝光/雾/星空逐项校验 + 真实点击「场景 → 环境预设」按钮；群星星空跟随相机、切环境不重建树几何
 - `dev/export-format-check.html` —— 导出数据格式自检: GLB 按 glTF 2.0 规范校验容器/accessor/min-max/贴图/节点并用官方 GLTFLoader 回读, OBJ 按 Wavefront 文法校验并用 OBJLoader 回读, PNG 校验签名/IHDR/CRC/IDAT/行滤波并确认非空帧, 参数 JSON 校验结构完整性与导入回环, 以及"特效全开时的富场景导出"
 - `dev/chat-check.html` —— 对话界面自检 (mock 流式接口): 历史记录/新对话隔离/图片多模态请求/思考过程/重新生成/引用/删除/收藏/置顶/归档/联网来源渲染, 不消耗真实模型调用
 - `dev/chat-live-check.html` —— 对话真实链路冒烟 (真实桥 + 真实模型): 文本对话/图片识别/联网搜索来源。先 `node scripts/app-bridge-server.mjs --port=5289` 再打开

@@ -15,6 +15,7 @@ import { buildLeafLitter, litterRebuildKey } from './litter.js'
 import { generateImpostor } from './impostor.js'
 import { boxInfo } from './mathUtils.js'
 import { cloneParams } from './params.js'
+import { makeRng } from './rng.js'
 
 const SKY_VERT = /* glsl */`
 varying vec3 vSkyPos;
@@ -99,6 +100,10 @@ export class TreeScene {
     this.sky.renderOrder = -1
     this.scene.add(this.sky)
 
+    // --- 星空 (黑夜 / 群星环境; 默认隐藏) ---
+    this.stars = this._createStars()
+    this.scene.add(this.stars)
+
     // --- 灯光 ---
     this.hemi = new THREE.HemisphereLight(0xc8dcff, 0x3a2f24, 0.95)
     this.scene.add(this.hemi)
@@ -164,6 +169,48 @@ export class TreeScene {
 
     this._loop = () => this.tick()
     this._raf = requestAnimationFrame(this._loop)
+  }
+
+  /** 星空点云: 半球随机分布 (种子固定, 每次启动一致); 跟随相机 */
+  _createStars() {
+    const rng = makeRng(20260214, 'starfield')
+    const n = 2200
+    const pos = new Float32Array(n * 3)
+    const col = new Float32Array(n * 3)
+    for (let i = 0; i < n; i++) {
+      const theta = rng.next() * Math.PI * 2
+      const y = 0.03 + rng.next() * 0.97
+      const r = Math.sqrt(Math.max(0, 1 - y * y))
+      const radius = 300 + rng.next() * 60
+      pos[i * 3] = Math.cos(theta) * r * radius
+      pos[i * 3 + 1] = y * radius
+      pos[i * 3 + 2] = Math.sin(theta) * r * radius
+      // 冷白 / 暖白 / 微蓝混合
+      const warm = rng.next()
+      col[i * 3] = 0.72 + warm * 0.28
+      col[i * 3 + 1] = 0.78 + rng.next() * 0.22
+      col[i * 3 + 2] = 0.9 + rng.next() * 0.1
+    }
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3))
+    const mat = new THREE.PointsMaterial({
+      size: 1.5,
+      sizeAttenuation: false,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+      vertexColors: true,
+      fog: false,
+      blending: THREE.AdditiveBlending,
+    })
+    this.starsMat = mat
+    const pts = new THREE.Points(geo, mat)
+    pts.name = 'Stars'
+    pts.frustumCulled = false
+    pts.renderOrder = -2
+    pts.visible = false
+    return pts
   }
 
   resize() {
@@ -576,6 +623,15 @@ export class TreeScene {
     } else {
       this.sky.visible = false
     }
+    // 星空: 强度 0 关闭; 否则按强度调透明/大小 (黑夜/群星预设使用)
+    const starStrength = Math.max(0, Math.min(1, Number(s.stars) || 0))
+    if (this.stars) {
+      this.stars.visible = starStrength > 0
+      if (this.starsMat) {
+        this.starsMat.opacity = 0.35 + starStrength * 0.65
+        this.starsMat.size = 1.1 + starStrength * 1.6
+      }
+    }
     this.ground.visible = !!s.ground
     this.groundMat.color.set(s.groundColor)
     this.grid.visible = !!s.grid
@@ -585,11 +641,15 @@ export class TreeScene {
     this.renderer.shadowMap.enabled = !!s.shadows
     this.shadowsEnabled = !!s.shadows
     this.sun.castShadow = !!s.shadows
+    this.sun.color.set(s.sunColor || '#fff2e0')
     this.sun.intensity = s.sunIntensity === undefined ? 3.1 : s.sunIntensity
+    this.hemi.color.set(s.hemiSky || '#c8dcff')
+    this.hemi.groundColor.set(s.hemiGround || '#3a2f24')
     this.hemi.intensity = s.ambient === undefined ? (s.gradient ? 1.15 : 0.85) : s.ambient
     if (s.fog) {
-      const far = Math.max(60, (this.treeHeight || 8) * 14)
-      this.scene.fog = new THREE.Fog(new THREE.Color(s.background), far * 0.35, far)
+      const far = Math.max(60, (this.treeHeight || 8) * 14) * (s.fogScale === undefined ? 1 : Math.max(0.1, s.fogScale))
+      const fogColor = new THREE.Color(s.fogColor || s.background)
+      this.scene.fog = new THREE.Fog(fogColor, far * 0.35, far)
     } else {
       this.scene.fog = null
     }
@@ -1103,6 +1163,7 @@ export class TreeScene {
       if (this.callbacks.onGrowth) this.callbacks.onGrowth(this.growthValue)
     }
     this.sky.position.copy(this.camera.position)
+    if (this.stars) this.stars.position.copy(this.camera.position)
     this.controls.update()
     this.updateLod()
     this.renderer.render(this.scene, this.camera)
@@ -1130,6 +1191,10 @@ export class TreeScene {
     this.groundMat.dispose()
     this.sky.geometry.dispose()
     this.skyMat.dispose()
+    if (this.stars) {
+      this.stars.geometry.dispose()
+      this.starsMat.dispose()
+    }
     this.renderer.dispose()
     if (this.renderer.domElement.parentNode) {
       this.renderer.domElement.parentNode.removeChild(this.renderer.domElement)
