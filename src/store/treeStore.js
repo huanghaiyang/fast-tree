@@ -5,8 +5,9 @@ import { reactive, computed } from 'vue'
 import { defaultParams, cloneParams, normalizeParams, mergeParams } from '../core/params.js'
 import { autoGenerate, autoWind, applyPreset, randomSeed, presetById, archetypeName } from '../core/presets.js'
 import { SPECIES, GROWTH_STAGES, SEASONS } from '../core/species.js'
-import { LEAF_CARDS, LEAF_CARD_BY_ID, leafCardsFor, leafCardRows, LEAF_CARD_BATCHES } from '../core/leafCards.generated.js'
+import { LEAF_CARDS, LEAF_CARD_BY_ID, leafCardsFor, leafCardRows, LEAF_CARD_BATCHES, randomLeafAsset, randomFlowerAsset, pickExistingCard } from '../core/leafCards.generated.js'
 import { selectionRanges } from '../core/treeBuilder.js'
+import { makeRng } from '../core/rng.js'
 
 export const state = reactive({
   // 初始参数 = 默认树种 (oak) 的成熟/夏季预设 -> 一进页面就是带果实的橡树
@@ -271,6 +272,7 @@ export function setSeed(seed) {
 export function randomizeSeed() {
   pushUndo()
   state.params.seed = randomSeed()
+  randomizeFoliageAssets(state.params.seed)
   if (state.params.wind.auto) {
     Object.assign(state.params.wind, autoWind(state.params.seed, state.params.wind.intensity))
   }
@@ -391,6 +393,61 @@ export function randomFlowerCard() {
   const pool = LEAF_CARDS.filter((c) => /^fl_|flower/i.test(c.batch) || c.batch.startsWith('fl_') || c.batch === 'batch1' || c.batch === 'batch2')
   const card = pool[Math.floor(Math.random() * pool.length)]
   return card ? applyFlowerCard(card.id) : false
+}
+
+/**
+ * 树叶/花朵默认从素材库随机挑选 (不用颜色绘制):
+ * - 树叶: 卡片模式 + 随机叶子卡片 + 原色贴图
+ * - 花朵: 随机花朵卡片作为 3D 花冠表面贴图 (不是平面卡片)
+ * 由 seed 决定, 同一个种子外观一致.
+ */
+export function randomizeFoliageAssets(seed = state.params.seed) {
+  const rng = makeRng(seed, 'foliage-assets')
+  const leafCard = randomLeafAsset(() => rng.next())
+  const flowerCard = randomFlowerAsset(() => rng.next())
+  const L = state.params.leaves
+  const M = state.params.leafMat
+  L.cardMode = true
+  L.cardAspect = leafCard.aspect || 1
+  // 叶子贴图在"树叶材质"上 (与 applyLeafCard 一致)
+  M.texture = leafCard.url
+  M.textureHasAlpha = true
+  M.tintMode = 'texture'
+  M.alphaTest = 0.35
+  state.cardId = leafCard.id
+  L.cardId = leafCard.id      // 面板高亮用
+  const F = state.params.flower
+  if (flowerCard) {
+    F.cardId = flowerCard.id
+    F.texture = flowerCard.url
+    F.cardAspect = flowerCard.aspect || 1
+    F.tintMode = 'texture'
+    F.alphaTest = 0
+    F.cardMode = false      // 保持三维花冠, 贴图作为表面花纹
+  }
+  // 异步校正: 卡片库是路径枚举 (有空位), 只保留真实存在的卡片;
+  // 若当前这张 404, 换成真实存在的; 全都探测不到 -> 退回程序化叶形 (宁可样式变, 不要光秃秃)
+  const seedAt = seed
+  ;(async () => {
+    const leafOk = await pickExistingCard('leaf', () => makeRng(seedAt, 'leaf-verify').next(), 6)
+    if (!leafOk) {
+      state.params.leaves.cardMode = false   // 兜底: 程序化叶形 (一定可见)
+      return
+    }
+    if (leafOk.id !== state.params.leaves.cardId) {
+      state.params.leafMat.texture = leafOk.url
+      state.params.leaves.cardId = leafOk.id
+      state.params.leaves.cardAspect = leafOk.aspect || 1
+      state.cardId = leafOk.id
+    }
+    const flowerOk = await pickExistingCard('flower', () => makeRng(seedAt, 'flower-verify').next(), 6)
+    if (flowerOk && flowerOk.id !== state.params.flower.cardId) {
+      state.params.flower.texture = flowerOk.url
+      state.params.flower.cardId = flowerOk.id
+      state.params.flower.cardAspect = flowerOk.aspect || 1
+    }
+  })()
+  return { leaf: leafCard.id, flower: flowerCard ? flowerCard.id : '' }
 }
 
 /** 生成伪装卡 (atlas = 图集伪装卡, cross = 交叉卡) */
@@ -515,7 +572,7 @@ if (typeof window !== 'undefined' && import.meta.env && import.meta.env.DEV) {
   window.__fastTreeApi = {
     pushUndo, doAutoGenerate, doApplyPreset, setSeed, randomizeSeed,
     doGenerateImpostor, downloadImpostor, setImpostorPreview,
-    applyFlowerCard, randomFlowerCard,
+    applyFlowerCard, randomFlowerCard, randomizeFoliageAssets,
     applyClassification, randomClassification, applyLeafCard, randomLeafCard,
   }
 }

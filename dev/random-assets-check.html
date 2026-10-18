@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>ra: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1100px;height:720px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, state, sc
+f.addEventListener('load', () => { win = f.contentWindow; state = win.__fastTree; sc = win.__fastTreeScene })
+setTimeout(async () => {
+  try {
+    await sleep(2500)
+    bar('① 启动后 树叶: cardMode=' + state.params.leaves.cardMode + ' cardId=' + (state.params.leaves.cardId || '(空)'))
+    bar('① 启动后 花朵: texture=' + ((state.params.flower.texture || '').split('/').pop() || '(空)') + ' cardId=' + (state.params.flower.cardId || '(空)'))
+    const lm = sc.materials.leaf, fm = sc.materials.flower
+    const texOf = (m) => {
+      if (!m || !m.map) return '(无)'
+      const src = (m.map.image && m.map.image.src) || ''
+      return src ? src.split('/').pop() : '(已绑定,图未载入)'
+    }
+    bar('② 树叶材质贴图=' + texOf(lm))
+    bar('② 花朵材质贴图=' + texOf(fm))
+    bar('② 树叶用素材=' + (state.params.leaves.cardMode === true && !!state.params.leafMat.texture && !!lm.map) + ' (leafMat.texture=' + (state.params.leafMat.texture || '').split('/').pop() + ', map=' + (lm.map ? '有' : '无') + ')')
+    // ③ 随机种子 -> 素材也跟着换
+    const before = { leaf: state.params.leaves.cardId, flower: state.params.flower.cardId }
+    win.__fastTreeApi.randomizeSeed(); await sleep(600)
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1600)
+    const after = { leaf: state.params.leaves.cardId, flower: state.params.flower.cardId }
+    bar('③ 随机种子后 树叶卡: ' + before.leaf + ' -> ' + after.leaf)
+    bar('③ 随机种子后 花朵卡: ' + before.flower + ' -> ' + after.flower)
+    bar('③ 素材确实重新随机=' + (before.leaf !== after.leaf || before.flower !== after.flower))
+    // ④ 叶子数量 / 面数正常
+    bar('④ 统计: 叶=' + state.stats.leaves + ' 花=' + state.stats.flowers + ' 叶三角=' + state.stats.leafTriangles)
+    let bad = 0
+    for (const p of (sc.renderer.info.programs || [])) if (p.diagnostics && (p.diagnostics.vertexShader || p.diagnostics.fragmentShader || p.diagnostics.programLog)) bad++
+    bar('⑤ 着色器失败=' + bad)
+    bar('errs=none')
+    document.title = 'RA-OK :: ' + L.join(' || ').slice(0, 1200)
+  } catch (e) { document.title = 'RA-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 350) }
+}, 3000)
+</script></body></html>

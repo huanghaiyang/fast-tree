@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>bp: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1000px;height:680px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, state, sc
+f.addEventListener('load', () => { win = f.contentWindow; state = win.__fastTree; sc = win.__fastTreeScene })
+setTimeout(async () => {
+  try {
+    await sleep(3000)
+    const g = sc.leafMesh && sc.leafMesh.geometry
+    const pos = g && g.attributes.position
+    let nan = 0, minY = 1e9, maxY = -1e9
+    if (pos) {
+      for (let i = 0; i < pos.count; i++) {
+        const y = pos.getY(i)
+        if (!Number.isFinite(pos.getX(i)) || !Number.isFinite(y)) nan++
+        if (y < minY) minY = y
+        if (y > maxY) maxY = y
+      }
+    }
+    const m = sc.materials.leaf
+    bar('① 叶网格=' + !!sc.leafMesh + ' 可见=' + (sc.leafMesh ? sc.leafMesh.visible : '-'))
+    bar('① 统计叶数=' + state.stats.leaves + ' 顶点=' + (pos ? pos.count : 0) + ' NaN=' + nan)
+    bar('① Y 范围=' + (minY === 1e9 ? '-' : minY.toFixed(2) + '~' + maxY.toFixed(2)))
+    bar('② 材质: map=' + (m.map ? '有' : '无') + ' alphaTest=' + m.alphaTest + ' tintMode=' + (state.params.leafMat.tintMode) + ' opacity=' + m.opacity + ' 顶点色=' + m.vertexColors)
+    bar('② 贴图 image=' + (m.map && m.map.image ? (m.map.image.width || '?') + 'x' + (m.map.image.height || '?') : '无'))
+    bar('③ leaves.cardMode=' + state.params.leaves.cardMode + ' cardId=' + (state.params.leaves.cardId || state.cardId) + ' aspect=' + state.params.leaves.cardAspect)
+    bar('③ leafMat.texture=' + (state.params.leafMat.texture || '(空)'))
+    // 强制用程序化叶子对比
+    state.params.leaves.cardMode = false
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1500)
+    bar('④ 关卡片模式后 叶网格=' + !!sc.leafMesh + ' 叶数=' + state.stats.leaves + ' 可见=' + (sc.leafMesh && sc.leafMesh.visible))
+    document.title = 'BP-OK :: ' + L.join(' || ').slice(0, 1200)
+  } catch (e) { document.title = 'BP-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 300) }
+}, 2500)
+</script></body></html>

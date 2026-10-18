@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>tl: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1100px;height:760px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument; state = win.__fastTree })
+const px = () => { const d = win.__flowerTexEditorDebug(); const p = d.pixels(); return { p, map: d.matMap, img: d.matMapImage } }
+setTimeout(async () => {
+  try {
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(700)
+    state.params.flower.enabled = true
+    const mod = await import('/src/core/leafCards.generated.js')
+    const c1 = await mod.pickExistingCard('flower', Math.random, 6)
+    if (c1) win.__fastTreeApi.applyFlowerCard(c1.id)
+    state.params.flower.cardMode = false
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1000)
+    const tab = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('花朵'))
+    if (tab) tab.click(); await sleep(1000)
+    const btn = [...doc.querySelectorAll('button')].find((b) => b.textContent.includes('可视化调整贴图位置'))
+    btn && btn.click(); await sleep(2000)
+    bar('① 初始: 贴图绑定=' + px().map + ' 图片载入=' + px().img + ' 模型像素=' + px().p.nonClearPct + '%')
+    const before = px().p
+    // ② 模拟实时拖动滑块 (连续改 U/V)
+    const uSlider = [...doc.querySelectorAll('input[type=range]')][0]
+    for (let i = 0; i < 8; i++) {
+      state.params.flower.textureU = -0.4 + i * 0.1
+      state.params.flower.textureV = 0.2 - i * 0.05
+      await sleep(120)
+    }
+    await sleep(900)
+    const after = px()
+    bar('② 连续拖动后: 贴图绑定=' + after.map + ' 图片仍在=' + after.img + ' 模型像素=' + after.p.nonClearPct + '%')
+    bar('② 贴图未丢失=' + (after.map && after.img))
+    bar('③ 画面有变化=' + (Math.abs(after.p.nonClearPct - before.nonClearPct) > 0.2 || JSON.stringify(after.p.avg) !== JSON.stringify(before.p.avg)))
+    // ④ 缩放/旋转
+    state.params.flower.textureRepeat = 2.5
+    state.params.flower.textureRotation = 1.2
+    await sleep(900)
+    const after2 = px()
+    bar('④ 缩放+旋转后: 图片仍在=' + after2.img + ' 模型像素=' + after2.p.nonClearPct + '% 平均色=' + JSON.stringify(after2.p.avg))
+    // ⑤ 关闭面板后 loop 停止 & 无错误
+    const doneBtn = [...doc.querySelectorAll('.fte-head button')].find((b) => b.textContent.includes('完成'))
+    if (doneBtn) doneBtn.click()
+    await sleep(500)
+    bar('⑤ 关闭后 面板存在=' + !!doc.querySelector('.fte-panel'))
+    document.title = 'TL-OK :: ' + L.join(' || ').slice(0, 1200)
+  } catch (e) { document.title = 'TL-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 350) }
+}, 2500)
+</script></body></html>

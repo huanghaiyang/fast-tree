@@ -83,6 +83,18 @@ function perturbations(path, value) {
 
 /** 只在特定条件下生效的参数: 审计前先满足条件 */
 export const CONDITIONS = {
+  'leaves.shape': { 'leaves.cardMode': false },
+  'leaves.segments': { 'leaves.cardMode': false },
+  'leaves.curl': { 'leaves.cardMode': false },
+  'leaves.fold': { 'leaves.cardMode': false },
+  'leaves.petiole': { 'leaves.cardMode': false },
+  'leaves.twist': { 'leaves.cardMode': false },
+  'leaves.droop': { 'leaves.cardMode': false },
+  'leaves.pitch': { 'leaves.cardMode': false },
+  'leaves.pitchVariance': { 'leaves.cardMode': false },
+  'leaves.rollVariance': { 'leaves.cardMode': false },
+  'leaves.faceUp': { 'leaves.cardMode': false },
+  'leaves.width': { 'leaves.cardMode': false },
   'branches.level[0].starDepth': { 'branches.level[0].crossSection': 'star' },
   // 分叉子参数只有在"启用分叉"时才有意义 (默认树种没有分叉)
   'trunk.fork.count': { 'trunk.fork.enabled': true },
@@ -101,11 +113,6 @@ export const CONDITIONS = {
   // 无贴图时 texture/season 都会回落到 1, 靠 custom 模式 + 自定义强度体现差异
   'leafMat.tintMode': { 'leafMat.vertexColorMix': 0.3 },
   // 花冠参数只在喇叭/钟形下生效
-  'leaves.flower3d': { 'leaves.shape': 'trumpet' },
-  'leaves.flowerLobes': { 'leaves.shape': 'trumpet' },
-  'leaves.flowerThickness': { 'leaves.shape': 'trumpet' },
-  'leaves.flowerStamen': { 'leaves.shape': 'trumpet' },
-  'leaves.flowerTilt': { 'leaves.shape': 'trumpet' },
   // 花朵默认关闭: 审计花朵参数时先启用
   'flower.enabled': { 'leaves.enabled': true },
   'flower.levels': { 'flower.enabled': true },
@@ -135,6 +142,14 @@ export const CONDITIONS = {
   'flower.startT': { 'flower.enabled': true },
   'flower.endT': { 'flower.enabled': true },
   'flower.texture': { 'flower.enabled': true },
+  'flower.flowerBowlOpen': { 'flower.enabled': true },
+  'flower.flowerBowlRadius': { 'flower.enabled': true },
+  'flower.flowerBowlRound': { 'flower.enabled': true },
+  'flower.flowerBowlDepth': { 'flower.enabled': true },
+  'flower.textureU': { 'flower.enabled': true },
+  'flower.textureV': { 'flower.enabled': true },
+  'flower.textureRepeat': { 'flower.enabled': true },
+  'flower.textureRotation': { 'flower.enabled': true },
   'flower.sizeVariance': { 'flower.enabled': true },
   'flower.clusterRadius': { 'flower.enabled': true },
   'flower.clusterSpread': { 'flower.enabled': true },
@@ -154,10 +169,6 @@ export const CONDITIONS = {
   'flower.vertexColorMix': { 'flower.enabled': true },
   'flower.alphaTest': { 'flower.enabled': true },
   'flower.normalFromAlbedo': { 'flower.enabled': true },
-  'leaves.flowerQuality': { 'leaves.shape': 'trumpet' },
-  'leaves.flowerPetals': { 'leaves.shape': 'trumpet' },
-  'leaves.flowerCluster': { 'leaves.shape': 'trumpet' },
-  'leaves.flowerStamenColor': { 'leaves.shape': 'trumpet' },
   // 卡片几何子参数只在"卡片模式"下生效
   'leaves.cardAspect': { 'leaves.cardMode': true },
   'leaves.cardCurl': { 'leaves.cardMode': true },

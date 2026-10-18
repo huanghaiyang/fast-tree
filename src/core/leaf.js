@@ -57,30 +57,6 @@ export const LEAF_OUTLINES = {
     const dry = 0.86 + 0.14 * Math.cos(t * Math.PI * 7 + 1.3)
     return base * dry * 0.5
   },
-  /**
-   * 喇叭花冠 (trumpet / 漏斗形): 花梗端细长, 向上迅速外扩成喇叭口,
-   * 口沿有 5 裂的轻微起伏 —— 用于樱花之外的"喇叭状花朵"叶形
-   * (t=0 花梗端, t=1 花口)
-   */
-  trumpet: (t) => {
-    // 花梗段 (前 18%): 细管
-    if (t < 0.18) return 0.028 + 0.012 * (t / 0.18)
-    const k = (t - 0.18) / 0.82            // 0..1 从花管到花口
-    // 指数扩张 -> 底部收得紧、口部张得开 (真正的喇叭曲线)
-    const flare = Math.pow(k, 2.1)
-    const width = 0.055 + 0.46 * flare
-    // 口沿 5 裂起伏 (瓣裂)
-    const lip = 1 + 0.10 * Math.sin(k * Math.PI * 5) * Math.pow(k, 3)
-    return width * lip
-  },
-  /** 钟形/风铃花 (bell): 比 trumpet 更圆, 口部略收 */
-  bell: (t) => {
-    if (t < 0.16) return 0.03
-    const k = (t - 0.16) / 0.84
-    const width = 0.06 + 0.42 * Math.pow(k, 1.5) - 0.10 * Math.pow(k, 6)
-    const lobes = 1 + 0.07 * Math.sin(k * Math.PI * 4 + 0.6)
-    return Math.max(0.02, width) * lobes
-  },
 }
 
 export const LEAF_SHAPE_KEYS = Object.keys(LEAF_OUTLINES)
@@ -142,7 +118,29 @@ export function buildLeafCardTemplate(o = {}) {
  * @returns {{positions:number[], normals:number[], uvs:number[], index:number[], vertexCount:number, is3d:boolean}}
  */
 export function buildFunnelTemplate(o = {}) {
-  const shape = LEAF_OUTLINES[o.shape] || LEAF_OUTLINES.trumpet
+  /* ---- 碗形花冠参数 (唯一的 3D 花型) ----
+   * flowerBowlOpen   开口角度 (度): 口沿处壁面张开的程度, 越小越像深杯, 越大越像浅碗
+   * flowerBowlRadius 开口半径
+   * flowerBowlRound  底部圆润程度 (0 = 尖底锥形, 1 = 圆底球冠)
+   * flowerBowlDepth  底部到开口的距离 (高度)
+   */
+  const openDeg = Math.max(8, Math.min(90, o.flowerBowlOpen === undefined ? 55 : o.flowerBowlOpen))
+  const open = (openDeg * Math.PI) / 180
+  const bowlR = Math.max(0.05, o.flowerBowlRadius === undefined ? 0.42 : o.flowerBowlRadius)
+  const bowlD = Math.max(0.05, o.flowerBowlDepth === undefined ? 0.55 : o.flowerBowlDepth)
+  const round = Math.max(0, Math.min(1, o.flowerBowlRound === undefined ? 0.85 : o.flowerBowlRound))
+  const sinOpen = Math.sin(open) || 1e-6
+  const cosOpen = Math.cos(open)
+  /** t=0 碗底 -> t=1 口沿: 返回 [半径, 高度] */
+  const profile = (t) => {
+    const coneR = t
+    const coneY = t
+    const roundR = Math.sin(t * open) / sinOpen
+    const roundY = (1 - Math.cos(t * open)) / (1 - cosOpen || 1e-6)
+    const r = bowlR * (coneR * (1 - round) + roundR * round)
+    const y = bowlD * (coneY * (1 - round) + roundY * round)
+    return [Math.max(0.002, r), y]
+  }
   // 质量档 (近似 LOD): high = 双壳+花蕊+花瓣层; medium = 单壳+花蕊; low = 单壳无细节
   const quality = o.flowerQuality || 'high'
   const rings = quality === 'low' ? 1 : Math.max(2, Math.round(o.flowerRings || 2))
@@ -163,11 +161,11 @@ export function buildFunnelTemplate(o = {}) {
 
   const shells = thickness > 0.001 && quality !== 'low' ? [0, 1] : [0]
   const ringPoint = (t, a, inner) => {
-    const r0 = shape(t)
+    const [r0, y0] = profile(t)
     const lobe = 1 + 0.18 * Math.pow(Math.abs(Math.cos((lobes * a) / 2)), 2) * Math.pow(t, 2.5)
     const thick = inner ? -thickness * Math.pow(t, 0.6) : 0
     const r = Math.max(0.004, r0 * lobe + thick)
-    const y = t + 0.06 * Math.pow(t, 3) * Math.cos(lobes * a) + (inner ? thickness * 0.5 * Math.pow(t, 1.2) : 0)
+    const y = y0 + 0.06 * Math.pow(t, 3) * Math.cos(lobes * a) + (inner ? thickness * 0.5 * Math.pow(t, 1.2) : 0)
     return tiltPoint([r * Math.cos(a), y, r * Math.sin(a)])
   }
 
@@ -217,10 +215,11 @@ export function buildFunnelTemplate(o = {}) {
       for (let p = 0; p < lobes; p++) {
         const a0 = (p / lobes) * Math.PI * 2
         const a1 = ((p + 1) / lobes) * Math.PI * 2
-        const rIn = shape(1) * scl
+        const [rimR, rimY] = profile(1)
+        const rIn = rimR * scl
         const rOut = rIn * 1.55
-        const yIn = 1.0 * scl
-        const yOut = (1.0 + 0.16) * scl     // 花瓣外翻上翘
+        const yIn = rimY * scl
+        const yOut = (rimY + 0.16 * (bowlD || 1)) * scl     // 花瓣外翻上翘
         const pts = [
           tiltPoint([Math.cos(a0) * rIn + off[0], yIn + off[1], Math.sin(a0) * rIn + off[2]]),
           tiltPoint([Math.cos(a1) * rIn + off[0], yIn + off[1], Math.sin(a1) * rIn + off[2]]),
@@ -237,7 +236,7 @@ export function buildFunnelTemplate(o = {}) {
       const sBase = positions.length / 3
       const segs = 5
       const sr = 0.05 * scl
-      const y0 = 0.34, y1 = 0.82
+      const y0 = bowlD * 0.32, y1 = bowlD * 0.78
       for (let i = 0; i <= 1; i++) {
         const rr = sr * (1 - 0.75 * i)
         const y = y0 + (y1 - y0) * i
@@ -267,8 +266,8 @@ export function buildFunnelTemplate(o = {}) {
 }
 
 export function buildLeafTemplate(o = {}) {
-  // 喇叭/钟形花朵: 默认用真正的三维漏斗网格; 关掉 flower3d 则退回平面轮廓
-  if ((o.shape === 'trumpet' || o.shape === 'bell') && o.flower3d !== false) return buildFunnelTemplate(o)
+  // 碗形花冠: 唯一的 3D 花型
+  if (o.shape === 'bowl') return buildFunnelTemplate(o)
   const shape = LEAF_OUTLINES[o.shape] || LEAF_OUTLINES.oval
   const rows = Math.max(2, Math.round(o.segments || 5))
   const curl = o.curl === undefined ? 0.18 : o.curl // 纵向弯曲 (单位空间, 会被 size 缩放)

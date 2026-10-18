@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>lv: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1000px;height:680px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, state, sc
+f.addEventListener('load', () => { win = f.contentWindow; state = win.__fastTree; sc = win.__fastTreeScene })
+const grab = () => {
+  const gl = sc.renderer.getContext()
+  sc.renderer.render(sc.scene, sc.camera)
+  const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight
+  const px = new Uint8Array(w * h * 4)
+  gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px)
+  return { px, w, h }
+}
+const diff = (a, b) => {
+  let n = 0
+  for (let i = 0; i < a.px.length; i += 4) {
+    if (Math.abs(a.px[i] - b.px[i]) + Math.abs(a.px[i+1] - b.px[i+1]) + Math.abs(a.px[i+2] - b.px[i+2]) > 24) n++
+  }
+  return (n / (a.w * a.h) * 100)
+}
+setTimeout(async () => {
+  try {
+    await sleep(5000)
+    bar('树叶 cardId=' + (state.params.leaves.cardId || '-') + ' 贴图=' + (state.params.leafMat.texture || '').split('/').pop())
+    const withLeaves = grab()
+    const saved = state.params.leaves.enabled
+    state.params.leaves.enabled = false
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1400)
+    const withoutLeaves = grab()
+    const d = diff(withLeaves, withoutLeaves)
+    state.params.leaves.enabled = saved
+    win.__fastTreeSceneApi.rebuildNow(true)
+    bar('① 有叶 vs 无叶 画面差异=' + d.toFixed(2) + '%')
+    bar('② 树叶确实在渲染=' + (d > 2))
+    bar('③ 叶数=' + state.stats.leaves + ' 叶三角=' + state.stats.leafTriangles)
+    document.title = 'LV-OK :: ' + L.join(' || ').slice(0, 900)
+  } catch (e) { document.title = 'LV-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 300) }
+}, 2500)
+</script></body></html>

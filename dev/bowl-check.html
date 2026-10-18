@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>bowl: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:800px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument; state = win.__fastTree })
+const tri = () => state.stats.flowerTriangles
+setTimeout(async () => {
+  try {
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(800)
+    state.params.flower.enabled = true
+    state.params.flower.cardMode = false
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1300)
+    bar('① 默认碗形: 花数=' + state.stats.flowers + ' 花三角=' + tri())
+    // 面板
+    const tab = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('花朵'))
+    tab.click(); await sleep(1200)
+    const labels = [...doc.querySelectorAll('.row-head label')].map((e) => e.textContent.trim())
+    bar('① 碗形控件存在=' + ['花朵开口角度','花朵开口半径','底部圆润程度','底部到开口距离'].every((n) => labels.includes(n)))
+    bar('① 旧"花朵形状"选择器已移除=' + !labels.includes('花朵形状'))
+    // ② 4 个参数都要真正改变几何
+    const base = tri()
+    for (const [k, v] of [['flowerBowlOpen', 15], ['flowerBowlRadius', 0.8], ['flowerBowlRound', 0.1], ['flowerBowlDepth', 1.0]]) {
+      const before = state.stats.flowers
+      state.params.flower[k] = v
+      win.__fastTreeSceneApi.rebuildNow(true); await sleep(900)
+      bar('② ' + k + '=' + v + ' -> 花三角=' + tri())
+    }
+    // ③ 预览面板用碗形
+    const btn = [...doc.querySelectorAll('button')].find((b) => b.textContent.includes('可视化调整贴图位置'))
+    btn && btn.click(); await sleep(2000)
+    const d = win.__flowerTexEditorDebug && win.__flowerTexEditorDebug()
+    bar('③ 预览: 网格数=' + (d ? d.meshCount : '?') + ' 顶点=' + (d ? d.verts : '?') + ' 模型像素=' + (d ? d.pixels().nonClearPct + '%' : '?'))
+    document.title = 'BOWL-OK :: ' + L.join(' || ').slice(0, 1300)
+  } catch (e) { document.title = 'BOWL-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 350) }
+}, 2500)
+</script></body></html>

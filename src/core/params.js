@@ -149,16 +149,7 @@ export function defaultParams() {
       size: 0.42,          // 叶片长度(米)
       sizeVariance: 0.28,
       width: 0.78,         // 宽/长
-      shape: 'oval',       // oval | birch | maple | needle | lance | trumpet | bell
-      flower3d: true,      // 喇叭/钟形花: true = 真三维漏斗网格 (双壳有厚度); false = 平面卡片
-      flowerLobes: 5,      // 花瓣数 (3~8)
-      flowerThickness: 0.05, // 花冠壁厚 (0 = 单层面)
-      flowerStamen: true,   // 花冠中心的花蕊
-      flowerTilt: 45,       // 花冠上仰角 (度): 花口朝上而不是顺枝朝外
-      flowerQuality: 'high', // 花冠质量档 (近似 LOD): high 双壳+花蕊+花瓣层 / medium 单壳+花蕊 / low 单壳无细节
-      flowerPetals: true,   // 花瓣分层 (花口向外翻出的独立花瓣)
-      flowerCluster: 1,     // 一簇几朵花 (1~5)
-      flowerStamenColor: '#f4e6a6', // 花蕊颜色 (独立于花瓣色)
+      shape: 'oval',       // oval | birch | maple | needle | lance | oak | palmate | cordate
       segments: 5,
       curl: 0.18,          // 纵向弯曲
       fold: 0.28,          // 横向 V 形折叠
@@ -176,9 +167,10 @@ export function defaultParams() {
       petiole: 0.12,       // 叶柄长度(相对叶长)
       // 叶形混合: 同一棵树可混用多种叶形 (不同树种叶形差别很大)
       // 每项 { shape, weight }, weight 为相对比例; 留空 = 只用 shape
+      // shapeMix 保留给树叶使用; 花朵固定为碗形
       shapeMix: [],
       // 叶片卡片模式: 叶形轮廓直接用贴图 alpha (照片级), 而不是程序化轮廓
-      cardMode: false,
+      cardMode: true,        // 默认用素材卡片 (启动时随机挑选)
       cardAspect: 1,       // 选中卡片的 宽/高 (由 UI 从卡片库写入)
       cardCurl: 0.1,       // 卡片的轻微弓弯
       cardFold: 0.12,      // 卡片沿中脉的折叠
@@ -294,14 +286,21 @@ export function defaultParams() {
       cardCurl: 0.1,
       cardFold: 0.12,
       width: 1.0,
-      shape: 'trumpet',
-      shapeMix: [{ shape: 'trumpet', weight: 3 }, { shape: 'bell', weight: 1 }],
+      shape: 'bowl',         // 唯一 3D 花型: 碗形
+      flowerBowlOpen: 55,    // 开口角度 (度)
+      flowerBowlRadius: 0.42,// 开口半径
+      flowerBowlRound: 0.85, // 底部圆润程度 (0=尖底锥形, 1=圆底球冠)
+      flowerBowlDepth: 0.55, // 底部到开口的距离
       color: '#f2a7c3',
       colorTip: '#fbe3ec',
       colorVariance: 0.16,
       translucency: 0.7,
       cardMode: false,       // 花朵默认用程序化三维花冠
       texture: '',           // 花朵贴图 (与树叶独立; 三维花冠会把它作为表面花纹包裹)
+      textureU: 0,           // 贴图在模型上的横向偏移
+      textureV: 0,           // 贴图在模型上的纵向偏移
+      textureRepeat: 1,      // 贴图缩放 (平铺次数)
+      textureRotation: 0,    // 贴图旋转 (弧度)
       tintMode: 'texture',   // 花朵贴图染色模式 (同树叶)
       alphaTest: 0,          // 花朵贴图 alpha 裁切 (平面花卡模式才需要)
       normalFromAlbedo: 0,   // 花朵贴图自动法线 (可选)

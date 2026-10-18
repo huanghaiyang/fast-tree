@@ -224,9 +224,14 @@ export function makeLeafTexture(o = {}) {
   return { map }
 }
 
-/** 从 image URL / dataURL 载入贴图 */
+/** 从 image URL / dataURL 载入贴图 (onError: 404/坏图时回调, 用于降级) */
 export function loadTexture(url, opts = {}) {
-  const tex = new THREE.TextureLoader().load(url)
+  const tex = new THREE.TextureLoader().load(
+    url,
+    undefined,
+    undefined,
+    () => { tex.userData.loadFailed = true; if (opts.onError) opts.onError(url) },
+  )
   tex.wrapS = tex.wrapT = opts.clamp ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping
   if (opts.srgb !== false) tex.colorSpace = THREE.SRGBColorSpace
   tex.colorSpace = opts.normal ? THREE.NoColorSpace : tex.colorSpace

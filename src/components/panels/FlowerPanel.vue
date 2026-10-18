@@ -1,6 +1,12 @@
 <template>
   <Section title="花朵" hint="Flower">
     <ToggleRow label="启用花朵" v-model="f.enabled" hint="与树叶可同时开启 (独立网格, 材质继承树叶)" />
+    <SliderRow label="花朵开口角度" v-model="f.flowerBowlOpen" :min="8" :max="90" :step="1" unit="°"
+      hint="口沿张开的程度: 小=深杯, 大=浅碗" />
+    <SliderRow label="花朵开口半径" v-model="f.flowerBowlRadius" :min="0.05" :max="0.9" :step="0.01" unit="m" />
+    <SliderRow label="底部圆润程度" v-model="f.flowerBowlRound" :min="0" :max="1" :step="0.01"
+      hint="0 = 尖底锥形, 1 = 圆底球冠" />
+    <SliderRow label="底部到开口距离" v-model="f.flowerBowlDepth" :min="0.05" :max="1.2" :step="0.01" unit="m" />
     <SliderRow label="花朵尺寸" v-model="f.size" :min="0.1" :max="1.2" :step="0.02" />
     <SliderRow label="花朵大小随机" v-model="f.sizeVariance" :min="0" :max="0.8" :step="0.01" />
     <SliderRow label="花朵宽度" v-model="f.width" :min="0.5" :max="1.6" :step="0.02" />
@@ -28,8 +34,6 @@
     <SliderRow label="分布结束位置" v-model="f.endT" :min="0" :max="1" :step="0.01" />
     <SliderRow label="花朵密度" v-model="f.density" :min="0.05" :max="1" :step="0.05"
       hint="按比例从树叶位置采样开花 (1 = 每个叶位都开)" />
-    <SelectRow label="花朵形状" v-model="f.shape" :options="shapes" />
-    <ToggleRow label="三维花冠" v-model="f.flower3d" hint="开 = 真三维漏斗 (双壳/花蕊/花瓣层); 关 = 平面卡片" />
     <SelectRow v-if="f.flower3d !== false" label="花冠质量" v-model="f.flowerQuality" :options="qualityOptions" />
     <SliderRow v-if="f.flower3d !== false" label="花瓣数" v-model="f.flowerLobes" :min="3" :max="8" :step="1" />
     <SliderRow v-if="f.flower3d !== false" label="花冠上仰" v-model="f.flowerTilt" :min="0" :max="90" :step="5" unit="°" />
@@ -65,6 +69,10 @@
       hint="花朵自己的贴图 (与树叶独立): 三维花冠会把它包裹成表面花纹; 平面花卡模式则按 alpha 裁形" />
     <SelectRow label="花朵贴图染色" v-model="f.tintMode" :options="tintOptions" />
     <SliderRow v-if="f.tintMode === 'custom'" label="花朵染色强度" v-model="f.vertexColorMix" :min="0" :max="1" :step="0.01" />
+    <div class="fte-open">
+      <button class="btn small primary" @click="texOpen = true">🎯 可视化调整贴图位置</button>
+      <span class="fte-open-hint">弹出 3D 面板, 拖动/滚轮/Shift 拖动 调贴图</span>
+    </div>
     <SliderRow label="花朵贴图裁切" v-model="f.alphaTest" :min="0" :max="0.9" :step="0.01"
       hint="平面花卡模式用来去掉贴图透明边; 三维花冠建议保持 0" />
     <SliderRow label="花朵自动法线" v-model="f.normalFromAlbedo" :min="0" :max="3" :step="0.05"
@@ -89,6 +97,7 @@
     <SliderRow label="落花堆积颜色差异" v-model="fl.colorVariance" :min="0" :max="1" :step="0.01" />
     <ColorRow label="落花堆积颜色" v-model="fl.color" />
   </Section>
+  <FlowerTextureEditor v-model="texOpen" />
 </template>
 
 <script setup>
@@ -99,6 +108,7 @@ import ToggleRow from '../ui/ToggleRow.vue'
 import ColorRow from '../ui/ColorRow.vue'
 import SelectRow from '../ui/SelectRow.vue'
 import TextureRow from '../ui/TextureRow.vue'
+import FlowerTextureEditor from './FlowerTextureEditor.vue'
 import { state, randomFlowerCard } from '../../store/treeStore.js'
 import { LEAF_CARDS, LEAF_CARD_BATCHES, LEAF_CARD_BATCH_NAMES, leafCardRows, leafCardsFor } from '../../core/leafCards.generated.js'
 
@@ -106,6 +116,7 @@ const f = computed(() => state.params.flower)
 const ff = computed(() => state.params.flowerFall)
 const fl = computed(() => state.params.flowerLitter)
 const cardBatches = Object.keys(LEAF_CARD_BATCHES)
+const texOpen = ref(false)
 const cardBatch = ref('fl_batch1')
 const cardRow = ref(1)
 const batchName = (bt) => LEAF_CARD_BATCH_NAMES[bt] || bt
@@ -120,12 +131,6 @@ function useCard(c) {
   if (!f.value.enabled) f.value.enabled = true
 }
 function onRandomCard() { randomFlowerCard() }
-const shapes = [
-  { value: 'trumpet', label: '喇叭花 trumpet' },
-  { value: 'bell', label: '钟形花 bell' },
-  { value: 'oval', label: '椭圆 oval' },
-  { value: 'cordate', label: '心形 cordate' },
-]
 const tintOptions = [
   { value: 'texture', label: '原色 (贴图不变色)' },
   { value: 'season', label: '跟随花色' },
@@ -149,6 +154,8 @@ const qualityOptions = [
 .chip.active { border-color: var(--accent); color: #eafff7; }
 .chip.dot { padding: 0; width: 34px; height: 34px; overflow: hidden; display: inline-flex; border-radius: 3px; }
 .chip.dot img { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; }
+.fte-open { display: flex; align-items: center; gap: 8px; margin: 6px 0 4px; flex-wrap: wrap; }
+.fte-open-hint { font-size: 10.5px; color: var(--text-2); }
 .pick-label { font-size: 11px; color: var(--text-2); margin: 6px 0 3px; }
 .muted { color: var(--text-2); font-size: 11px; }
 

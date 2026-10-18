@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>te: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:820px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state, sc
+const errs = []
+f.addEventListener('load', () => {
+  win = f.contentWindow; doc = f.contentDocument; state = win.__fastTree; sc = win.__fastTreeScene
+  win.addEventListener('error', (e) => errs.push('err: ' + (e.message || '')))
+  win.addEventListener('unhandledrejection', (e) => errs.push('rej: ' + (e.reason && e.reason.message ? e.reason.message : e.reason)))
+})
+setTimeout(async () => {
+  try {
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(800)
+    state.params.flower.enabled = true
+    const mod = await import('/src/core/leafCards.generated.js')
+    win.__fastTreeApi.applyFlowerCard(mod.LEAF_CARDS.find((c) => c.batch === 'fl_batch1').id)
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1200)
+    // 打开花朵页 -> 点"可视化调整贴图位置"
+    const tab = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('花朵'))
+    if (tab) tab.click(); await sleep(1400)
+    const btn = [...doc.querySelectorAll('button')].find((b) => b.textContent.includes('可视化调整贴图位置'))
+    bar('① 找到按钮=' + !!btn)
+    if (btn) btn.click()
+    await sleep(1800)
+    const modal = doc.querySelector('.fte-panel')
+    bar('② 弹出 3D 面板=' + !!modal)
+    const cv = doc.querySelector('.fte-canvas')
+    bar('② 面板 canvas=' + (cv ? cv.width + 'x' + cv.height : 'null'))
+    // ③ 模拟拖动 -> 参数变化
+    const before = { u: state.params.flower.textureU, v: state.params.flower.textureV }
+    const r = cv.getBoundingClientRect()
+    const opts = { bubbles: true, clientX: r.left + 60, clientY: r.top + 60, pointerId: 1, button: 0 }
+    cv.dispatchEvent(new win.PointerEvent('pointerdown', opts))
+    cv.dispatchEvent(new win.PointerEvent('pointermove', { ...opts, clientX: r.left + 140, clientY: r.top + 30 }))
+    cv.dispatchEvent(new win.PointerEvent('pointerup', { ...opts, clientX: r.left + 140, clientY: r.top + 30 }))
+    await sleep(900)
+    const after = { u: state.params.flower.textureU, v: state.params.flower.textureV }
+    bar('③ 拖动后 参数 U:' + before.u.toFixed(2) + '->' + after.u.toFixed(2) + ' V:' + before.v.toFixed(2) + '->' + after.v.toFixed(2) + ' 生效=' + (after.u !== before.u || after.v !== before.v))
+    // ④ 材质贴图 transform 是否真的应用
+    sc.updateMaterialParams(state.params); await sleep(700)
+    const map = sc.materials.flower.map
+    bar('④ 花朵贴图 offset=(' + map.offset.x.toFixed(2) + ',' + map.offset.y.toFixed(2) + ') repeat=' + map.repeat.x.toFixed(2) + ' rotation=' + map.rotation.toFixed(2))
+    // ⑤ 滚轮缩放
+    cv.dispatchEvent(new win.WheelEvent('wheel', { bubbles: true, deltaY: -120, cancelable: true }))
+    await sleep(500)
+    bar('⑤ 滚轮后 repeat=' + state.params.flower.textureRepeat.toFixed(2))
+    // ⑥ 重置
+    const resetBtn = [...doc.querySelectorAll('.fte-head button')].find((b) => b.textContent.includes('重置'))
+    if (resetBtn) resetBtn.click()
+    await sleep(600)
+    bar('⑥ 重置后 U=' + state.params.flower.textureU + ' V=' + state.params.flower.textureV + ' repeat=' + state.params.flower.textureRepeat)
+    // ⑦ 关闭
+    const doneBtn = [...doc.querySelectorAll('.fte-head button')].find((b) => b.textContent.includes('完成'))
+    if (doneBtn) doneBtn.click()
+    await sleep(600)
+    bar('⑦ 关闭后面板存在=' + !!doc.querySelector('.fte-panel'))
+    bar('⑧ 运行时错误=' + (errs.length ? errs.slice(0, 2).join(' | ') : '无'))
+    document.title = 'TE-OK :: ' + L.join(' || ').slice(0, 1300)
+  } catch (e) { document.title = 'TE-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 400) }
+}, 3000)
+</script></body></html>

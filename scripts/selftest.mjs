@@ -720,10 +720,14 @@ check('页面初始参数即橡树预设 (默认树带果实)', (() => {
 check('橡树预置果实 (acorn) 且已开启', composeTree('oak', 'mature', 'summer', 4242).fruit.enabled === true && composeTree('oak', 'mature', 'summer', 4242).fruit.type === 'acorn')
 check('其他树种默认不结果实 (松树)', buildTree(pineP).stats.fruit === 0)
 // 叶形混合
+const mixBase = composeTree('oak', 'mature', 'summer', 4242)
+mixBase.leaves.cardMode = false      // 程序化叶形基准 (素材卡片模式不看叶形)
+const mixBaseR = buildTree(mixBase)
 const mixP = composeTree('oak', 'mature', 'summer', 4242)
+mixP.leaves.cardMode = false
 mixP.leaves.shapeMix = [{ shape: 'oak', weight: 2 }, { shape: 'needle', weight: 1 }]
 const mixR = buildTree(mixP)
-check('叶形混合会改变几何 (可随意组合)', geomHash(mixR.leafGeometry) !== geomHash(oakR.leafGeometry))
+check('叶形混合会改变几何 (可随意组合)', geomHash(mixR.leafGeometry) !== geomHash(mixBaseR.leafGeometry))
 check('新增叶形轮廓可用 (oak/palmate/cordate/litter)',
   ['oak', 'palmate', 'cordate', 'litter', 'needleLong'].every((sh) => {
     const t = buildLeafTemplate({ shape: sh, segments: 4 })

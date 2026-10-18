@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>bf: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1000px;height:680px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, state, sc
+f.addEventListener('load', () => { win = f.contentWindow; state = win.__fastTree; sc = win.__fastTreeScene })
+setTimeout(async () => {
+  try {
+    await sleep(5000)   // 等异步探测+贴图加载
+    const m = sc.materials.leaf
+    const img = m.map && m.map.image
+    bar('① 树叶 cardId=' + (state.params.leaves.cardId || '(空)') + ' cardMode=' + state.params.leaves.cardMode)
+    bar('① 贴图=' + (state.params.leafMat.texture || '').split('/').pop())
+    bar('① 图片已载入=' + (img ? (img.width || 0) + 'x' + (img.height || 0) : '未载入') + ' 加载失败=' + !!(m.map && m.map.userData && m.map.userData.loadFailed))
+    bar('① alphaTest=' + m.alphaTest + ' map=' + (m.map ? '有' : '无'))
+    // 渲染可见性: 统计非背景像素占比
+    const gl = sc.renderer.getContext()
+    sc.renderer.render(sc.scene, sc.camera)
+    const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight
+    const px = new Uint8Array(w * h * 4)
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px)
+    let greenish = 0, nonBg = 0
+    for (let i = 0; i < px.length; i += 4) {
+      const r = px[i], g = px[i + 1], b = px[i + 2]
+      if (r + g + b > 40) nonBg++
+      if (g > r + 8 && g > b + 8 && g > 40) greenish++
+    }
+    const ratio = (greenish / (w * h) * 100).toFixed(2)
+    bar('② 渲染像素: 非背景=' + (nonBg / (w * h) * 100).toFixed(1) + '% 其中绿叶色=' + ratio + '%')
+    bar('② 判定有树叶=' + (greenish > w * h * 0.005))
+    bar('③ 叶数=' + state.stats.leaves + ' 叶三角=' + state.stats.leafTriangles)
+    document.title = 'BF-OK :: ' + L.join(' || ').slice(0, 1200)
+  } catch (e) { document.title = 'BF-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 350) }
+}, 2500)
+</script></body></html>

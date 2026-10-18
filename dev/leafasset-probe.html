@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>lp: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:900px;height:600px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, state, sc
+f.addEventListener('load', () => { win = f.contentWindow; state = win.__fastTree; sc = win.__fastTreeScene })
+setTimeout(async () => {
+  try {
+    bar('leafMat.texture=' + (state.params.leafMat.texture || '(空)'))
+    bar('leaves.cardMode=' + state.params.leaves.cardMode + ' cardId=' + (state.cardId || '(空)'))
+    bar('材质 map=' + (sc.materials.leaf.map ? '有' : '无'))
+    bar('有 randomizeFoliageAssets=' + (typeof win.__fastTreeApi.randomizeFoliageAssets))
+    if (win.__fastTreeApi.randomizeFoliageAssets) {
+      const r = win.__fastTreeApi.randomizeFoliageAssets(state.params.seed)
+      bar('手动调用结果=' + JSON.stringify(r))
+      bar('之后 leafMat.texture=' + (state.params.leafMat.texture || '(空)'))
+      await sleep(1200)
+      sc.updateMaterialParams(state.params)
+      await sleep(800)
+      bar('之后 材质 map=' + (sc.materials.leaf.map ? (sc.materials.leaf.map.image && sc.materials.leaf.map.image.src ? sc.materials.leaf.map.image.src.split('/').pop() : '有(未加载)') : '无'))
+    }
+    document.title = 'LP-OK :: ' + L.join(' || ').slice(0, 1000)
+  } catch (e) { document.title = 'LP-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 300) }
+}, 4000)
+</script></body></html>

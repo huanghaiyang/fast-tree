@@ -70,3 +70,54 @@ export function leafCardRows(batch) {
   if (!set) return []
   return Array.from({ length: set.rows }, (_, i) => i + 1)
 }
+
+/** 花朵批次 (樱花等花朵素材) */
+export const FLOWER_CARD_BATCHES = ['fl_batch1', 'fl_batch2', 'fl_v2_batch1', 'fl_v2_batch2', 'fl_v3_batch1', 'fl_v3_batch2']
+
+/** 随机一张"叶子素材"卡片 */
+export function randomLeafAsset(rng = Math.random) {
+  const pool = LEAF_CARDS.filter((c) => !FLOWER_CARD_BATCHES.includes(c.batch))
+  return pool[Math.floor(rng() * pool.length) % pool.length] || LEAF_CARDS[0]
+}
+
+/** 随机一张"花朵素材"卡片 */
+export function randomFlowerAsset(rng = Math.random) {
+  const pool = LEAF_CARDS.filter((c) => FLOWER_CARD_BATCHES.includes(c.batch))
+  const list = pool.length ? pool : LEAF_CARDS
+  return list[Math.floor(rng() * list.length) % list.length] || list[0]
+}
+
+/* ---------------- 存在性探测: 卡片库是"路径枚举", 有空位; 只能挑真实存在的 ---------------- */
+const __probeCache = new Map()
+
+/** HEAD 探测一张卡片是否真实存在 (Vite dev 对缺失文件会回 200 + index.html, 必须看 content-type) */
+export async function probeCardExists(url) {
+  if (__probeCache.has(url)) return __probeCache.get(url)
+  let ok = false
+  try {
+    const res = await fetch(url, { method: 'HEAD', cache: 'no-store' })
+    const type = res.headers.get('content-type') || ''
+    ok = res.ok && type.startsWith('image/')
+  } catch (e) {
+    ok = false
+  }
+  __probeCache.set(url, ok)
+  return ok
+}
+
+/** 随机挑一张"真实存在"的叶子/花朵卡片 (最多尝试 tries 张) */
+export async function pickExistingCard(kind = 'leaf', rng = Math.random, tries = 10) {
+  for (let i = 0; i < tries; i++) {
+    const card = kind === 'flower' ? randomFlowerAsset(rng) : randomLeafAsset(rng)
+    // 同一张卡在池里可能出现多次, 探测缓存会立刻返回, 不会重复请求
+    if (await probeCardExists(card.url)) return card
+  }
+  // 全部失败: 按批次顺序线性找第一张真实存在的
+  const pool = kind === 'flower'
+    ? LEAF_CARDS.filter((c) => FLOWER_CARD_BATCHES.includes(c.batch))
+    : LEAF_CARDS.filter((c) => !FLOWER_CARD_BATCHES.includes(c.batch))
+  for (const card of pool) {
+    if (await probeCardExists(card.url)) return card
+  }
+  return null
+}

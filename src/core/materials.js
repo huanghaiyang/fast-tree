@@ -422,6 +422,10 @@ function flowerLeafParams(params) {
       tintMode: f.tintMode || 'texture',
       alphaTest: f.alphaTest === undefined ? 0 : f.alphaTest,
       normalFromAlbedo: f.normalFromAlbedo || 0,
+      textureU: f.textureU || 0,
+      textureV: f.textureV || 0,
+      textureRepeat: f.textureRepeat === undefined ? 1 : f.textureRepeat,
+      textureRotation: f.textureRotation || 0,
       translucency: f.translucency === undefined ? params.leafMat.translucency : f.translucency,
     },
   }
@@ -598,6 +602,28 @@ export function updateLeafMaterial(mat, params, sharedUniforms) {
     if (hadAuto && hadAuto !== mat.map) disposeTexture(hadAuto)
     mat.needsUpdate = true
   }
+  // ---- 贴图加载失败兜底: 清掉 map 并关掉 alphaTest, 否则贴图空采样 + alphaTest 会把叶片全裁掉 ----
+  if (mat.map && mat.map.userData && mat.map.userData.loadFailed) {
+    mat.map = null
+    mat.alphaTest = 0
+    mat.needsUpdate = true
+  }
+
+  // ---- 贴图在模型上的位置/缩放/旋转 (花朵可视化面板会改这几个) ----
+  if (mat.map) {
+    const ru = p.textureU || 0
+    const rv = p.textureV || 0
+    const rr = p.textureRepeat === undefined ? 1 : p.textureRepeat
+    const rot = p.textureRotation || 0
+    const changed = mat.map.offset.x !== ru || mat.map.offset.y !== rv ||
+      mat.map.repeat.x !== rr || mat.map.rotation !== rot
+    mat.map.center.set(0.5, 0.5)
+    mat.map.offset.set(ru, rv)
+    mat.map.repeat.set(rr, rr)
+    mat.map.rotation = rot
+    if (changed) mat.map.needsUpdate = true
+  }
+
   // ---- 法线贴图: 显式贴图优先, 否则从 albedo 自动生成 ----
   // 注意: 必须放在 mat.map 赋值之后, 否则第一次更新时 map 还是 null, 生成不出法线
   if (p.normalTexture) {

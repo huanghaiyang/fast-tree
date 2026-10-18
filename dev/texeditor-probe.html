@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>tp: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:820px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state, sc
+const errs = []
+f.addEventListener('load', () => {
+  win = f.contentWindow; doc = f.contentDocument; state = win.__fastTree; sc = win.__fastTreeScene
+  win.addEventListener('error', (e) => errs.push('ERR: ' + (e.message || '')))
+  win.addEventListener('unhandledrejection', (e) => errs.push('REJ: ' + (e.reason && e.reason.message ? e.reason.message : e.reason)))
+  const origWarn = win.console.error
+  win.console.error = (...a) => { errs.push('console.error: ' + a.map(String).join(' ').slice(0, 200)); origWarn.apply(win.console, a) }
+})
+setTimeout(async () => {
+  try {
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(700)
+    state.params.flower.enabled = true
+    const mod = await import('/src/core/leafCards.generated.js')
+    const card = await mod.pickExistingCard('flower', Math.random, 6)
+    if (card) { win.__fastTreeApi.applyFlowerCard(card.id) }
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1200)
+    const tab = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('花朵'))
+    if (tab) tab.click(); await sleep(1200)
+    const btn = [...doc.querySelectorAll('button')].find((b) => b.textContent.includes('可视化调整贴图位置'))
+    btn && btn.click(); await sleep(2000)
+    const cv = doc.querySelector('.fte-canvas')
+    bar('① canvas 存在=' + !!cv + ' 尺寸=' + (cv ? cv.width + 'x' + cv.height + ' css=' + cv.clientWidth + 'x' + cv.clientHeight : '-'))
+    // 读像素判断是否有内容
+    let nonBg = 0, total = 0
+    if (cv) {
+      try {
+        const gl = cv.getContext('webgl2') || cv.getContext('webgl')
+        bar('② 直接取 ctx=' + (gl ? 'OK' : 'null'))
+      } catch (e) { bar('② 取 ctx 失败: ' + e.message) }
+      const url = cv.toDataURL('image/png')
+      bar('② toDataURL 长度=' + url.length)
+    }
+    bar('③ 错误: ' + (errs.length ? errs.slice(0, 4).join(' | ') : '无'))
+    bar('④ 花朵: shape=' + state.params.flower.shape + ' flower3d=' + state.params.flower.flower3d + ' cardMode=' + state.params.flower.cardMode + ' texture=' + (state.params.flower.texture || '').split('/').pop())
+    // ⑤ 调试钩子: 模型/相机/像素
+    const dbg = win.__flowerTexEditorDebug ? win.__flowerTexEditorDebug() : null
+    bar('⑤ 调试=' + (dbg ? JSON.stringify({ hasMesh: dbg.hasMesh, visible: dbg.meshVisible, verts: dbg.verts, bs: dbg.bs, cam: dbg.cam, matMap: dbg.matMap, mapImg: dbg.matMapImage }) : 'null'))
+    if (dbg) { const px = dbg.pixels(); bar('⑥ 卡片模式预览: 模型像素=' + px.nonClearPct + '% 平均色=' + JSON.stringify(px.avg)) }
+    // ⑦ 切到三维花冠模式看预览
+    state.params.flower.cardMode = false
+    await sleep(1200)
+    const dbg2 = win.__flowerTexEditorDebug()
+    const px2 = dbg2.pixels()
+    bar('⑦ 三维模式: 顶点=' + dbg2.verts + ' 可见=' + dbg2.meshVisible + ' 模型像素=' + px2.nonClearPct + '% 平均色=' + JSON.stringify(px2.avg))
+    // 直接测试模板构建是否可用
+    const leafMod = await import('/src/core/leaf.js')
+    try {
+      const t = leafMod.buildLeafTemplate({ shape: 'trumpet', flower3d: true, flowerLobes: 5, flowerThickness: 0.05, flowerQuality: 'high', flowerStamen: true, flowerTilt: 45, flowerPetals: true, flowerCluster: 1 })
+      bar('⑤ buildLeafTemplate: 顶点=' + (t.positions.length / 3) + ' uv=' + t.uvs.length + ' index=' + t.index.length + ' is3d=' + t.is3d)
+    } catch (e) { bar('⑤ 模板构建异常: ' + e.message) }
+    document.title = 'TP-OK :: ' + L.join(' || ').slice(0, 1300)
+  } catch (e) { document.title = 'TP-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 400) }
+}, 2500)
+</script></body></html>

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>pv: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:800px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument; state = win.__fastTree })
+setTimeout(async () => {
+  try {
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(700)
+    state.params.flower.enabled = true
+    await sleep(400)
+    const tab = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('花朵'))
+    tab.click(); await sleep(900)
+    const openBtn = () => [...doc.querySelectorAll('button')].find((b) => b.textContent.includes('可视化调整贴图位置'))
+    openBtn().click(); await sleep(2400)
+    const d = () => win.__flowerTexEditorDebug()
+    const lum = (avg) => avg ? Math.round(0.299 * avg[0] + 0.587 * avg[1] + 0.114 * avg[2]) : 0
+    const report = (label) => {
+      const dd = d(); const p = dd.pixels()
+      bar(label + ': 顶点=' + dd.verts + ' 贴图=' + (dd.matMap ? '有' : '无') + ' 图片=' + dd.matMapImage + ' 模型像素=' + p.nonClearPct + '% 平均亮度=' + lum(p.avg) + ' 平均色=' + JSON.stringify(p.avg))
+      return { pct: p.nonClearPct, lum: lum(p.avg) }
+    }
+    // ① 无贴图 (棋盘兜底)
+    state.params.flower.texture = ''
+    await sleep(1200)
+    const r1 = report('① 无贴图(棋盘)')
+    // ② 有贴图
+    const mod = await import('/src/core/leafCards.generated.js')
+    const c = await mod.pickExistingCard('flower', Math.random, 6)
+    state.params.flower.texture = c.url
+    state.params.flower.tintMode = 'texture'
+    await sleep(1600)
+    const r2 = report('② 有花朵贴图')
+    // ③ 打开-关闭-重开 三次
+    const doneBtn = () => [...doc.querySelectorAll('.fte-head button')].find((b) => b.textContent.includes('完成'))
+    let okAll = true
+    for (let i = 1; i <= 3; i++) {
+      doneBtn().click(); await sleep(500)
+      openBtn().click(); await sleep(1800)
+      const r = report('③ 第' + i + '次重开')
+      if (!(r.pct > 3 && r.lum > 40)) okAll = false
+    }
+    bar('④ 判定: 模型可见=' + (r1.pct > 3 && r1.lum > 40) + ' 贴图可见=' + (r2.pct > 3) + ' 重开稳定=' + okAll)
+    document.title = 'PV-OK :: ' + L.join(' || ').slice(0, 1400)
+  } catch (e) { document.title = 'PV-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 350) }
+}, 2500)
+</script></body></html>

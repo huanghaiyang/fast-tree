@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>sm: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:800px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument; state = win.__fastTree })
+setTimeout(async () => {
+  try {
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(700)
+    state.params.flower.enabled = true
+    await sleep(400)
+    const tab = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('花朵'))
+    tab.click(); await sleep(900)
+    const openBtn = () => [...doc.querySelectorAll('button')].find((b) => b.textContent.includes('可视化调整贴图位置'))
+    const doneBtn = () => [...doc.querySelectorAll('.fte-head button')].find((b) => b.textContent.includes('完成'))
+    const d = () => win.__flowerTexEditorDebug()
+    openBtn().click(); await sleep(2000)
+    bar('① 第1次: 网格数=' + d().meshCount + ' 顶点=' + d().verts + ' 模型像素=' + d().pixels().nonClearPct + '%')
+    for (let i = 2; i <= 4; i++) {
+      doneBtn().click(); await sleep(450)
+      openBtn().click(); await sleep(1600)
+      const dd = d()
+      bar('① 第' + i + '次: 网格数=' + dd.meshCount + ' 顶点=' + dd.verts + ' 模型像素=' + dd.pixels().nonClearPct + '%')
+    }
+    // ② 切换形状/模式, 也不能堆叠
+    state.params.flower.cardMode = true; await sleep(1200)
+    bar('② 切卡片模式: 网格数=' + d().meshCount + ' 顶点=' + d().verts)
+    state.params.flower.cardMode = false; state.params.flower.shape = 'bell'; await sleep(1200)
+    bar('② 切钟形: 网格数=' + d().meshCount + ' 顶点=' + d().verts)
+    const counts = []
+    doneBtn().click(); await sleep(400); openBtn().click(); await sleep(1500)
+    counts.push(d().meshCount)
+    bar('③ 判定 网格数恒为1=' + (d().meshCount === 1) + ' 顶点=' + d().verts)
+    document.title = 'SM-OK :: ' + L.join(' || ').slice(0, 1200)
+  } catch (e) { document.title = 'SM-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 350) }
+}, 2500)
+</script></body></html>

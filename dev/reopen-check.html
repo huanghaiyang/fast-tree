@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>ro: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:800px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument; state = win.__fastTree })
+const info = () => {
+  const d = win.__flowerTexEditorDebug && win.__flowerTexEditorDebug()
+  if (!d) return { ok: false }
+  const p = d.pixels()
+  return { ok: true, img: d.matMapImage, map: d.matMap, pct: p.nonClearPct, avg: p.avg, verts: d.verts }
+}
+setTimeout(async () => {
+  try {
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(700)
+    state.params.flower.enabled = true
+    state.params.flower.cardMode = false
+    const leafMod = await import('/src/core/leafCards.generated.js')
+    const c = await leafMod.pickExistingCard('flower', Math.random, 6)
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(900)
+    const tab = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('花朵'))
+    tab.click(); await sleep(1000)
+    const openBtn = () => [...doc.querySelectorAll('button')].find((b) => b.textContent.includes('可视化调整贴图位置'))
+    const doneBtn = () => [...doc.querySelectorAll('.fte-head button')].find((b) => b.textContent.includes('完成'))
+
+    // 打开 -> 读取
+    openBtn().click(); await sleep(2200)
+    const a = info()
+    bar('① 第1次打开: ' + JSON.stringify(a))
+    // 关闭
+    doneBtn().click(); await sleep(600)
+    bar('② 关闭后 mask 可见=' + (doc.querySelector('.fte-mask') ? win.getComputedStyle(doc.querySelector('.fte-mask')).display : '-'))
+    // 再打开 -> 读取 (过去这里会渲染到旧 canvas -> 永远空白)
+    openBtn().click(); await sleep(2200)
+    const b = info()
+    bar('③ 第2次打开: ' + JSON.stringify(b))
+    doneBtn().click(); await sleep(500)
+    openBtn().click(); await sleep(2000)
+    const c2 = info()
+    bar('④ 第3次打开: ' + JSON.stringify(c2))
+    bar('⑤ 三次都能看到模型=' + [a, b, c2].every((x) => x.ok && x.pct > 3 && x.img))
+    document.title = 'RO-OK :: ' + L.join(' || ').slice(0, 1300)
+  } catch (e) { document.title = 'RO-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 350) }
+}, 2500)
+</script></body></html>

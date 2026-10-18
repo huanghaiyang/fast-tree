@@ -69,18 +69,26 @@ export function buildTree(params) {
   const FL = P.flower || {}
   const flowerAcc = FL.enabled ? new GeoAcc() : null
   const flowerBranches = []
-  const makeFlowerTemplate = (shape) => (FL.cardMode
+  // 花朵模板: 卡片模式 = 平面花卡; 否则 = 参数化碗形花冠 (唯一 3D 花型)
+  const makeFlowerTemplate = () => (FL.cardMode
     ? buildLeafCardTemplate({
         aspect: FL.cardAspect || 1, cols: 1, rows: 3,
         curl: FL.cardCurl === undefined ? 0.1 : FL.cardCurl,
         fold: FL.cardFold === undefined ? 0.12 : FL.cardFold,
       })
     : buildLeafTemplate({
-        shape,
-        segments: FL.segments, curl: FL.curl, fold: FL.fold, petiole: FL.petiole,
-        flower3d: FL.flower3d, flowerLobes: FL.flowerLobes, flowerThickness: FL.flowerThickness,
-        flowerStamen: FL.flowerStamen, flowerTilt: FL.flowerTilt, flowerQuality: FL.flowerQuality,
-        flowerPetals: FL.flowerPetals, flowerCluster: FL.flowerCluster,
+        shape: 'bowl',
+        flowerBowlOpen: FL.flowerBowlOpen,
+        flowerBowlRadius: FL.flowerBowlRadius,
+        flowerBowlRound: FL.flowerBowlRound,
+        flowerBowlDepth: FL.flowerBowlDepth,
+        flowerLobes: FL.flowerLobes,
+        flowerThickness: FL.flowerThickness,
+        flowerStamen: FL.flowerStamen,
+        flowerTilt: FL.flowerTilt,
+        flowerQuality: FL.flowerQuality,
+        flowerPetals: FL.flowerPetals,
+        flowerCluster: FL.flowerCluster,
       }))
   const makeTemplate = (shape) => (L.cardMode
     ? buildLeafCardTemplate({
@@ -670,16 +678,7 @@ export function buildTree(params) {
   let flowerGeometry = null
   let flowerCount = 0
   if (flowerAcc && flowerBranches.length && FL.enabled) {
-    const fMix = Array.isArray(FL.shapeMix)
-      ? FL.shapeMix.filter((m) => m && m.shape && (m.weight === undefined || m.weight > 0))
-      : []
-    const fTpls = fMix.length
-      ? fMix.flatMap((m) => {
-          const tpl = makeFlowerTemplate(m.shape)
-          const n = Math.max(1, Math.round((m.weight === undefined ? 1 : m.weight) * 8))
-          return new Array(n).fill(tpl)
-        })
-      : [makeFlowerTemplate(FL.shape || 'trumpet')]
+    const fTpls = [makeFlowerTemplate()]
     const flowerSlot = addSlot({
       type: 'flowers', level: FL.level || 3, group: 'flowers', name: '花朵',
       parent: trunkSlot, meta: { leaves: 0, clusters: 0 },

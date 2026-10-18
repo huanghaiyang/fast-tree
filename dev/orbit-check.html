@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>orb: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:820px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state, sc
+const errs = []
+f.addEventListener('load', () => {
+  win = f.contentWindow; doc = f.contentDocument; state = win.__fastTree; sc = win.__fastTreeScene
+  win.addEventListener('error', (e) => errs.push('err: ' + (e.message || '')))
+})
+setTimeout(async () => {
+  try {
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(800)
+    state.params.flower.enabled = true
+    const mod = await import('/src/core/leafCards.generated.js')
+    win.__fastTreeApi.applyFlowerCard(mod.LEAF_CARDS.find((c) => c.batch === 'fl_batch2').id)
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1000)
+    const tab = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('花朵'))
+    if (tab) tab.click(); await sleep(1300)
+    const btn = [...doc.querySelectorAll('button')].find((b) => b.textContent.includes('可视化调整贴图位置'))
+    btn && btn.click(); await sleep(1600)
+    const cv = doc.querySelector('.fte-canvas')
+    bar('① 面板打开=' + !!cv)
+    bar('① 提示文案含右键=' + (doc.querySelector('.fte-hint') ? doc.querySelector('.fte-hint').textContent.includes('右键拖动 = 旋转模型') : false))
+    // ② 模拟右键拖动 -> 模型旋转 (通过画布截图哈希变化 或 mesh 旋转值)
+    const shot = () => cv.toDataURL('image/png')
+    const before = shot()
+    const rotBefore = { ...win.__flowerTexEditorState }
+    const r = cv.getBoundingClientRect()
+    const ev = (type, x, y, btn) => cv.dispatchEvent(new win.PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: btn, buttons: btn === 2 ? 2 : 1, pointerId: 7 }))
+    ev('pointerdown', r.left + 100, r.top + 100, 2)
+    ev('pointermove', r.left + 200, r.top + 130, 2)
+    ev('pointerup', r.left + 200, r.top + 130, 2)
+    await sleep(700)
+    const after = shot()
+    const rotAfter = win.__flowerTexEditorState || {}
+    bar('② 右键拖动后模型旋转: x ' + rotBefore.x.toFixed(2) + '->' + (rotAfter.x || 0).toFixed(2) + ' y ' + rotBefore.y.toFixed(2) + '->' + (rotAfter.y || 0).toFixed(2) + ' 生效=' + (Math.abs((rotAfter.y || 0) - rotBefore.y) > 0.01))
+    bar('② 右键拖动后画面变化=' + (before !== after))
+    bar('② 贴图参数未被右键影响=' + (state.params.flower.textureU === 0 && state.params.flower.textureV === 0))
+    // ③ 左键拖动仍然改贴图
+    ev('pointerdown', r.left + 80, r.top + 80, 0)
+    ev('pointermove', r.left + 140, r.top + 60, 0)
+    ev('pointerup', r.left + 140, r.top + 60, 0)
+    await sleep(600)
+    bar('③ 左键拖动后 贴图U=' + state.params.flower.textureU.toFixed(2))
+    // ④ 视角重置
+    const rv = [...doc.querySelectorAll('.fte-head button')].find((b) => b.textContent.includes('视角'))
+    bar('④ 有视角重置按钮=' + !!rv)
+    if (rv) { const snap = shot(); rv.click(); await sleep(600); bar('④ 视角重置后画面变化=' + (snap !== shot())) }
+    // ⑤ 右键菜单被阻止
+    const ctx = new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+    cv.dispatchEvent(ctx)
+    bar('⑤ 右键菜单已阻止=' + ctx.defaultPrevented)
+    bar('⑥ 运行时错误=' + (errs.length ? errs.slice(0, 2).join(' | ') : '无'))
+    document.title = 'ORB-OK :: ' + L.join(' || ').slice(0, 1200)
+  } catch (e) { document.title = 'ORB-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 400) }
+}, 3000)
+</script></body></html>
