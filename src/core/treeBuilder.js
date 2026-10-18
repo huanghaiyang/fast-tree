@@ -69,27 +69,12 @@ export function buildTree(params) {
   const FL = P.flower || {}
   const flowerAcc = FL.enabled ? new GeoAcc() : null
   const flowerBranches = []
-  // 花朵模板: 卡片模式 = 平面花卡; 否则 = 参数化碗形花冠 (唯一 3D 花型)
-  const makeFlowerTemplate = () => (FL.cardMode
-    ? buildLeafCardTemplate({
-        aspect: FL.cardAspect || 1, cols: 1, rows: 3,
-        curl: FL.cardCurl === undefined ? 0.1 : FL.cardCurl,
-        fold: FL.cardFold === undefined ? 0.12 : FL.cardFold,
-      })
-    : buildLeafTemplate({
-        shape: 'bowl',
-        flowerBowlOpen: FL.flowerBowlOpen,
-        flowerBowlRadius: FL.flowerBowlRadius,
-        flowerBowlRound: FL.flowerBowlRound,
-        flowerBowlDepth: FL.flowerBowlDepth,
-        flowerLobes: FL.flowerLobes,
-        flowerThickness: FL.flowerThickness,
-        flowerStamen: FL.flowerStamen,
-        flowerTilt: FL.flowerTilt,
-        flowerQuality: FL.flowerQuality,
-        flowerPetals: FL.flowerPetals,
-        flowerCluster: FL.flowerCluster,
-      }))
+  // 花朵模板: 平面花卡 (照片级素材, 不做程序化 3D 建模)
+  const makeFlowerTemplate = () => buildLeafCardTemplate({
+    aspect: FL.cardAspect || 1, cols: 1, rows: 3,
+    curl: FL.cardCurl === undefined ? 0.1 : FL.cardCurl,
+    fold: FL.cardFold === undefined ? 0.12 : FL.cardFold,
+  })
   const makeTemplate = (shape) => (L.cardMode
     ? buildLeafCardTemplate({
         aspect: L.cardAspect || 1,
@@ -100,8 +85,6 @@ export function buildTree(params) {
       })
     : buildLeafTemplate({
         shape, segments: L.segments, curl: L.curl, fold: L.fold, petiole: L.petiole,
-        flower3d: L.flower3d, flowerLobes: L.flowerLobes, flowerThickness: L.flowerThickness, flowerStamen: L.flowerStamen, flowerTilt: L.flowerTilt,
-        flowerQuality: L.flowerQuality, flowerPetals: L.flowerPetals, flowerCluster: L.flowerCluster,
       }))
   const leafTemplate = makeTemplate(L.shape)
   // 叶形混合: shapeMix 里每一项都生成一个模板, 实例化时按权重随机挑
@@ -117,7 +100,6 @@ export function buildTree(params) {
     : [leafTemplate]
   const maxLeaves = Math.max(0, Math.round((P.lod && P.lod.maxLeaves) || 60000))
   const leafRng = makeRng(P.seed, 'leaves')
-  const stamenColor = new THREE.Color(L.flowerStamenColor || '#f4e6a6')
   const fruitRng = makeRng(P.seed, 'fruit')
   let fruitCount = 0
   const fruitAttach = []   // 挂果点 (自检用)
@@ -474,6 +456,8 @@ export function buildTree(params) {
   }))
   branchCount++
 
+
+
   /* ------------------------------------------------------------------ */
   /* 树根                                                                */
   /* ------------------------------------------------------------------ */
@@ -688,7 +672,6 @@ export function buildTree(params) {
     const sizeVar = FL.sizeVariance === undefined ? 0.2 : FL.sizeVariance
     const c0 = new THREE.Color(FL.color || '#f2a7c3')
     const c1 = new THREE.Color(FL.colorTip || '#fbe3ec')
-    const stamenCol = new THREE.Color(FL.flowerStamenColor || '#f4e6a6')
     const levelsOn = Array.isArray(FL.levels) ? FL.levels : null
     const perBranch = Math.max(1, Math.round(FL.perBranch === undefined ? 4 : FL.perBranch))
     const perCluster = Math.max(1, Math.min(12, Math.round(FL.clusterCount === undefined ? 2 : FL.clusterCount)))

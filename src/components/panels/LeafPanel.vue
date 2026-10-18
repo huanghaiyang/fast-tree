@@ -64,12 +64,6 @@ import { state } from '../../store/treeStore.js'
 
 const L = state.params.leaves
 const lod = state.params.lod
-
-const flowerQualityOptions = [
-  { value: 'high', label: '高 (双壳+花蕊+花瓣层)' },
-  { value: 'medium', label: '中 (单壳+花蕊)' },
-  { value: 'low', label: '低 (单壳, 省面数)' },
-]
 const shapes = [
   { value: 'oval', label: '椭圆 oval' },
   { value: 'birch', label: '桦叶 birch' },

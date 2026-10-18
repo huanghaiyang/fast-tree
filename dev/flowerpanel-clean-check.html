@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>fpc: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:820px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state
+const errs = []
+f.addEventListener('load', () => {
+  win = f.contentWindow; doc = f.contentDocument; state = win.__fastTree
+  win.addEventListener('error', (e) => errs.push(e.message || String(e)))
+})
+setTimeout(async () => {
+  try {
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(700)
+    state.params.flower.enabled = true
+    const tab = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('花朵'))
+    tab.click(); await sleep(1600)
+    const panel = doc.querySelector('.sidebar')
+    const txt = panel ? panel.innerText : ''
+    bar('① 面板渲染: 有"启用花朵"=' + txt.includes('启用花朵'))
+    bar('① 无裸属性残留=' + !/hint="|v-model="|:min="/.test(txt))
+    bar('① 无 NaN/undefined=' + !/NaN|undefined/.test(txt))
+    const labels = [...doc.querySelectorAll('.row-head label')].map((e) => e.textContent.trim())
+    bar('② 控件数=' + labels.length + ' 样例=' + JSON.stringify(labels.slice(0, 8)))
+    bar('② 3D 控件已移除=' + !['花朵开口角度','花瓣数','花冠质量','花蕊','三维花冠','花朵形状'].some((n) => labels.includes(n)))
+    bar('② 关键控件在=' + ['花朵尺寸','花朵密度','每枝花朵数','贴图横向平铺','贴图纵向平铺','花朵贴图裁切'].filter((n) => labels.includes(n)).length + '/6')
+    // ③ 花卡缩略图可加载
+    const imgs = [...doc.querySelectorAll('.chip.dot img')]
+    bar('③ 花卡缩略图=' + imgs.length + ' 破图=' + imgs.filter((i) => i.complete && i.naturalWidth === 0 && i.parentElement.style.display !== 'none').length)
+    bar('④ 运行时错误=' + (errs.length ? errs.slice(0, 2).join(' | ') : '无'))
+    document.title = 'FPC-OK :: ' + L.join(' || ').slice(0, 1200)
+  } catch (e) { document.title = 'FPC-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 350) }
+}, 3000)
+</script></body></html>

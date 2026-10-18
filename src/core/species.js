@@ -304,12 +304,10 @@ export const SPECIES = [
           { count: 3, pitch: 48, lengthRatio: 0.6, radiusRatio: 0.5, gravity: -0.12, curve: 0.6, segments: 5 },
         ),
       },
-      // 樱花的花朵用"喇叭/钟形"轮廓 (没有照片卡片时的程序化花形)
+      // 樱花: 叶片走素材卡片 (程序化叶形用 oval); 花朵是独立的平面花卡系统
       leaves: {
         enabled: true, levels: [false, true, true, true, true], size: 0.34, width: 0.85,
-        shape: 'trumpet', flower3d: true, flowerLobes: 5, flowerThickness: 0.05,
-        shapeMix: [{ shape: 'trumpet', weight: 3 }, { shape: 'bell', weight: 1 }, { shape: 'oval', weight: 1 }],
-        clusterCount: 2, perBranch: 6,
+        shape: 'oval', clusterCount: 2, perBranch: 6,
         color: '#edaac4', colorTip: '#f9dde6', colorVariance: 0.18, translucency: 0.65,
       },
       bark: { color: '#5a4438', color2: '#7a5c4c', procedural: { enabled: true, style: 'smooth', scale: 1.0, contrast: 0.35 } },

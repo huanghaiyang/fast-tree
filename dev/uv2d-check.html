@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>uv2d: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:820px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state, sc
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument; state = win.__fastTree; sc = win.__fastTreeScene })
+setTimeout(async () => {
+  try {
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(700)
+    state.params.flower.enabled = true
+    state.params.flower.cardMode = false
+    const mod = await import('/src/core/leafCards.generated.js')
+    const c = await mod.pickExistingCard('flower', Math.random, 6)
+    state.params.flower.texture = c.url
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1400)
+    sc.updateMaterialParams(state.params); await sleep(600)
+    const map = () => sc.materials.flower.map
+    bar('① 参数: textureU=' + state.params.flower.textureU + ' textureV=' + state.params.flower.textureV +
+        ' repeatU=' + state.params.flower.textureRepeatU + ' repeatV=' + state.params.flower.textureRepeatV)
+    bar('① 材质: offset=(' + map().offset.x + ',' + map().offset.y + ') repeat=(' + map().repeat.x + ',' + map().repeat.y + ')')
+    // ② 两个维度的偏移都必须作用到材质
+    state.params.flower.textureU = 0.35
+    state.params.flower.textureV = -0.25
+    sc.updateMaterialParams(state.params); await sleep(500)
+    bar('② 设 U=0.35 V=-0.25 -> offset=(' + map().offset.x.toFixed(2) + ',' + map().offset.y.toFixed(2) + ') 两维都生效=' +
+        (Math.abs(map().offset.x - 0.35) < 1e-6 && Math.abs(map().offset.y + 0.25) < 1e-6))
+    // ③ 两个维度的缩放独立
+    state.params.flower.textureRepeatU = 3
+    state.params.flower.textureRepeatV = 0.5
+    sc.updateMaterialParams(state.params); await sleep(500)
+    bar('③ 设 平铺U=3 V=0.5 -> repeat=(' + map().repeat.x.toFixed(2) + ',' + map().repeat.y.toFixed(2) + ') 独立=' +
+        (Math.abs(map().repeat.x - 3) < 1e-6 && Math.abs(map().repeat.y - 0.5) < 1e-6))
+    // ④ 面板里有二维手柄 + 两个平铺滑块
+    const tab = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('花朵'))
+    tab.click(); await sleep(1300)
+    const pads = doc.querySelectorAll('.tp-pad')
+    const labels = [...doc.querySelectorAll('.row-head label')].map((e) => e.textContent.trim())
+    bar('④ 主面板: 二维手柄数=' + pads.length + ' 有横向平铺=' + labels.includes('贴图横向平铺') + ' 有纵向平铺=' + labels.includes('贴图纵向平铺'))
+    // ⑤ 预览面板里也有
+    const btn = [...doc.querySelectorAll('button')].find((b) => b.textContent.includes('可视化调整贴图位置'))
+    btn && btn.click(); await sleep(2000)
+    const pads2 = doc.querySelectorAll('.tp-pad')
+    bar('⑤ 预览面板: 二维手柄数=' + pads2.length)
+    // ⑥ 模拟拖动二维手柄 -> U/V 同时变化
+    const pad = pads2[pads2.length - 1]
+    const before = [state.params.flower.textureU, state.params.flower.textureV]
+    const r = pad.getBoundingClientRect()
+    const ev = (t, x, y) => pad.dispatchEvent(new win.PointerEvent(t, { bubbles: true, cancelable: true, clientX: x, clientY: y, buttons: 1, pointerId: 9 }))
+    ev('pointerdown', r.left + r.width * 0.8, r.top + r.height * 0.25)
+    ev('pointermove', r.left + r.width * 0.8, r.top + r.height * 0.25)
+    ev('pointerup', r.left + r.width * 0.8, r.top + r.height * 0.25)
+    await sleep(700)
+    bar('⑥ 拖手柄后 U/V: ' + JSON.stringify(before) + ' -> [' + state.params.flower.textureU.toFixed(2) + ',' + state.params.flower.textureV.toFixed(2) + '] 两维都变=' +
+        (state.params.flower.textureU !== before[0] && state.params.flower.textureV !== before[1]))
+    document.title = 'UV2D-OK :: ' + L.join(' || ').slice(0, 1300)
+  } catch (e) { document.title = 'UV2D-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 350) }
+}, 2500)
+</script></body></html>

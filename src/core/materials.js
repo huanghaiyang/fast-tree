@@ -425,6 +425,8 @@ function flowerLeafParams(params) {
       textureU: f.textureU || 0,
       textureV: f.textureV || 0,
       textureRepeat: f.textureRepeat === undefined ? 1 : f.textureRepeat,
+      textureRepeatU: f.textureRepeatU === undefined ? (f.textureRepeat === undefined ? 1 : f.textureRepeat) : f.textureRepeatU,
+      textureRepeatV: f.textureRepeatV === undefined ? (f.textureRepeat === undefined ? 1 : f.textureRepeat) : f.textureRepeatV,
       textureRotation: f.textureRotation || 0,
       translucency: f.translucency === undefined ? params.leafMat.translucency : f.translucency,
     },
@@ -557,7 +559,6 @@ export function updateLeafMaterial(mat, params, sharedUniforms) {
   const p = params.leafMat
   mat.roughness = p.roughness
   mat.metalness = p.metalness
-  // 三维花冠的 UV 是"绕周向+沿轴向"的包裹贴图, 贴图的 alpha 不再代表轮廓 ->
   // 这时不能用 alphaTest (否则照片卡片会在花冠上打出一堆洞)
   const lv = params.leaves || {}
   const isFlower = lv.shape === 'trumpet' || lv.shape === 'bell' ||
@@ -614,12 +615,14 @@ export function updateLeafMaterial(mat, params, sharedUniforms) {
     const ru = p.textureU || 0
     const rv = p.textureV || 0
     const rr = p.textureRepeat === undefined ? 1 : p.textureRepeat
+    const rru = p.textureRepeatU === undefined ? rr : p.textureRepeatU
+    const rrv = p.textureRepeatV === undefined ? rr : p.textureRepeatV
     const rot = p.textureRotation || 0
     const changed = mat.map.offset.x !== ru || mat.map.offset.y !== rv ||
-      mat.map.repeat.x !== rr || mat.map.rotation !== rot
+      mat.map.repeat.x !== rru || mat.map.repeat.y !== rrv || mat.map.rotation !== rot
     mat.map.center.set(0.5, 0.5)
     mat.map.offset.set(ru, rv)
-    mat.map.repeat.set(rr, rr)
+    mat.map.repeat.set(rru, rrv)
     mat.map.rotation = rot
     if (changed) mat.map.needsUpdate = true
   }

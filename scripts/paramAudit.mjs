@@ -112,7 +112,6 @@ export const CONDITIONS = {
   'leafMat.vertexColorMix': { 'leafMat.tintMode': 'custom' },
   // 无贴图时 texture/season 都会回落到 1, 靠 custom 模式 + 自定义强度体现差异
   'leafMat.tintMode': { 'leafMat.vertexColorMix': 0.3 },
-  // 花冠参数只在喇叭/钟形下生效
   // 花朵默认关闭: 审计花朵参数时先启用
   'flower.enabled': { 'leaves.enabled': true },
   'flower.levels': { 'flower.enabled': true },
@@ -120,8 +119,6 @@ export const CONDITIONS = {
   'flower.clusterCount': { 'flower.enabled': true },
   'flower.size': { 'flower.enabled': true },
   'flower.width': { 'flower.enabled': true },
-  'flower.shape': { 'flower.enabled': true },
-  'flower.shapeMix': { 'flower.enabled': true },
   'flower.color': { 'flower.enabled': true },
   'flower.colorTip': { 'flower.enabled': true },
   'flower.colorVariance': { 'flower.enabled': true },
@@ -129,23 +126,10 @@ export const CONDITIONS = {
   'flower.cardMode': { 'flower.enabled': true },
   'flower.cardId': { 'flower.enabled': true },
   'flower.cardAspect': { 'flower.enabled': true },
-  'flower.flower3d': { 'flower.enabled': true },
-  'flower.flowerQuality': { 'flower.enabled': true },
-  'flower.flowerPetals': { 'flower.enabled': true },
-  'flower.flowerLobes': { 'flower.enabled': true },
-  'flower.flowerThickness': { 'flower.enabled': true },
-  'flower.flowerStamen': { 'flower.enabled': true },
-  'flower.flowerStamenColor': { 'flower.enabled': true },
-  'flower.flowerTilt': { 'flower.enabled': true },
-  'flower.flowerCluster': { 'flower.enabled': true },
   'flower.density': { 'flower.enabled': true },
   'flower.startT': { 'flower.enabled': true },
   'flower.endT': { 'flower.enabled': true },
   'flower.texture': { 'flower.enabled': true },
-  'flower.flowerBowlOpen': { 'flower.enabled': true },
-  'flower.flowerBowlRadius': { 'flower.enabled': true },
-  'flower.flowerBowlRound': { 'flower.enabled': true },
-  'flower.flowerBowlDepth': { 'flower.enabled': true },
   'flower.textureU': { 'flower.enabled': true },
   'flower.textureV': { 'flower.enabled': true },
   'flower.textureRepeat': { 'flower.enabled': true },
@@ -199,6 +183,7 @@ export const DOM_DEPENDENT = new Set([
   'bark.texture', 'bark.normalTexture', 'bark.normalFromAlbedo', 'bark.uvWarp', 'bark.uvWarpScale',
   'leafMat.texture', 'leafMat.normalTexture', 'leafMat.normalFromAlbedo',
   'flower.texture', 'flower.normalFromAlbedo', 'flower.alphaTest',
+  'flower.textureRepeatU', 'flower.textureRepeatV',
   // 粒子是场景级效果 (Points + 顶点着色器动画, 需要渲染器), Node 侧无法比较
   'particles.enabled', 'particles.count', 'particles.size', 'particles.speed', 'particles.fall',
   'particles.sway', 'particles.swirl', 'particles.color', 'particles.opacity', 'particles.glow',
@@ -267,7 +252,6 @@ const SPECIAL_PERTURB = {
   'lod.maxLeaves': [5, 30],        // 只有上限真的卡住时才看得出来
   'leafMat.tintMode': ['custom', 'texture'],
   'leaves.shapeMix': [[{ shape: 'oak', weight: 2 }, { shape: 'needle', weight: 1 }]],
-  'flower.shapeMix': [[{ shape: 'bell', weight: 2 }, { shape: 'trumpet', weight: 1 }]],
   'trunk.knots': [9],              // 0/1 附近不明显
   'roots.count': [11],
 }
@@ -496,10 +480,6 @@ export const AUDIT_EXEMPT = {
   'custom.fragment': '自定义 GLSL 片段 (同上)',
   'custom.enabled': '自定义 GLSL 开关 (同上)',
   'seed': '改变整棵树的随机子流 (几何签名已覆盖)',
-  'flower.shapeMix[0].weight': '混合权重只决定模板重复比例; 基准参数只有 1 项混合时不可观测 (形状由 flower.shape 覆盖)',
-  'flower.shapeMix[0].shape': '混合里的单项形状; 基准只有 1 项时等价于 flower.shape (已单独审计)',
-  'leaves.shapeMix[0].weight': '同 flower.shapeMix: 单项时权重不可观测',
-  'leaves.shapeMix[0].shape': '同 flower.shapeMix: 单项形状等价于 leaves.shape',
 }
 
 export function runAudit(opts = {}) {

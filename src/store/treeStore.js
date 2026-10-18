@@ -423,7 +423,6 @@ export function randomizeFoliageAssets(seed = state.params.seed) {
     F.cardAspect = flowerCard.aspect || 1
     F.tintMode = 'texture'
     F.alphaTest = 0
-    F.cardMode = false      // 保持三维花冠, 贴图作为表面花纹
   }
   // 异步校正: 卡片库是路径枚举 (有空位), 只保留真实存在的卡片;
   // 若当前这张 404, 换成真实存在的; 全都探测不到 -> 退回程序化叶形 (宁可样式变, 不要光秃秃)

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>b2: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:820px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state, sc
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument; state = win.__fastTree; sc = win.__fastTreeScene })
+const watertight = (idx) => {
+  const e = new Map()
+  for (let i = 0; i < idx.length; i += 3) {
+    const a = idx[i], b = idx[i+1], c = idx[i+2]
+    for (const [x, y] of [[a,b],[b,c],[c,a]]) { const k = Math.min(x,y)+':'+Math.max(x,y); e.set(k, (e.get(k)||0)+1) }
+  }
+  let bad = 0
+  for (const v of e.values()) if (v !== 2) bad++
+  return bad
+}
+setTimeout(async () => {
+  try {
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(700)
+    state.params.flower.enabled = true
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1400)
+    // ① 几何水密性 (无边界缝 = 没有"边缘拼接")
+    const leafMod = await import('/src/core/leaf.js')
+    for (const q of ['low','medium','high']) {
+      const t = leafMod.buildLeafTemplate({ shape: 'bowl', flowerQuality: q })
+      bar('① 质量=' + q + ': 顶点=' + t.positions.length/3 + ' 三角=' + t.index.length/3 + ' 非水密边=' + watertight(t.index))
+    }
+    // ② 底部塌陷: 底心 y 应低于口沿, 且随 sag 变化
+    const yRange = (o) => { const t = leafMod.buildLeafTemplate({ shape: 'bowl', ...o }); const ys = t.positions.filter((_, i) => i % 3 === 1); return [Math.min(...ys), Math.max(...ys)] }
+    const sag0 = yRange({ flowerBowlSag: 0 }), sag5 = yRange({ flowerBowlSag: 0.5 })
+    bar('② 塌陷 0 -> y=' + sag0[0].toFixed(3) + '..' + sag0[1].toFixed(3) + ' | 塌陷 0.5 -> y=' + sag5[0].toFixed(3) + '..' + sag5[1].toFixed(3) + ' | 底心更低=' + (sag5[0] < sag0[0]))
+    // ③ 单个花朵几何统计 (从树里取)
+    const g = sc.flowerMesh ? sc.flowerMesh.geometry : null
+    bar('③ 场景花朵网格: ' + (g ? '顶点=' + g.attributes.position.count + ' 三角=' + g.index.count/3 : '无'))
+    bar('③ 花数=' + state.stats.flowers + ' 花三角=' + state.stats.flowerTriangles)
+    // ④ 预览面板: 碗形渲染
+    const tab = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('花朵'))
+    tab.click(); await sleep(1200)
+    const labels = [...doc.querySelectorAll('.row-head label')].map((e) => e.textContent.trim())
+    bar('④ 面板控件: 开口角度/开口半径/底部圆润/塌陷/距离 = ' + ['花朵开口角度','花朵开口半径','底部圆润程度','底部塌陷','底部到开口距离'].every((n) => labels.includes(n)))
+    const btn = [...doc.querySelectorAll('button')].find((b) => b.textContent.includes('可视化调整贴图位置'))
+    btn && btn.click(); await sleep(2200)
+    const d = win.__flowerTexEditorDebug && win.__flowerTexEditorDebug()
+    bar('⑤ 预览: 网格数=' + (d?d.meshCount:'?') + ' 顶点=' + (d?d.verts:'?') + ' 模型像素=' + (d?d.pixels().nonClearPct+'%':'?'))
+    document.title = 'B2-OK :: ' + L.join(' || ').slice(0, 1400)
+  } catch (e) { document.title = 'B2-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 350) }
+}, 2500)
+</script></body></html>

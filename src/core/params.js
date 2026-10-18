@@ -149,7 +149,7 @@ export function defaultParams() {
       size: 0.42,          // 叶片长度(米)
       sizeVariance: 0.28,
       width: 0.78,         // 宽/长
-      shape: 'oval',       // oval | birch | maple | needle | lance | oak | palmate | cordate
+      shape: 'oval',        // 程序化叶形: oval/birch/lance/needle/maple/oak/palmate/cordate
       segments: 5,
       curl: 0.18,          // 纵向弯曲
       fold: 0.28,          // 横向 V 形折叠
@@ -168,7 +168,6 @@ export function defaultParams() {
       // 叶形混合: 同一棵树可混用多种叶形 (不同树种叶形差别很大)
       // 每项 { shape, weight }, weight 为相对比例; 留空 = 只用 shape
       // shapeMix 保留给树叶使用; 花朵固定为碗形
-      shapeMix: [],
       // 叶片卡片模式: 叶形轮廓直接用贴图 alpha (照片级), 而不是程序化轮廓
       cardMode: true,        // 默认用素材卡片 (启动时随机挑选)
       cardAspect: 1,       // 选中卡片的 宽/高 (由 UI 从卡片库写入)
@@ -286,35 +285,24 @@ export function defaultParams() {
       cardCurl: 0.1,
       cardFold: 0.12,
       width: 1.0,
-      shape: 'bowl',         // 唯一 3D 花型: 碗形
-      flowerBowlOpen: 55,    // 开口角度 (度)
-      flowerBowlRadius: 0.42,// 开口半径
-      flowerBowlRound: 0.85, // 底部圆润程度 (0=尖底锥形, 1=圆底球冠)
-      flowerBowlDepth: 0.55, // 底部到开口的距离
       color: '#f2a7c3',
       colorTip: '#fbe3ec',
       colorVariance: 0.16,
       translucency: 0.7,
-      cardMode: false,       // 花朵默认用程序化三维花冠
-      texture: '',           // 花朵贴图 (与树叶独立; 三维花冠会把它作为表面花纹包裹)
+
+      texture: '',           // 花朵贴图 (平面花卡, 贴图 alpha 决定轮廓)
       textureU: 0,           // 贴图在模型上的横向偏移
       textureV: 0,           // 贴图在模型上的纵向偏移
-      textureRepeat: 1,      // 贴图缩放 (平铺次数)
+      textureRepeat: 1,      // 贴图缩放 (U/V 统一)
+      textureRepeatU: 1,     // 贴图横向平铺次数
+      textureRepeatV: 1,     // 贴图纵向平铺次数
       textureRotation: 0,    // 贴图旋转 (弧度)
       tintMode: 'texture',   // 花朵贴图染色模式 (同树叶)
       alphaTest: 0,          // 花朵贴图 alpha 裁切 (平面花卡模式才需要)
       normalFromAlbedo: 0,   // 花朵贴图自动法线 (可选)
       cardId: '',
       cardAspect: 1,
-      flower3d: true,
-      flowerQuality: 'high',
-      flowerPetals: true,
-      flowerLobes: 5,
-      flowerThickness: 0.05,
-      flowerStamen: true,
-      flowerStamenColor: '#f4e6a6',
-      flowerTilt: 45,
-      flowerCluster: 1,
+      cardMode: true,        // 花朵 = 平面花卡 (无 3D 模型)
     },
 
     // ---------------- 落花 / 落花堆积 (参照落叶实现) ----------------

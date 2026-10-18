@@ -1,12 +1,6 @@
 <template>
   <Section title="花朵" hint="Flower">
     <ToggleRow label="启用花朵" v-model="f.enabled" hint="与树叶可同时开启 (独立网格, 材质继承树叶)" />
-    <SliderRow label="花朵开口角度" v-model="f.flowerBowlOpen" :min="8" :max="90" :step="1" unit="°"
-      hint="口沿张开的程度: 小=深杯, 大=浅碗" />
-    <SliderRow label="花朵开口半径" v-model="f.flowerBowlRadius" :min="0.05" :max="0.9" :step="0.01" unit="m" />
-    <SliderRow label="底部圆润程度" v-model="f.flowerBowlRound" :min="0" :max="1" :step="0.01"
-      hint="0 = 尖底锥形, 1 = 圆底球冠" />
-    <SliderRow label="底部到开口距离" v-model="f.flowerBowlDepth" :min="0.05" :max="1.2" :step="0.01" unit="m" />
     <SliderRow label="花朵尺寸" v-model="f.size" :min="0.1" :max="1.2" :step="0.02" />
     <SliderRow label="花朵大小随机" v-model="f.sizeVariance" :min="0" :max="0.8" :step="0.01" />
     <SliderRow label="花朵宽度" v-model="f.width" :min="0.5" :max="1.6" :step="0.02" />
@@ -32,21 +26,12 @@
     <SliderRow label="每簇花朵数" v-model="f.clusterCount" :min="1" :max="12" :step="1" />
     <SliderRow label="分布起始位置" v-model="f.startT" :min="0" :max="1" :step="0.01" />
     <SliderRow label="分布结束位置" v-model="f.endT" :min="0" :max="1" :step="0.01" />
-    <SliderRow label="花朵密度" v-model="f.density" :min="0.05" :max="1" :step="0.05"
-      hint="按比例从树叶位置采样开花 (1 = 每个叶位都开)" />
-    <SelectRow v-if="f.flower3d !== false" label="花冠质量" v-model="f.flowerQuality" :options="qualityOptions" />
-    <SliderRow v-if="f.flower3d !== false" label="花瓣数" v-model="f.flowerLobes" :min="3" :max="8" :step="1" />
-    <SliderRow v-if="f.flower3d !== false" label="花冠上仰" v-model="f.flowerTilt" :min="0" :max="90" :step="5" unit="°" />
-    <SliderRow v-if="f.flower3d !== false" label="花冠壁厚" v-model="f.flowerThickness" :min="0" :max="0.15" :step="0.005" />
-    <ToggleRow v-if="f.flower3d !== false" label="花瓣分层" v-model="f.flowerPetals" />
-    <ToggleRow v-if="f.flower3d !== false" label="花蕊" v-model="f.flowerStamen" />
-    <ColorRow v-if="f.flower3d !== false && f.flowerStamen !== false" label="花蕊颜色" v-model="f.flowerStamenColor" />
+    <SliderRow label="花朵密度" v-model="f.density" :min="0.05" :max="1" :step="0.05" />
     <ColorRow label="花色 A" v-model="f.color" />
     <ColorRow label="花色 B" v-model="f.colorTip" />
     <SliderRow label="花色差异" v-model="f.colorVariance" :min="0" :max="1" :step="0.01" />
     <SliderRow label="花朵透光" v-model="f.translucency" :min="0" :max="1" :step="0.01" />
     <SliderRow label="卡片比例 (宽/高)" v-model="f.cardAspect" :min="0.3" :max="2.5" :step="0.02" />
-    <ToggleRow label="花朵卡片模式" v-model="f.cardMode" hint="用照片花朵卡片代替程序化花冠" />
     <div class="pick-label">内置花朵卡片（樱花 6 批 + 其他 · 点缩略图应用）</div>
     <div class="chips">
       <span class="muted">批次</span>
@@ -65,18 +50,25 @@
       </button>
       <button class="btn small" title="随机花朵卡片" @click="onRandomCard">🎲</button>
     </div>
-    <TextureRow label="花朵贴图" v-model="f.texture"
-      hint="花朵自己的贴图 (与树叶独立): 三维花冠会把它包裹成表面花纹; 平面花卡模式则按 alpha 裁形" />
+    <TextureRow label="花朵贴图" v-model="f.texture" />
     <SelectRow label="花朵贴图染色" v-model="f.tintMode" :options="tintOptions" />
     <SliderRow v-if="f.tintMode === 'custom'" label="花朵染色强度" v-model="f.vertexColorMix" :min="0" :max="1" :step="0.01" />
+    <div class="pad-row">
+      <div class="pad-box">
+        <div class="pick-label">贴图偏移（二维拖动）</div>
+        <TexturePad v-model="texOffset" :min="-1" :max="1" />
+      </div>
+      <div class="pad-side">
+        <SliderRow label="贴图横向平铺" v-model="f.textureRepeatU" :min="0.1" :max="8" :step="0.05" />
+        <SliderRow label="贴图纵向平铺" v-model="f.textureRepeatV" :min="0.1" :max="8" :step="0.05" />
+      </div>
+    </div>
     <div class="fte-open">
       <button class="btn small primary" @click="texOpen = true">🎯 可视化调整贴图位置</button>
       <span class="fte-open-hint">弹出 3D 面板, 拖动/滚轮/Shift 拖动 调贴图</span>
     </div>
-    <SliderRow label="花朵贴图裁切" v-model="f.alphaTest" :min="0" :max="0.9" :step="0.01"
-      hint="平面花卡模式用来去掉贴图透明边; 三维花冠建议保持 0" />
-    <SliderRow label="花朵自动法线" v-model="f.normalFromAlbedo" :min="0" :max="3" :step="0.05"
-      hint="从花朵贴图生成法线 (0 = 关闭)" />
+    <SliderRow label="花朵贴图裁切" v-model="f.alphaTest" :min="0" :max="0.9" :step="0.01" />
+    <SliderRow label="花朵自动法线" v-model="f.normalFromAlbedo" :min="0" :max="3" :step="0.05" />
   </Section>
 
   <Section title="落花" hint="Falling">
@@ -108,6 +100,7 @@ import ToggleRow from '../ui/ToggleRow.vue'
 import ColorRow from '../ui/ColorRow.vue'
 import SelectRow from '../ui/SelectRow.vue'
 import TextureRow from '../ui/TextureRow.vue'
+import TexturePad from '../ui/TexturePad.vue'
 import FlowerTextureEditor from './FlowerTextureEditor.vue'
 import { state, randomFlowerCard } from '../../store/treeStore.js'
 import { LEAF_CARDS, LEAF_CARD_BATCHES, LEAF_CARD_BATCH_NAMES, leafCardRows, leafCardsFor } from '../../core/leafCards.generated.js'
@@ -117,6 +110,11 @@ const ff = computed(() => state.params.flowerFall)
 const fl = computed(() => state.params.flowerLitter)
 const cardBatches = Object.keys(LEAF_CARD_BATCHES)
 const texOpen = ref(false)
+// 二维偏移手柄 <-> params.flower.textureU/textureV
+const texOffset = computed({
+  get: () => [f.value.textureU || 0, f.value.textureV || 0],
+  set: (v) => { f.value.textureU = v[0]; f.value.textureV = v[1] },
+})
 const cardBatch = ref('fl_batch1')
 const cardRow = ref(1)
 const batchName = (bt) => LEAF_CARD_BATCH_NAMES[bt] || bt
@@ -154,6 +152,9 @@ const qualityOptions = [
 .chip.active { border-color: var(--accent); color: #eafff7; }
 .chip.dot { padding: 0; width: 34px; height: 34px; overflow: hidden; display: inline-flex; border-radius: 3px; }
 .chip.dot img { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; }
+.pad-row { display: flex; gap: 12px; align-items: flex-start; margin: 6px 0 6px; }
+.pad-box { width: 132px; }
+.pad-side { flex: 1; min-width: 0; }
 .fte-open { display: flex; align-items: center; gap: 8px; margin: 6px 0 4px; flex-wrap: wrap; }
 .fte-open-hint { font-size: 10.5px; color: var(--text-2); }
 .pick-label { font-size: 11px; color: var(--text-2); margin: 6px 0 3px; }

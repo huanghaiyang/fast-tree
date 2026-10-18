@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>n3d: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:820px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f'); const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = []; const bar = (s) => { L.push(s); document.getElementById('out').textContent = L.join('\n') }
+let win, doc, state, sc
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument; state = win.__fastTree; sc = win.__fastTreeScene })
+setTimeout(async () => {
+  try {
+    win.__fastTreeApi.applyClassification('sakura', 'mature', 'spring'); await sleep(800)
+    state.params.flower.enabled = true
+    const mod = await import('/src/core/leafCards.generated.js')
+    const c = await mod.pickExistingCard('flower', Math.random, 6)
+    if (c) win.__fastTreeApi.applyFlowerCard(c.id)
+    win.__fastTreeSceneApi.rebuildNow(true); await sleep(1500)
+    // ① 3D 代码已删除
+    const leafMod = await import('/src/core/leaf.js')
+    bar('① buildFunnelTemplate 已删除=' + !('buildFunnelTemplate' in leafMod))
+    bar('① 叶形列表=' + leafMod.LEAF_SHAPE_KEYS.join(','))
+    // ② 花朵是平面卡片 (每朵 6 三角)
+    const tri = state.stats.flowerTriangles, n = state.stats.flowers
+    bar('② 花朵: 数=' + n + ' 花三角=' + tri + ' 每朵=' + (n ? (tri / n).toFixed(1) : 0) + ' 三角 (卡片应为 6)')
+    // ③ 花朵网格有贴图
+    const fm = sc.materials.flower
+    bar('③ 花朵材质: map=' + (fm && fm.map ? '有' : '无') + ' alphaTest=' + (fm ? fm.alphaTest : '?') + ' 贴图=' + ((state.params.flower.texture || '').split('/').pop() || '-'))
+    // ④ 面板里没有 3D 花冠控件
+    const tab = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('花朵'))
+    tab.click(); await sleep(1200)
+    const labels = [...doc.querySelectorAll('.row-head label')].map((e) => e.textContent.trim())
+    const gone = ['花朵开口角度','花朵开口半径','底部圆润程度','底部到开口距离','底部塌陷','花瓣数','花冠壁厚','花冠质量','花瓣分层','花蕊','花冠上仰','花朵形状']
+    bar('④ 3D 控件已全部移除=' + gone.every((n2) => !labels.includes(n2)))
+    bar('④ 保留控件: 尺寸/宽度/密度/贴图=' + ['花朵尺寸','花朵宽度','花朵密度'].every((x) => labels.includes(x)) + ' ' + labels.filter((x) => x.includes('贴图')).join('|'))
+    // ⑤ 预览面板: 卡片几何
+    const btn = [...doc.querySelectorAll('button')].find((b) => b.textContent.includes('可视化调整贴图位置'))
+    btn && btn.click(); await sleep(2000)
+    const d = win.__flowerTexEditorDebug && win.__flowerTexEditorDebug()
+    bar('⑤ 预览: 网格数=' + (d?d.meshCount:'?') + ' 顶点=' + (d?d.verts:'?') + ' 模型像素=' + (d?d.pixels().nonClearPct+'%':'?'))
+    document.title = 'N3D-OK :: ' + L.join(' || ').slice(0, 1200)
+  } catch (e) { document.title = 'N3D-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 350) }
+}, 2500)
+</script></body></html>
