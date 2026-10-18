@@ -15,14 +15,15 @@
 
 ```bash
 npm install
-npm run dev          # 打开 http://127.0.0.1:5273
+npm run dev          # 打开 http://127.0.0.1:5273 (同时自动启动应用桥/MCP, 默认 5275)
 npm run build        # 产物在 dist/
 npm run preview      # 预览构建产物
-npm run selftest     # 无浏览器自检 (34 项: 确定性/参数隔离/几何合法性/规模预算)
+npm run selftest     # 无浏览器自检 (确定性/参数隔离/几何合法性/规模预算/导出格式)
 ```
 
-> 若所在环境禁止派生子进程（受限沙箱 / 部分 CI），Vite 在 Windows 上的 `net use`
-> 探测会抛 `EPERM`，改用 `npm run sandbox:dev` / `npm run sandbox:build` 即可（见文末）。
+> `npm run dev` 已内置 Vite 的沙箱兼容入口（受限环境也不会因 `net use` 探测报 `EPERM`），
+> 并会自动拉起本地应用桥 / MCP / 大模型代理；普通环境想直接用原生 vite 可用 `npm run dev:raw`。
+> 桥的复用/自动升级/日志位置见「AI 对话助手」一节。
 
 界面：左侧参数面板（8 个标签页）+ 右侧**可收起的「模型节点」面板**（顶栏 `🧩 节点` 或快捷键 `N` 开关，**默认收起**），
 右侧 3D 视口（左键旋转 / 右键平移 / 滚轮缩放），右上角统计与**风向指示器**，左上角选中提示条。
@@ -192,6 +193,7 @@ src/
 ├─ components/
 │  ├─ Viewport.vue                    Three 视口 + 变更分组监听 (几何/材质/风/场景/选中)
 │  ├─ ControlPanel.vue                左侧 8 个参数标签页
+│  ├─ ChatPanel.vue                   AI 对话助手 (历史/图片/思考过程/联网搜索/会话管理)
 │  ├─ NodeDock.vue                    右侧可收起的「模型节点」面板 (默认不展示)
 │  ├─ ParamTip.vue                    参数 hover 说明浮层 (事件委托 + 词典查表)
 │  ├─ WindCompass.vue                 视口风向指示器 (世界风向投影到相机地面基)
@@ -212,12 +214,18 @@ src/
    ├─ textures.js      程序化树皮/叶片贴图 (颜色+法线+粗糙度)
    ├─ materials.js     PBR + 风场/生长/自定义 GLSL + 节点选中高亮
    ├─ exporter.js      GLB / OBJ / JSON / PNG
+   ├─ apiRegistry.js   应用命令注册表 (MCP / 大模型 tool-calling 共用同一份定义)
+   ├─ appApi.js        浏览器侧命令执行器 + 本地桥客户端
    └─ sceneManager.js  渲染器/相机/灯光/天空/地面/动画循环/选中框/聚焦/相机基
 scripts/
-├─ selftest.mjs        71 项无浏览器自检
+├─ selftest.mjs        184 项无浏览器自检 (含导出格式检查)
 ├─ paramAudit.mjs      参数有效性审计核心 (几何/材质/风场三路签名比对)
 ├─ audit-params.mjs    npm run audit 入口
-├─ vite-sandbox.mjs    受限沙箱/CI 下绕过 Vite net use 探测
+├─ app-bridge-server.mjs  本地应用桥 / MCP 服务器 / 大模型代理 (Key 只在服务端)
+├─ mcp-selfcheck.mjs   MCP 桥链自检
+├─ chat-selfcheck.mjs  大模型对话链路自检 (文本/图片/工具/流式/联网搜索)
+├─ vite-sandbox.mjs    受限沙箱/CI 下绕过 Vite net use 探测 (npm run dev 的入口)
+├─ vite-plugin-app-bridge.mjs  dev 时自动启动/复用/升级应用桥 + MCP (vite 插件)
 └─ shot-receiver.mjs   开发用截图接收器 (配合 dev/ 自检页面)
 ```
 
@@ -238,6 +246,61 @@ scripts/
 | `aOrigin` | 该枝条基点（生长动画的收缩目标） |
 | `aGrow` | 生长区间 `[start, end]` |
 | `aNodeId` | 所属模型节点 id（节点树的选中 / 高亮 / 隔离） |
+
+---
+
+## AI 对话助手
+
+侧栏里的 🤖 是接了大模型的对话助手：它通过本地桥（`scripts/app-bridge-server.mjs`，
+默认 `127.0.0.1:5275`）调用模型，再用 tool-calling 执行应用命令来改树。
+**API Key 只在 Node 侧读取**（`config/llm.json` 或 `DEEPSEEK_API_KEY` 环境变量），浏览器永远拿不到。
+
+```bash
+npm run dev          # 启动 Vite, 并自动拉起应用桥 / MCP (默认端口 5275)
+npm run dev:raw      # 跳过沙箱兼容层, 直接用 vite (普通本地环境可用)
+npm run mcp          # 只启动应用桥 / MCP (已有兼容实例时直接复用)
+npm run chat:check   # 对话链路自检 (需要 Key + 网络)
+```
+
+### MCP / 应用桥随 dev 自动启动
+
+`vite.config.js` 里挂了 [scripts/vite-plugin-app-bridge.mjs](scripts/vite-plugin-app-bridge.mjs)，
+所以 **`npm run dev` 一条命令就会拉起应用桥 + MCP 服务器**，不需要另开终端：
+
+- **复用**：启动前先查 `GET /health`；若已有兼容实例（带 `version`/`features`）就直接复用，多开 dev 不会冲突。
+- **自动升级**：检测到旧版本桥占用端口时，自动结束旧进程（SIGTERM/SIGKILL）再启新版本；可用 `BRIDGE_AUTO_REPLACE=0` 关闭并手工处理。
+- **端点**：`http://127.0.0.1:5275`，MCP 为 `/mcp`（33 个工具），大模型代理 `POST /api/llm/chat/stream`，联网搜索 `GET|POST /api/search`。
+- **日志**：桥的 stdout/stderr 写到 `.local/app-bridge.log`；终端只打印端口/版本/pid/MCP 端点等关键信息。
+- **生命周期**：dev 正常退出（Ctrl+C）会结束自己启动的桥；被强杀时残留实例会被下次 dev 复用或替换。
+- **断线重连**：桥重启后浏览器里的应用会自动重新注册（无需刷新页面），MCP 自检可直接复验。
+- 环境变量：`BRIDGE_PORT`（默认 5275）、`BRIDGE_AUTO_START=0`（不自动启动）、`BRIDGE_AUTO_REPLACE=0`（不自动替换旧桥）。
+- 配置：`GET /health` 返回 `pid/version/features`，方便脚本判断；Key 等敏感配置仍只在服务端读取。
+
+### 功能与实现
+
+| 能力 | 实现 |
+| --- | --- |
+| 历史记录 | 会话列表 + 按标题/消息内容搜索；全部/收藏/归档三个筛选项；localStorage 持久化 |
+| 新对话 / 上下文隔离 | 每个会话独立 `messages`，请求只发送当前会话历史；新对话从空上下文开始，互不污染 |
+| 图片上传与识别 | 按钮选图 / 粘贴 / 拖入；前端压到最长边 1024 的 JPEG 后按 OpenAI 多模态 `image_url` 发送；视觉模型返回识别结果 |
+| 显示思考过程 | 桥服务转发模型 `reasoning_content`，SSE 实时增量显示在可折叠的「🧠 思考过程」块里（完成后按长度自动收起） |
+| 重新生成 | 最后一条助手消息可 ↻ 重发，保留原提问上下文，不重复追加用户消息 |
+| 引用 | 任意消息 ❝ 引用成 Markdown 引用块写入输入框；联网来源也能「引用」成 `[n] 标题 — URL` |
+| 删除 | 历史列表内两步确认删除（🗑 → 确认?），删除后自动切换/新建会话 |
+| 收藏 | ⭐ 收藏会话，收藏列表单独筛选，标记持久化 |
+| 置顶 | 📌 置顶会话，列表内置顶优先排序 |
+| 归档 | 📦 归档会话，从「全部」移到「归档」列表，可随时取消 |
+| 联网搜索 | 输入框 🌐 打开后，服务端给模型 `web_search` 工具（Bing RSS，免 Key）；搜索结果以 `[1][2]` 编号回传并渲染成可点击来源列表 |
+
+### 模型与接口
+
+- 模型清单从 `GET /api/llm/models` 动态获取（标注是否支持图片）；默认选支持视觉的模型。
+- `POST /api/llm/chat/stream` 用 SSE 流式返回：`thinking` / `content` / `phase` / `tool` / `sources` / `done` / `error`。
+- `POST /api/llm/chat` 保留非流式版本（旧客户端/脚本可用）。
+- 工具调用采用多轮循环：模型调用 `app.*` 命令时由服务端转给浏览器执行，`web_search` 由服务端直接搜索；单次对话最多 4 轮工具、2 次联网搜索。
+- 图片/大请求体上限 32MB；图片在浏览器侧先压缩，避免撑爆 localStorage（超限时自动省略旧图片并提示）。
+
+> 对话数据存在浏览器 localStorage（`fasttree.chat.v1`），不会上传到服务端；服务端只做无状态代理。
 
 ---
 
@@ -292,6 +355,8 @@ node scripts/shot-receiver.mjs        # 监听 127.0.0.1:5274, 把页面回传�
 - `dev/classify-check.html` —— 点真实的树种/阶段/季节 chips, 验证重建/重新取景/生长进度不被重置
 - `dev/ui-check.html` —— hover 说明浮层 + 风向指示器箭头角度 + 不同风向下的屏幕摆动
 - `dev/export-format-check.html` —— 导出数据格式自检: GLB 按 glTF 2.0 规范校验容器/accessor/min-max/贴图/节点并用官方 GLTFLoader 回读, OBJ 按 Wavefront 文法校验并用 OBJLoader 回读, PNG 校验签名/IHDR/CRC/IDAT/行滤波并确认非空帧, 参数 JSON 校验结构完整性与导入回环, 以及"特效全开时的富场景导出"
+- `dev/chat-check.html` —— 对话界面自检 (mock 流式接口): 历史记录/新对话隔离/图片多模态请求/思考过程/重新生成/引用/删除/收藏/置顶/归档/联网来源渲染, 不消耗真实模型调用
+- `dev/chat-live-check.html` —— 对话真实链路冒烟 (真实桥 + 真实模型): 文本对话/图片识别/联网搜索来源。先 `node scripts/app-bridge-server.mjs --port=5289` 再打开
 - `dev/node-check.html` —— 驱动节点树：选中/隔离/聚焦/材质节点/详情面板，并用像素统计验证效果
 - `dev/dock-check.html` —— 校验右侧面板布局：默认不展示、8 个标签页、打开后三列网格、组默认折叠、`N` 开关、关闭后高亮保留
 - `dev/wind-check.html` —— 把相机推近树冠，用**渲染像素**测树冠质心轨迹：默认风的轨迹薄度 ≈0.21（直线往复；1.0 = 绕圈）
@@ -309,8 +374,10 @@ node scripts/shot-receiver.mjs        # 监听 127.0.0.1:5274, 把页面回传�
 退路（直接用 `fs.realpathSync`），完全不派生子进程：
 
 ```bash
-npm run sandbox:dev     # 等价于 npm run dev
-npm run sandbox:build   # 等价于 npm run build
+npm run dev         # 已默认走 sandbox 兼容入口 (同时自动启动应用桥/MCP)
+npm run dev:raw     # 普通本地环境: 直接用 vite
+npm run sandbox:dev # 老名字, 等价于 npm run dev
+npm run sandbox:build   # 受限环境构建 (等价 npm run build 的沙箱版)
 ```
 
 **第三方 API 版本提醒**：three r186 起

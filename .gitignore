@@ -2,6 +2,7 @@ node_modules/
 dist/
 .npm-cache/
 .shots/
+.local/
 *.local
 *.log
 .DS_Store

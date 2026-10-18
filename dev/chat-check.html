@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>chat: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+/* 对话界面自检 (浏览器, 无真实大模型调用)
+ * 用 mock fetch 替换桥接口, 验证 11 项能力:
+ *   历史记录 / 新对话隔离 / 图片上传+多模态请求 / 思考过程 / 重新生成 / 引用 /
+ *   删除 / 收藏 / 置顶 / 归档 / 联网搜索
+ * 结果写 document.title: CHAT-OK / CHAT-FAIL, 详情在 <pre>。 */
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+let fail = 0
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+const check = (name, cond, detail = '') => {
+  if (!cond) { fail++; line('✘ ' + name + (detail ? ' — ' + detail : '')) }
+  else line('✔ ' + name + (detail ? ' — ' + detail : ''))
+  return cond
+}
+const note = (s) => line('· ' + s)
+async function waitFor(fn, timeout = 15000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { if (fn()) return true } catch (e) { /* ignore */ }
+    await sleep(80)
+  }
+  return false
+}
+let win, doc, chat
+const requests = []
+let replySeq = 0
+let lastMockKind = ''
+
+/* ---------------- mock 桥 ---------------- */
+function installMock() {
+  const origFetch = win.fetch.bind(win)
+  win.__FAST_TREE_BRIDGE__ = 'http://mock.local'
+  const enc = new win.TextEncoder()
+  const jsonResp = (obj, status = 200) => new win.Response(JSON.stringify(obj), {
+    status, headers: { 'Content-Type': 'application/json' },
+  })
+  const sse = (events, delay = 4) => new win.Response(new win.ReadableStream({
+    async start(c) {
+      for (const ev of events) {
+        c.enqueue(enc.encode('data: ' + JSON.stringify(ev) + '\n\n'))
+        await sleep(delay)
+      }
+      c.close()
+    },
+  }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+
+  function lastUserText(body) {
+    const msgs = body.messages || []
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role !== 'user') continue
+      const c = msgs[i].content
+      if (typeof c === 'string') return c
+      const t = (c || []).find((p) => p.type === 'text')
+      return t ? t.text : ''
+    }
+    return ''
+  }
+  function lastUserHasImage(body) {
+    const msgs = body.messages || []
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role !== 'user') continue
+      return Array.isArray(msgs[i].content) && msgs[i].content.some((p) => p.type === 'image_url')
+    }
+    return false
+  }
+  function handleChat(body) {
+    requests.push(JSON.parse(JSON.stringify(body)))
+    const text = lastUserText(body)
+    const hasImage = lastUserHasImage(body)
+    lastMockKind = hasImage ? 'image' : body.search ? 'search' : /思考/.test(text) ? 'think' : /工具/.test(text) ? 'tool' : /联网/.test(text) ? 'search' : 'text'
+    replySeq++
+    const reply = hasImage
+      ? '图片里主要是红色（正红/珊瑚红）'
+      : /重新生成/.test(text)
+        ? '重新生成的回答 No.' + replySeq
+        : '回答 No.' + replySeq + '：**重点** ' + String(text).slice(0, 40)
+    const events = []
+    let sources = []
+    let executed = []
+    if (lastMockKind === 'think') {
+      events.push({ type: 'thinking', delta: '先分析用户意图。' })
+      events.push({ type: 'thinking', delta: '再组织一句话回答。' })
+    }
+    if (lastMockKind === 'tool') {
+      events.push({ type: 'content', delta: '（过渡文本，应该被清空）' })
+      events.push({ type: 'phase', round: 1, message: '正在执行工具…' })
+      events.push({ type: 'tool', name: 'app.status', brief: 'app.status', status: 'running' })
+      events.push({ type: 'tool', name: 'app.status', brief: 'app.status', status: 'done' })
+      executed = [{ name: 'app.status', ok: true, brief: 'app.status' }]
+    }
+    if (lastMockKind === 'search') {
+      sources = [
+        { title: 'SpeedTree 官方页面', url: 'https://unity.com/products/speedtree', snippet: '程序化植被工具' },
+        { title: '程序化建模介绍', url: 'https://example.com/procedural', snippet: '用算法生成树木' },
+      ]
+      events.push({ type: 'sources', items: sources })
+    }
+    // 正文分块流式输出, 带 Markdown 强调
+    const bodyText = lastMockKind === 'search' ? reply + ' 参考 [1][2]' : reply
+    const chunks = bodyText.match(/.{1,6}/gs) || [bodyText]
+    for (const ch of chunks) events.push({ type: 'content', delta: ch })
+    events.push({ type: 'done', reply: bodyText, thinking: lastMockKind === 'think' ? '先分析用户意图。再组织一句话回答。' : '', sources, executed, model: body.model })
+    return sse(events)
+  }
+
+  win.fetch = async (url, opts = {}) => {
+    const u = String(url)
+    if (!u.startsWith('http://mock.local')) return origFetch(url, opts)
+    const p = u.slice('http://mock.local'.length)
+    if (p === '/health') return jsonResp({ ok: true })
+    if (p === '/api/llm/models') return jsonResp({
+      ok: true,
+      models: [
+        { id: 'deepseek-flash', name: 'Mock Flash', vision: true, contextWindow: 1000000, maxOutput: 100000 },
+        { id: 'mock-pro', name: 'Mock Pro', vision: false, contextWindow: 1000000, maxOutput: 100000 },
+      ],
+    })
+    if (p === '/api/selfcheck') return jsonResp({ checks: [{ name: 'mock', ok: true }] })
+    if (p === '/api/llm/chat/stream') {
+      let body = {}
+      try { body = JSON.parse(opts.body || '{}') } catch (e) { body = {} }
+      return handleChat(body)
+    }
+    if (p === '/api/llm/chat') return jsonResp({ ok: true, reply: '非流式回答', thinking: '', sources: [], executed: [] })
+    return jsonResp({ ok: false, error: 'mock 404 ' + p }, 404)
+  }
+}
+
+/* ---------------- 主流程 ---------------- */
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  const t0 = performance.now()
+  try {
+    for (let i = 0; i < 100 && !win; i++) await sleep(100)
+    for (let i = 0; i < 100 && !win.__fastTreeChat; i++) await sleep(100)
+    chat = win.__fastTreeChat
+    if (!chat) throw new Error('window.__fastTreeChat 不存在 (需要 dev 模式)')
+    installMock()
+    chat.reset()
+    chat.setOpen(true)
+    await sleep(400)
+
+    const convs = () => chat.conversations
+    const active = () => chat.activeConversation
+    const assistantMsgs = () => (active() ? active().messages.filter((m) => m.role === 'assistant') : [])
+    const sendAndWait = async (text) => {
+      chat.setInput(text)
+      await chat.send()
+      await waitFor(() => !active().busy, 20000)
+      await sleep(120)
+    }
+    const domText = (sel) => [...doc.querySelectorAll(sel)].map((e) => e.textContent || '').join('\n')
+
+    /* 1. 新对话 / 隔离 / 历史记录 */
+    line('===== 历史记录 · 新对话隔离 =====')
+    check('初始只有一个对话', convs().length === 1)
+    await sendAndWait('第一段对话')
+    check('发送后消息数=2 (user+assistant)', active().messages.length === 2, 'n=' + active().messages.length)
+    check('助手回复已渲染', domText('.chat-msg.assistant .bubble').includes('回答 No.'))
+    const conv1Id = active().id
+    const conv1Title = active().title
+    chat.newConversation()
+    await sleep(180)
+    check('新对话消息为空 (不继承上下文)', active().messages.length === 0)
+    check('历史记录里有 2 个对话', convs().length === 2)
+    await sendAndWait('第二段对话')
+    const req2 = requests[requests.length - 1]
+    const req2UserTexts = (req2.messages || []).filter((m) => m.role === 'user').map((m) => (typeof m.content === 'string' ? m.content : (m.content.find((p) => p.type === 'text') || {}).text || ''))
+    check('第二个对话的请求只含自己的用户消息 (上下文不污染)', req2UserTexts.length === 1 && req2UserTexts[0] === '第二段对话', JSON.stringify(req2UserTexts))
+    const conv2Id = active().id
+    chat.switchConversation(conv1Id)
+    await sleep(200)
+    check('切回第一个对话显示原消息', domText('.chat-msg .bubble').includes('第一段对话'))
+    check('对话标题来自首条消息', conv1Title.includes('第一段对话'), conv1Title)
+    check('切换后模型/搜索设置跟随会话', active().id === conv1Id)
+
+    /* 2. 思考过程 / 工具 / 来源 / 内容重置 */
+    line('\n===== 思考过程 · 工具调用 · 引用来源 =====')
+    await sendAndWait('请先思考再回答')
+    let am = assistantMsgs()[assistantMsgs().length - 1]
+    check('存在思考过程内容', !!am.thinking && am.thinking.includes('先分析'), 'len=' + (am.thinking || '').length)
+    check('思考过程块已渲染', doc.querySelectorAll('.thinking .think-body').length > 0)
+    check('思考过程显示字数', domText('.think-count').match(/\d+ 字/), domText('.think-count'))
+    await sendAndWait('请调用工具查看状态')
+    am = assistantMsgs()[assistantMsgs().length - 1]
+    check('工具调用记录已显示', am.tools.length > 0 && domText('.tool-chip').includes('app.status'), JSON.stringify(am.tools))
+    check('工具轮的过渡文本被清空 (内容重置)', !am.content.includes('过渡文本'), JSON.stringify(am.content).slice(0, 60))
+    chat.setSearch(true)
+    check('联网搜索开关已打开', chat.activeConversation.search === true)
+    await sendAndWait('联网搜索一下 SpeedTree')
+    am = assistantMsgs()[assistantMsgs().length - 1]
+    check('联网来源已返回', am.sources.length === 2, 'sources=' + am.sources.length)
+    check('来源条目已渲染且可点击', doc.querySelectorAll('.sources .source-item a[target="_blank"]').length >= 2)
+    check('请求携带 search=true', requests[requests.length - 1].search === true)
+    check('Markdown 加粗已渲染', doc.querySelectorAll('.markdown b').length > 0)
+    chat.setSearch(false)
+
+    /* 3. 重新生成 */
+    line('\n===== 重新生成 =====')
+    const beforeReply = am.content
+    const countBefore = active().messages.length
+    const lastAssistant = assistantMsgs()[assistantMsgs().length - 1]
+    chat.regenerate(lastAssistant)
+    await waitFor(() => !active().busy, 20000)
+    await sleep(150)
+    const regen = assistantMsgs()[assistantMsgs().length - 1]
+    check('重新生成替换了回答', regen.content && regen.content !== beforeReply, JSON.stringify(regen.content).slice(0, 60))
+    check('消息数不变 (不重复追加用户消息)', active().messages.length === countBefore)
+    check('重新生成沿用原提问上下文', (requests[requests.length - 1].messages || []).some((m) => m.role === 'user' && String(typeof m.content === 'string' ? m.content : '').includes('联网搜索一下')))
+
+    /* 4. 引用 */
+    line('\n===== 引用 =====')
+    chat.setInput('')
+    chat.quoteMessage(regen)
+    await sleep(100)
+    check('引用消息写入输入框 (Markdown 引用块)', doc.querySelector('.chat-input textarea').value.startsWith('> '), JSON.stringify(doc.querySelector('.chat-input textarea').value.slice(0, 30)))
+    chat.setInput('')
+    if (regen.sources && regen.sources.length) {
+      chat.quoteSource(regen, regen.sources[0], 0)
+      await sleep(100)
+      check('引用联网来源写入输入框', doc.querySelector('.chat-input textarea').value.includes('[1] SpeedTree'), JSON.stringify(doc.querySelector('.chat-input textarea').value.slice(0, 50)))
+    }
+    chat.setInput('')
+
+    /* 5. 图片上传与识别 */
+    line('\n===== 图片上传 · 多模态请求 =====')
+    const redPng = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR42mP8z8Dwn4GBgYERIAYAI0YDfx6X2nAAAAAASUVORK5CYII='
+    const pngBytes = win.Uint8Array.from(win.atob(redPng), (c) => c.charCodeAt(0))
+    const file = new win.File([pngBytes], 'red.png', { type: 'image/png' })
+    await chat.addImages([file])
+    await waitFor(() => chat.pendingImages.length === 1, 8000)
+    check('图片进入待发送队列', chat.pendingImages.length === 1)
+    check('待发送缩略图已渲染', doc.querySelectorAll('.pending-img img').length === 1)
+    chat.setInput('这张图片是什么颜色')
+    await chat.send()
+    await waitFor(() => !active().busy, 20000)
+    await sleep(150)
+    const imgMsg = active().messages.find((m) => m.role === 'user' && m.images && m.images.length)
+    check('用户消息保存了图片', !!imgMsg && imgMsg.images[0].dataUrl.startsWith('data:image/jpeg'))
+    check('消息里的图片已渲染', doc.querySelectorAll('.msg-images img').length >= 1)
+    const imgReq = requests[requests.length - 1]
+    const lastUser = [...(imgReq.messages || [])].reverse().find((m) => m.role === 'user')
+    check('请求使用多模态 content 数组', Array.isArray(lastUser.content) && lastUser.content.some((p) => p.type === 'image_url'))
+    check('视觉模型识别了图片内容', /红/.test(assistantMsgs()[assistantMsgs().length - 1].content))
+    await sendAndWait('继续说说这棵树')
+    const followReq = requests[requests.length - 1]
+    check('后续请求仍携带历史图片 (上下文保留)', (followReq.messages || []).some((m) => m.role === 'user' && Array.isArray(m.content) && m.content.some((p) => p.type === 'image_url')))
+    chat.switchConversation(conv2Id)
+    await sleep(200)
+    check('另一个对话不受图片/上下文污染', !active().messages.some((m) => m.images && m.images.length))
+    chat.switchConversation(conv1Id)
+    await sleep(150)
+
+    /* 6. 收藏 / 置顶 / 归档 / 搜索 / 删除 / 持久化 */
+    line('\n===== 收藏 · 置顶 · 归档 · 删除 · 持久化 =====')
+    const c1 = convs().find((c) => c.id === conv1Id)
+    const c2 = convs().find((c) => c.id === conv2Id)
+    chat.togglePin(c1); chat.toggleFavorite(c1)
+    check('置顶生效', c1.pinned === true)
+    check('收藏生效', c1.favorite === true)
+    chat.toggleArchive(c2)
+    check('归档生效', c2.archived === true)
+    chat.setHistory(true)
+    chat.setHistoryMode('all')
+    check('归档对话不在"全部"列表', !chat.historyList.some((c) => c.id === conv2Id))
+    chat.setHistoryMode('archive')
+    check('归档列表包含该对话', chat.historyList.some((c) => c.id === conv2Id))
+    chat.setHistoryMode('fav')
+    check('收藏列表包含置顶收藏对话', chat.historyList.some((c) => c.id === conv1Id))
+    chat.setHistoryMode('all')
+    chat.setHistoryQuery('第一段')
+    check('历史搜索按标题过滤', chat.historyList.length === 1 && chat.historyList[0].id === conv1Id)
+    chat.setHistoryQuery('')
+    await sleep(100)
+    const stored = JSON.parse(win.localStorage.getItem('fasttree.chat.v1') || '{}')
+    check('对话已持久化到 localStorage', Array.isArray(stored.conversations) && stored.conversations.length === 2)
+    const storedC1 = (stored.conversations || []).find((c) => c.id === conv1Id)
+    check('置顶/收藏标记已持久化', storedC1 && storedC1.pinned === true && storedC1.favorite === true)
+    check('图片 dataURL 已持久化', !!(storedC1 && storedC1.messages.some((m) => (m.images || []).some((im) => im.dataUrl && im.dataUrl.startsWith('data:image/')))))
+    chat.deleteConversation(c2)
+    check('删除对话生效', !convs().some((c) => c.id === conv2Id))
+    check('删除后仍保留另一个对话', convs().length === 1)
+    chat.saveStore()
+    chat.reloadFromStorage()
+    await sleep(250)
+    check('刷新(重新读 localStorage)后历史恢复', convs().length === 1 && convs()[0].id === conv1Id)
+    check('刷新后消息仍在', convs()[0].messages.length >= 2)
+
+    /* 7. 历史面板 DOM */
+    line('\n===== 历史面板 UI =====')
+    chat.setHistory(true)
+    chat.setHistoryMode('all')
+    chat.setHistoryQuery('')
+    await sleep(150)
+    check('历史抽屉已打开', !!doc.querySelector('.hist'))
+    check('历史条目可渲染', doc.querySelectorAll('.hist-item').length === 1, 'n=' + doc.querySelectorAll('.hist-item').length)
+    check('历史条目含置顶/收藏标记', doc.querySelectorAll('.hist-item .hist-title').length === 1 && domText('.hist-item .hist-title').includes('⭐'))
+    check('历史面板含"新对话与上下文互不影响"说明', domText('.hist-foot').includes('互不影响'))
+    chat.setHistory(false)
+    await sleep(120)
+    await chat.reloadModels()
+    await sleep(150)
+    const modelOpts = [...doc.querySelectorAll('.chat-model option')].map((o) => o.textContent)
+    check('模型下拉来自 /api/llm/models 且标注视觉能力', modelOpts.length === 2 && modelOpts.some((t) => t.includes('视觉')), JSON.stringify(modelOpts))
+
+    /* 汇总 */
+    const ms = Math.round(performance.now() - t0)
+    line('\n===== 汇总 =====')
+    line('结果: ' + (fail ? 'CHAT-FAIL ' + fail : 'CHAT-OK') + ' · 请求数=' + requests.length + ' · 耗时=' + ms + 'ms')
+    document.title = (fail ? 'CHAT-FAIL(' + fail + ')' : 'CHAT-OK') + ' :: ' + R.filter((s) => s.startsWith('✘')).slice(0, 6).join(' | ') +
+      ' || ' + R.filter((s) => s.startsWith('✔')).slice(0, 10).join(' | ')
+  } catch (e) {
+    document.title = 'CHAT-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 900)
+    line('EX: ' + (e && e.stack ? e.stack : e))
+  }
+}, 2600)
+</script></body></html>

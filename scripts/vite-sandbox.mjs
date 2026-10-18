@@ -13,7 +13,8 @@
  * 抛出这个特定错误, 于是 Vite 走退路, 完全不派生子进程。
  * 其他路径与后续调用保持原生行为。
  *
- * 普通本地环境不需要它, 直接 `npm run dev` / `npm run build` 即可。
+ * 普通本地环境无需特殊处理, 但 npm run dev 现在默认也走这里 (同时由 vite 插件
+ * 自动启动应用桥/MCP); 想直接用原生 vite 用 npm run dev:raw。
  * 用法:
  *   node scripts/vite-sandbox.mjs dev
  *   node scripts/vite-sandbox.mjs build
@@ -21,21 +22,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-
-// MCP / 大模型代理随应用一起启动 (仅 dev)
-if ((process.argv[2] || 'dev') === 'dev') {
-  try {
-    const { spawn } = await import('node:child_process')
-    const child = spawn(process.execPath, ['scripts/app-bridge-server.mjs'], {
-      cwd: process.cwd(), stdio: 'ignore', detached: true,
-    })
-    child.unref()
-    console.log('[vite-sandbox] 应用桥/MCP 已启动 (127.0.0.1:5275)')
-  } catch (e) {
-    console.warn('[vite-sandbox] 应用桥启动失败:', e.message)
-  }
-}
-
 
 const cwd = process.cwd()
 const origNative = fs.realpathSync.native
@@ -68,7 +54,11 @@ if (mode === 'build') {
   console.log('[vite-sandbox] build 完成')
 } else {
   const server = await vite.createServer({
-    server: { host: '127.0.0.1', port: Number(process.env.PORT || 5273), strictPort: true },
+    server: {
+      host: '127.0.0.1',
+      port: Number(process.env.PORT || 5273),
+      strictPort: String(process.env.STRICT_PORT || '') === '1',
+    },
   })
   await server.listen()
   server.printUrls()

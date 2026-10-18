@@ -17,7 +17,7 @@ import { LEAF_CARDS } from './leafCards.generated.js'
 import { BARK_TEXTURES, BARK_SETS } from './barkTextures.js'
 import { COMMAND_NAMES } from './apiRegistry.js'
 
-const BRIDGE = 'http://127.0.0.1:5275'
+const BRIDGE = 'http://127.0.0.1:' + (typeof __APP_BRIDGE_PORT__ !== 'undefined' ? __APP_BRIDGE_PORT__ : 5275)
 const setAt = (obj, path, value) => {
   const parts = path.split('.')
   let o = obj
@@ -289,23 +289,37 @@ async function runCommand(name, args) {
 let timer = null
 let connected = false
 let consumerId = ''
+let registerPending = false
+const BRIDGE_VERSION = 33
 const COMMAND_LIST = Object.keys(COMMAND_HANDLERS)
 export function bridgeStatus() {
   return { connected, url: BRIDGE }
 }
+/** 向桥注册本实例能力; 桥重启后会自动重新注册 (无需刷新页面) */
+async function registerConsumer() {
+  if (registerPending) return
+  registerPending = true
+  try {
+    const res = await fetch(BRIDGE + '/bridge/hello', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ commands: COMMAND_LIST, path: location.pathname, version: COMMAND_LIST.length + '/' + BRIDGE_VERSION }),
+    })
+    const j = await res.json().catch(() => ({}))
+    if (j && j.consumerId) { consumerId = j.consumerId; connected = true }
+  } catch (e) {
+    connected = false
+  } finally {
+    registerPending = false
+  }
+}
 export function startBridgeClient() {
   if (timer) return
   window.__fastTreeCommandApi = { run: runCommand, handlers: COMMAND_LIST }
-  // 向桥注册本实例的能力 (多标签页时桥只把命令发给能力最全的实例)
-  fetch(BRIDGE + '/bridge/hello', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ commands: COMMAND_LIST, path: location.pathname, version: COMMAND_LIST.length + '/33' }),
-  })
-    .then((r) => r.json())
-    .then((j) => { if (j && j.consumerId) consumerId = j.consumerId })
-    .catch(() => {})
+  registerConsumer()
   timer = setInterval(async () => {
+    // 桥还没连上 (首次 / 重启中) -> 重新注册, 避免 dev 重启 MCP 后必须刷新页面
+    if (!connected || !consumerId) { await registerConsumer(); return }
     try {
       const res = await fetch(`${BRIDGE}/bridge/poll?id=${encodeURIComponent(consumerId)}`, { cache: 'no-store' })
       const json = await res.json()
@@ -320,6 +334,7 @@ export function startBridgeClient() {
       }
     } catch (e) {
       connected = false
+      consumerId = ''
     }
   }, 400)
 }

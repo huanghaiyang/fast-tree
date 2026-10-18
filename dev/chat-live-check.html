@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>chat-live: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+/* 对话真实链路冒烟 (浏览器 + 真实桥服务 + 真实大模型)
+ * 需要先启动新版桥服务: node scripts/app-bridge-server.mjs --port=5289
+ * 覆盖: 模型清单 / 文本对话 / 图片识别 / 联网搜索来源渲染。
+ * 结果写 document.title: CHATLIVE-OK / CHATLIVE-FAIL。 */
+const BRIDGE = 'http://127.0.0.1:5289'
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+let fail = 0
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+const check = (name, cond, detail = '') => {
+  if (!cond) { fail++ } else { /* ok */ }
+  line((cond ? '✔ ' : '✘ ') + name + (detail ? ' — ' + detail : ''))
+}
+async function waitFor(fn, timeout = 60000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { if (fn()) return true } catch (e) { /* ignore */ }
+    await sleep(150)
+  }
+  return false
+}
+let win, doc, chat
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  const t0 = performance.now()
+  try {
+    for (let i = 0; i < 100 && !win; i++) await sleep(100)
+    for (let i = 0; i < 100 && !(win && win.__fastTreeChat); i++) await sleep(100)
+    chat = win.__fastTreeChat
+    if (!chat) throw new Error('__fastTreeChat 不存在 (需要 dev 模式)')
+    win.__FAST_TREE_BRIDGE__ = BRIDGE
+    chat.reset()
+    chat.setOpen(true)
+    const active = () => chat.activeConversation
+    const assistants = () => active().messages.filter((m) => m.role === 'assistant')
+    const sendWait = async (text, timeout = 90000) => {
+      chat.setInput(text)
+      await chat.send()
+      const ok = await waitFor(() => !active().busy && assistants().length > 0, timeout)
+      await sleep(200)
+      return ok
+    }
+    const domText = (sel) => [...doc.querySelectorAll(sel)].map((e) => e.textContent || '').join('\n')
+
+    line('===== 真实链路冒烟 (bridge=' + BRIDGE + ') =====')
+    await chat.reloadModels()
+    await sleep(300)
+    const models = [...doc.querySelectorAll('.chat-model option')].map((o) => o.textContent)
+    check('桥服务在线 (模型下拉来自服务端)', models.length > 0 && models.some((t) => t.includes('视觉')), JSON.stringify(models))
+    check('健康检查通过', chat.bridgeOk === true)
+
+    // 1) 文本对话
+    let ok = await sendWait('只回答两个字母: OK')
+    let am = assistants()[assistants().length - 1]
+    check('文本对话完成', ok && !!am, JSON.stringify(am && am.content).slice(0, 80))
+    check('回复内容非空', !!am && String(am.content || '').trim().length > 0)
+    check('思考过程字段存在 (可能为空)', !!am && typeof am.thinking === 'string', 'thinkingLen=' + ((am && am.thinking || '').length))
+
+    // 2) 图片识别
+    const redPng = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR42mP8z8Dwn4GBgYERIAYAI0YDfx6X2nAAAAAASUVORK5CYII='
+    const bytes = win.Uint8Array.from(win.atob(redPng), (c) => c.charCodeAt(0))
+    await chat.addImages([new win.File([bytes], 'red.png', { type: 'image/png' })])
+    await waitFor(() => chat.pendingImages.length === 1, 8000)
+    ok = await sendWait('这张图片是什么颜色? 只回答颜色名称')
+    am = assistants()[assistants().length - 1]
+    check('图片对话完成', ok && !!am, JSON.stringify(am && am.content).slice(0, 80))
+    check('图片被识别 (回复提到颜色)', !!am && /(红|粉|玫|珊瑚|red|pink|coral)/i.test(String(am.content || '')), JSON.stringify(am && am.content).slice(0, 60))
+
+    // 3) 联网搜索
+    chat.setSearch(true)
+    ok = await sendWait('联网搜索 "SpeedTree 是什么", 用一句话回答并标注来源', 120000)
+    am = assistants()[assistants().length - 1]
+    check('联网对话完成', ok && !!am, JSON.stringify(am && am.content).slice(0, 100))
+    check('联网来源已渲染', doc.querySelectorAll('.sources .source-item').length > 0, 'sources=' + ((am && am.sources || []).length))
+    check('回复带来源编号', !!am && /\[\d+\]/.test(String(am.content || '')), JSON.stringify(am && am.content).slice(-80))
+    chat.setSearch(false)
+
+    const ms = Math.round(performance.now() - t0)
+    line('\n结果: ' + (fail ? 'CHATLIVE-FAIL ' + fail : 'CHATLIVE-OK') + ' · 耗时=' + ms + 'ms')
+    document.title = (fail ? 'CHATLIVE-FAIL(' + fail + ')' : 'CHATLIVE-OK') + ' :: ' + R.join(' || ').slice(0, 1500)
+  } catch (e) {
+    document.title = 'CHATLIVE-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 900)
+    line('EX: ' + (e && e.stack ? e.stack : e))
+  }
+}, 2600)
+</script></body></html>

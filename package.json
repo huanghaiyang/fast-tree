@@ -5,7 +5,8 @@
   "description": "FastTree - a procedural SpeedTree-like tree generator built with Vue 3 + Three.js",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/vite-sandbox.mjs dev",
+    "dev:raw": "vite",
     "build": "vite build",
     "preview": "vite preview --port 4173",
     "selftest": "node scripts/selftest.mjs",
@@ -14,6 +15,7 @@
     "sandbox:build": "node scripts/vite-sandbox.mjs build",
     "mcp": "node scripts/app-bridge-server.mjs",
     "mcp:check": "node scripts/mcp-selfcheck.mjs",
+    "chat:check": "node scripts/chat-selfcheck.mjs",
     "review": "node scripts/code-review.mjs",
     "check": "node scripts/code-review.mjs && node scripts/selftest.mjs && node scripts/audit-params.mjs && node scripts/vite-sandbox.mjs build && node scripts/mcp-selfcheck.mjs"
   },
