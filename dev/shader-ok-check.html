@@ -156,7 +156,7 @@
             bar('独立贴图后编译失败=' + bad3b)
           } catch (e) { bar('独立贴图测试异常: ' + e.message) }
           // ===== UI: 贴图行布局 + 跟随树叶按钮 =====
-          const tabM = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('材质'))
+          const tabM = [...doc.querySelectorAll('.tab')].find((t) => t.textContent.includes('树叶'))
           tabM?.click(); await sleep(600)
           // 展开两个分节 (默认收起时宽度为 0, 会误判)
           for (const h of [...doc.querySelectorAll('.section-head')]) {

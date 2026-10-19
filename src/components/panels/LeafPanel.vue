@@ -52,9 +52,12 @@
     <ColorRow label="叶尖颜色" v-model="L.colorTip" />
     <SliderRow label="颜色随机" v-model="L.colorVariance" :min="0" :max="0.6" :step="0.01" />
     <p class="muted" style="margin: 0">
-      叶色烘焙在顶点色里 (改色会重建叶片几何, 约 50–200ms)。全局色调请用「材质 → 树叶 → 色调」。
+      叶色烘焙在顶点色里 (改色会重建叶片几何, 约 50–200ms)。全局色调请用「树叶 → 树叶材质 → 色调」。
     </p>
   </Section>
+
+  <LeafMaterialSection />
+  <LeafEffectsSections />
 
   <Section title="环境光遮蔽 (AO)" hint="Ambient Occlusion" :default-collapsed="true">
     <ToggleRow label="烘焙 AO 到顶点色" v-model="ao.enabled"
@@ -100,6 +103,8 @@ import ColorRow from '../ui/ColorRow.vue'
 import SelectRow from '../ui/SelectRow.vue'
 import LeafShapeGallery from '../LeafShapeGallery.vue'
 import LeafCardPicker from '../LeafCardPicker.vue'
+import LeafMaterialSection from '../LeafMaterialSection.vue'
+import LeafEffectsSections from '../LeafEffectsSections.vue'
 import { state } from '../../store/treeStore.js'
 
 const L = state.params.leaves

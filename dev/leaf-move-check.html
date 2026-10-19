@@ -57,12 +57,20 @@ setTimeout(async () => {
     check('应用叶片卡片后叶子贴图/叶形发生变化', state.params.leafMat.texture !== texBefore || state.params.leaves.cardMode === true,
       'texture=' + String(state.params.leafMat.texture).slice(0, 28) + ' cardMode=' + state.params.leaves.cardMode)
 
-    // 材质面板不再出现该分组
+    // 除内置叶片卡片外, 树叶材质 / 落叶 / 堆积 / 粒子也应全部在树叶面板
+    for (const name of ['树叶材质', '落叶堆积', '落叶', '叶片粒子发射']) {
+      check('树叶面板包含「' + name + '」分组', !!sectionHead(name))
+    }
+
+    // 材质面板不再出现这些分组
     const matTab = [...doc.querySelectorAll('.tab')].find((t) => (t.textContent || '').includes('材质'))
     matTab.click()
     await sleep(600)
     check('材质面板不再有「内置叶片卡片」分组', !sectionHead('内置叶片卡片'))
-    check('材质面板仍保留「树叶材质」分组', !!sectionHead('树叶材质'))
+    for (const name of ['树叶材质', '落叶堆积', '落叶', '叶片粒子发射']) {
+      check('材质面板不再有「' + name + '」分组', !sectionHead(name))
+    }
+    check('材质面板保留树皮材质/自定义 GLSL', !!sectionHead('树皮材质') && !!sectionHead('自定义 GLSL'))
 
     line('\n结果: ' + (fail ? 'LEAFMOVE-FAIL ' + fail : 'LEAFMOVE-OK'))
     document.title = (fail ? 'LEAFMOVE-FAIL(' + fail + ')' : 'LEAFMOVE-OK') + ' :: ' +

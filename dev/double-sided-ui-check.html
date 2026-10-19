@@ -41,9 +41,9 @@ setTimeout(async () => {
     await sleep(600)
 
     line('===== 双面叶片 UI =====')
-    const matTab = [...doc.querySelectorAll('.tab')].find((t) => (t.textContent || '').includes('材质'))
-    check('存在「材质」标签页', !!matTab)
-    matTab.click()
+    const leafTab = [...doc.querySelectorAll('.tab')].find((t) => (t.textContent || '').includes('树叶'))
+    check('存在「树叶」标签页', !!leafTab)
+    leafTab.click()
     await sleep(400)
     const leafHead = [...doc.querySelectorAll('.section-head')].find((h) => (h.textContent || '').includes('树叶材质'))
     check('存在「树叶材质」分组', !!leafHead)
