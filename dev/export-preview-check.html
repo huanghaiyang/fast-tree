@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>export-preview: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+let fail = 0
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+const check = (name, cond, detail = '') => {
+  if (!cond) fail++
+  line((cond ? '✔ ' : '✘ ') + name + (detail ? ' — ' + detail : ''))
+}
+async function waitFor(fn, timeout = 30000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { if (fn()) return true } catch { /* ignore */ }
+    await sleep(100)
+  }
+  return false
+}
+let win, doc
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+const tab = (name) => [...doc.querySelectorAll('.tab')].find((t) => (t.textContent || '').includes(name))
+const btn = (text) => [...doc.querySelectorAll('button')].find((b) => (b.textContent || '').includes(text))
+const dialog = () => doc.querySelector('.epd-panel')
+const artifacts = () => [...doc.querySelectorAll('.epd-art')]
+const nodeRows = () => [...doc.querySelectorAll('.epd-nodes tbody tr')]
+const dialogOpen = () => !!dialog() && win.getComputedStyle(dialog().parentElement).display !== 'none'
+
+setTimeout(async () => {
+  try {
+    for (let i = 0; i < 150 && !win; i++) await sleep(100)
+    await waitFor(() => win.__fastTree && win.__fastTree.ready && win.__fastTreeScene && win.__fastTreeSceneApi, 30000)
+    await sleep(500)
+    // 统计真实下载次数: 任何 <a download> click
+    let downloads = 0
+    const proto = win.HTMLAnchorElement.prototype
+    const origClick = proto.click
+    proto.click = function () {
+      if (this.download) downloads++
+      return origClick.call(this)
+    }
+
+    tab('导出').click(); await sleep(300)
+    line('===== GLB 导出预览 =====')
+    downloads = 0
+    btn('导出 GLB').click()
+    await waitFor(() => dialogOpen(), 30000)
+    check('GLB 导出先弹出预览面板, 不直接下载', dialogOpen() && downloads === 0, 'downloads=' + downloads)
+    check('面板展示导出产物列表', artifacts().length >= 2, 'artifacts=' + artifacts().length)
+    check('面板展示节点列表', nodeRows().length >= 4, 'nodes=' + nodeRows().length)
+    const imageArtifacts = artifacts().filter((a) => a.classList.contains('img'))
+    check('内嵌贴图有预览缩略图', imageArtifacts.length > 0, 'images=' + imageArtifacts.length)
+    const glbArt = artifacts().find((a) => (a.textContent || '').includes('.glb'))
+    check('产物列表包含 GLB 主文件', !!glbArt)
+    check('底部有取消 / 确定导出按钮', !!btn('取消') && !!btn('确定导出'))
+    btn('取消').click()
+    await sleep(300)
+    check('取消后关闭面板且不下载', !dialogOpen() && downloads === 0, 'downloads=' + downloads)
+
+    line('\n===== 确认后下载 =====')
+    downloads = 0
+    btn('导出 GLB').click()
+    await waitFor(() => dialogOpen(), 30000)
+    btn('确定导出').click()
+    await sleep(600)
+    check('点击确定导出后才开始下载', downloads > 0, 'downloads=' + downloads)
+    check('完成后关闭预览面板', !dialogOpen())
+
+    line('\n===== PNG 截图预览 =====')
+    downloads = 0
+    btn('截图 PNG').click()
+    await waitFor(() => dialogOpen(), 20000)
+    check('PNG 预览面板包含图片', artifacts().some((a) => a.classList.contains('img') && a.querySelector('img')))
+    check('PNG 预览不直接下载', downloads === 0, 'downloads=' + downloads)
+    btn('取消').click(); await sleep(200)
+
+    line('\n===== OBJ 节点列表 =====')
+    btn('导出 OBJ').click()
+    await waitFor(() => dialogOpen(), 20000)
+    check('OBJ 预览有节点列表', nodeRows().length >= 4, 'nodes=' + nodeRows().length)
+    check('OBJ 预览不直接下载', downloads === 0, 'downloads=' + downloads)
+    btn('取消').click(); await sleep(200)
+
+    line('\n===== 参数 JSON 预览 =====')
+    btn('保存参数 JSON').click()
+    await waitFor(() => dialogOpen(), 10000)
+    check('JSON 预览有产物但无节点', artifacts().length === 1 && nodeRows().length === 0,
+      'artifacts=' + artifacts().length + ' nodes=' + nodeRows().length)
+    btn('取消').click(); await sleep(200)
+
+    proto.click = origClick
+    line('\n结果: ' + (fail ? 'EXPORTPREVIEW-FAIL ' + fail : 'EXPORTPREVIEW-OK'))
+    document.title = (fail ? 'EXPORTPREVIEW-FAIL(' + fail + ')' : 'EXPORTPREVIEW-OK') + ' :: ' +
+      R.filter((s) => s.startsWith('✘')).slice(0, 5).join(' | ')
+  } catch (e) {
+    document.title = 'EXPORTPREVIEW-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 900)
+    line('EX: ' + (e && e.stack ? e.stack : e))
+  }
+}, 2200)
+</script></body></html>

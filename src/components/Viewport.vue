@@ -98,6 +98,7 @@ onMounted(() => {
   sceneApi.exportGLB = (name) => scene.exportGLB(name)
   sceneApi.exportOBJ = (name) => scene.exportOBJ(name)
   sceneApi.screenshot = (name) => scene.screenshot(name)
+  sceneApi.prepareExport = (kind, name) => scene.prepareExport(kind, name)
   sceneApi.frameCamera = () => scene.frameCamera()
   sceneApi.focusBox = (min, max) => scene.focusBox(min, max)
   sceneApi.getWindScreenBasis = () => scene.getWindScreenBasis()

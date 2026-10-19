@@ -20,7 +20,7 @@ export function downloadText(text, filename, mime = 'text/plain') {
   downloadBlob(new Blob([text], { type: mime }), filename)
 }
 
-export function exportGLB(root, filename = 'fasttree.glb') {
+export function exportGLB(root, filename = 'fasttree.glb', opts = {}) {
   return new Promise((resolve, reject) => {
     // 先补全每材质的 normal/roughness 槽 (仅导出期间生效), 再按规范命名
     const restoreMaps = ensureExportMaterialMaps(root)
@@ -36,7 +36,7 @@ export function exportGLB(root, filename = 'fasttree.glb') {
             ? new Blob([data], { type: 'model/gltf-binary' })
             : new Blob([JSON.stringify(data)], { type: 'model/gltf+json' })
           restoreMaps()
-          downloadBlob(blob, filename)
+          if (opts.download !== false) downloadBlob(blob, filename)
           resolve(blob)
         },
         (err) => {
@@ -70,20 +70,25 @@ export function expandExponentialNumbers(text) {
   })
 }
 
-export function exportOBJ(root, filename = 'fasttree.obj') {
+export function exportOBJ(root, filename = 'fasttree.obj', opts = {}) {
   const text = expandExponentialNumbers(new OBJExporter().parse(root))
-  downloadText(text, filename, 'text/plain')
+  if (opts.download !== false) downloadText(text, filename, 'text/plain')
   return text
 }
 
-export function exportParamsJSON(params, filename = 'fasttree-params.json') {
+export function buildParamsJSON(params) {
   const payload = {
     format: 'fast-tree/params',
     version: 1,
     seed: params.seed,
     params,
   }
-  downloadText(JSON.stringify(payload, null, 2), filename, 'application/json')
+  return { payload, text: JSON.stringify(payload, null, 2) }
+}
+
+export function exportParamsJSON(params, filename = 'fasttree-params.json') {
+  const { payload, text } = buildParamsJSON(params)
+  downloadText(text, filename, 'application/json')
   return payload
 }
 

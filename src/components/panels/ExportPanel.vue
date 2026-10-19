@@ -8,12 +8,16 @@
       <button class="btn" @click="fileInput?.click()">📂 载入参数 JSON</button>
     </div>
     <input ref="fileInput" type="file" accept=".json,application/json" hidden @change="onLoadJSON" />
+    <ExportPreviewDialog :open="previewOpen" :title="preview?.title || ''" :filename="preview?.filename || ''"
+      :artifacts="preview?.artifacts || []" :nodes="preview?.nodes || []"
+      @confirm="confirmExport" @cancel="cancelPreview" />
     <ToggleRow label="合并树干与树枝 mesh" v-model="eo.mergeBark"
       hint="关闭 = 按节点拆分树干/树枝各层/根/果实 (默认); 打开 = 树干与树枝合并为一个 Bark mesh" />
     <p v-if="status" class="muted" style="margin: 0">{{ status }}</p>
     <p class="muted" style="margin: 0">
       GLB = glTF 2.0 二进制 (含贴图/顶点色, 标准格式, 静态网格); OBJ = 纯几何 (Wavefront, 不含材质/贴图/顶点色);
       参数 JSON 带 format/version/seed, 载入即可完整复现。
+      点击导出会先打开预览面板：列出产物文件、贴图缩略图与节点列表，确认后才下载。
     </p>
     <p class="muted" style="margin: 0">
       贴图资源命名: <code>_diff</code> / <code>_alpha</code> / <code>_nor_gl</code> / <code>_rough</code>；
@@ -79,14 +83,15 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onBeforeUnmount } from 'vue'
 import Section from '../ui/Section.vue'
 import SliderRow from '../ui/SliderRow.vue'
 import SelectRow from '../ui/SelectRow.vue'
 import ToggleRow from '../ui/ToggleRow.vue'
+import ExportPreviewDialog from '../ExportPreviewDialog.vue'
 import { state, sceneApi, totalTriangles, doGenerateImpostor, downloadImpostor, setImpostorPreview } from '../../store/treeStore.js'
 import { modelVertexCount } from '../../core/modelStats.js'
-import { exportParamsJSON, readTextFile } from '../../core/exporter.js'
+import { buildParamsJSON, downloadBlob, downloadText, readTextFile } from '../../core/exporter.js'
 import { importParamsJSON } from '../../store/treeStore.js'
 
 const stats = computed(() => state.stats)
@@ -119,37 +124,108 @@ function onDownloadImpostor() {
 
 const status = ref('')
 const fileInput = ref(null)
+const previewOpen = ref(false)
+const preview = ref(null)
 
-async function onGLB() {
-  if (!sceneApi.exportGLB) return
+function revokePreviewUrls(p) {
+  for (const url of (p && p.objectUrls) || []) {
+    try { URL.revokeObjectURL(url) } catch { /* ignore */ }
+  }
+}
+
+function closePreview() {
+  revokePreviewUrls(preview.value)
+  previewOpen.value = false
+  preview.value = null
+}
+
+function cancelPreview() {
+  closePreview()
+  status.value = '已取消导出'
+}
+
+function downloadDataUrl(dataUrl, filename) {
+  const a = document.createElement('a')
+  a.href = dataUrl
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+}
+
+async function openExportPreview(kind) {
+  if (!sceneApi.prepareExport) {
+    status.value = '导出预览尚未就绪'
+    return
+  }
+  if (previewOpen.value) return
   busy.value = true
-  status.value = '正在导出 GLB…'
+  status.value = '正在准备导出预览…'
   try {
-    await sceneApi.exportGLB(`fasttree-${state.params.seed}.glb`)
-    status.value = 'GLB 导出完成'
+    const seed = state.params.seed
+    if (kind === 'json') {
+      const filename = `fasttree-params-${seed}.json`
+      const { text } = buildParamsJSON(state.params)
+      preview.value = {
+        kind: 'json',
+        title: '参数 JSON 导出预览',
+        filename,
+        artifacts: [{ name: filename, kind: 'file', size: new Blob([text]).size, detail: 'fast-tree/params JSON' }],
+        nodes: [],
+        payload: { type: 'text', text, mime: 'application/json' },
+        objectUrls: [],
+      }
+    } else if (kind === 'glb') {
+      preview.value = await sceneApi.prepareExport('glb', `fasttree-${seed}.glb`)
+    } else if (kind === 'obj') {
+      preview.value = await sceneApi.prepareExport('obj', `fasttree-${seed}.obj`)
+    } else if (kind === 'png') {
+      preview.value = await sceneApi.prepareExport('png', `fasttree-${seed}.png`)
+    }
+    previewOpen.value = true
+    status.value = ''
   } catch (e) {
-    status.value = 'GLB 导出失败: ' + (e?.message || e)
+    status.value = '导出预览失败: ' + (e?.message || e)
   } finally {
     busy.value = false
   }
 }
 
+function confirmExport() {
+  const p = preview.value
+  if (!p) return
+  try {
+    if (p.payload?.type === 'blob') downloadBlob(p.payload.blob, p.filename)
+    else if (p.payload?.type === 'text') downloadText(p.payload.text, p.filename, p.payload.mime || 'text/plain')
+    else if (p.payload?.type === 'dataUrl') downloadDataUrl(p.payload.dataUrl, p.filename)
+    status.value = p.kind === 'glb' ? 'GLB 导出完成'
+      : p.kind === 'obj' ? 'OBJ 导出完成'
+        : p.kind === 'png' ? '截图已保存'
+          : '参数 JSON 已保存'
+  } finally {
+    closePreview()
+  }
+}
+
+async function onGLB() {
+  await openExportPreview('glb')
+}
+
 function onOBJ() {
-  if (!sceneApi.exportOBJ) return
-  sceneApi.exportOBJ(`fasttree-${state.params.seed}.obj`)
-  status.value = 'OBJ 导出完成'
+  openExportPreview('obj')
 }
 
 async function onPNG() {
-  if (!sceneApi.screenshot) return
-  await sceneApi.screenshot(`fasttree-${state.params.seed}.png`)
-  status.value = '截图已保存'
+  await openExportPreview('png')
 }
 
 function onJSON() {
-  exportParamsJSON(state.params, `fasttree-params-${state.params.seed}.json`)
-  status.value = '参数 JSON 已保存'
+  openExportPreview('json')
 }
+
+onBeforeUnmount(() => {
+  revokePreviewUrls(preview.value)
+})
 
 async function onLoadJSON(e) {
   const f = e.target.files && e.target.files[0]

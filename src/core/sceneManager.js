@@ -14,6 +14,7 @@ import { buildFallingLeaves, updateFallingLeaves, fallRebuildKey } from './falli
 import { buildLeafLitter, litterRebuildKey } from './litter.js'
 import { generateImpostor } from './impostor.js'
 import { buildFrustumChunks, hideSourceMesh } from './renderChunks.js'
+import { buildGLBPreview, buildOBJPreview, buildPNGPreview } from './exportPreview.js'
 import { boxInfo } from './mathUtils.js'
 import { cloneParams } from './params.js'
 import { makeRng } from './rng.js'
@@ -1221,6 +1222,19 @@ export class TreeScene {
 
   exportOBJ(name) {
     return exportOBJ(this.buildExportGroup(), name)
+  }
+
+  /** 只构建导出预览, 不触发下载 */
+  async prepareExport(kind, name) {
+    if (kind === 'glb') return buildGLBPreview(this.buildExportGroup(), name || `fasttree-${this.lastParams?.seed || 'tree'}.glb`)
+    if (kind === 'obj') return buildOBJPreview(this.buildExportGroup(), name || `fasttree-${this.lastParams?.seed || 'tree'}.obj`)
+    if (kind === 'png') {
+      this.renderer.render(this.scene, this.camera)
+      const el = this.renderer.domElement
+      const dataUrl = el.toDataURL('image/png')
+      return buildPNGPreview(dataUrl, name || `fasttree-${this.lastParams?.seed || 'tree'}.png`, el.width, el.height)
+    }
+    throw new Error('不支持的导出预览类型: ' + kind)
   }
 
   screenshot(name) {

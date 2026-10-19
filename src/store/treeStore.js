@@ -227,6 +227,7 @@ export const sceneApi = {
   exportGLB: null,
   exportOBJ: null,
   screenshot: null,
+  prepareExport: null,
   frameCamera: null,
   focusBox: null,
   getWindScreenBasis: null,
