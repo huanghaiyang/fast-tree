@@ -102,7 +102,7 @@ const renderInfo = computed(() => state.renderInfo)
 const modelVertices = computed(() => modelVertexCount(state.stats))
 const eo = state.params.exportOptions
 const onePiece = computed(() => !!state.params.trunk.onePiece ||
-  state.params.trunk.junctionMode === 'csg' || state.params.trunk.junctionMode === 'implicit')
+  ['extrude', 'csg', 'implicit'].includes(state.params.trunk.junctionMode))
 const busy = ref(false)
 /* 伪装卡生成器 */
 const impMode = ref('atlas')

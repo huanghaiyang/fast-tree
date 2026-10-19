@@ -96,13 +96,14 @@ const r = state.params.roots
 const f = state.params.trunk.fork
 const junctionModes = [
   { value: 'none', label: '不处理（基础管状相交）' },
+  { value: 'extrude', label: '挤出式一体建模（分支从表面挤出）' },
   { value: 'collar', label: '视觉遮挡（加大领口，非并集）' },
   { value: 'csg', label: '布尔并集（CSG，消除内部重叠）' },
   { value: 'implicit', label: '隐式平滑重建（CSG + 平滑，实验性）' },
 ]
 watch(() => t.junctionMode, (v) => {
-  // 布尔/隐式模式本身就是一个连续模型, 自动打开一体建模导出
-  if (v === 'csg' || v === 'implicit') t.onePiece = true
+  // 挤出/布尔/隐式模式本身就是一个连续模型, 自动打开一体建模导出
+  if (v === 'extrude' || v === 'csg' || v === 'implicit') t.onePiece = true
 })
 const twistTargets = [
   { value: 'trunk', label: '树干' },

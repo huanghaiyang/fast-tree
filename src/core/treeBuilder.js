@@ -54,6 +54,7 @@ export function buildTree(params) {
   const onePiece = !!(P.trunk && P.trunk.onePiece)
   const junctionMode = (P.trunk && P.trunk.junctionMode) || 'none'
   const collarMode = junctionMode === 'collar'
+  const extrudeMode = junctionMode === 'extrude'
   const L = P.leaves
   const F = P.fruit || { enabled: false, levels: [] }
   // 挂果层级回退: 如果设置里勾选的层级在这棵树上一级都没有 (比如默认树只有 3 层枝,
@@ -346,7 +347,8 @@ export function buildTree(params) {
       const profileRoll = fr.profileRoll || 0
       if (profileRoll) dir.applyAxisAngle(fr.dir, profileRoll)
       const outDir = azimuthPerp(fr.dir, k * (cfg.phyllotaxis || 137.5) * DEG + profileRoll, new THREE.Vector3())
-      const startPos = fr.pos.clone().addScaledVector(outDir, fr.radius * 0.3)
+      // 挤出式: 分支基部贴近父枝表面, 不再从父枝深处穿出
+      const startPos = fr.pos.clone().addScaledVector(outDir, fr.radius * (extrudeMode ? 0.92 : 0.3))
 
       const wind0 = lerp(parentWind0, parentWind1, tt)
       const wind1 = Math.min(1, wind0 + 0.3 * (cfg.windGain === undefined ? 1 : cfg.windGain))
@@ -413,9 +415,9 @@ export function buildTree(params) {
       tipRound: o.tipRound === undefined ? 0.06 : o.tipRound,
       // 一体建模时加大基部领口, 让枝条与树干/父枝更像连续长出来的一棵树
       baseFlare: (o.baseFlare === undefined ? (level === 1 ? 0.45 : 0.32) : o.baseFlare) +
-        (onePiece ? 0.14 : 0) + (collarMode ? 0.35 : 0),
+        (onePiece ? 0.14 : 0) + (collarMode ? 0.35 : 0) + (extrudeMode ? 0.22 : 0),
       baseFlareLen: (o.baseFlareLen === undefined ? (level === 1 ? 0.16 : 0.13) : o.baseFlareLen) +
-        (onePiece ? 0.02 : 0) + (collarMode ? 0.1 : 0),
+        (onePiece ? 0.02 : 0) + (collarMode ? 0.1 : 0) + (extrudeMode ? 0.06 : 0),
       vertexNoise: 0.05,
       nodeId: mySlot,
     }))
@@ -575,7 +577,7 @@ export function buildTree(params) {
         meta: { length, radius: radius0 },
       })
       const frames = growFrames(rootRng, {
-        startPos: new THREE.Vector3(dir.x * t.baseRadius * 0.4, t.baseRadius * 0.15, dir.z * t.baseRadius * 0.4),
+        startPos: new THREE.Vector3(dir.x * t.baseRadius * (extrudeMode ? 0.92 : 0.4), t.baseRadius * 0.15, dir.z * t.baseRadius * (extrudeMode ? 0.92 : 0.4)),
         startDir: dir,
         length,
         radius0,
@@ -603,7 +605,7 @@ export function buildTree(params) {
         phase: rootRng.range(0, Math.PI * 2),
         capStart: true,
         capEnd: true,
-        baseFlare: (onePiece ? 0.16 : 0) + (collarMode ? 0.2 : 0),
+        baseFlare: (onePiece ? 0.16 : 0) + (collarMode ? 0.2 : 0) + (extrudeMode ? 0.16 : 0),
         baseFlareLen: 0.1,
         vertexNoise: 0.07,
         nodeId: rootSlot,
@@ -721,7 +723,7 @@ export function buildTree(params) {
         const dir = fr.dir.clone().applyAxisAngle(side, angle * rng.range(0.8, 1.25))
         rotateTowardUp(dir, 0.06)
         const r0 = Math.max(0.002, fr.radius * radiusScale * rng.vary(0.1))
-        const startPos = fr.pos.clone().addScaledVector(dir, -fr.radius * 0.55)
+        const startPos = fr.pos.clone().addScaledVector(dir, -fr.radius * (extrudeMode ? 0.92 : 0.55))
         buildBranch({
           level: 1,
           startPos,

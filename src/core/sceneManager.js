@@ -1224,7 +1224,7 @@ export class TreeScene {
       const opts = (this.lastParams && this.lastParams.exportOptions) || {}
       const onePiece = !!(this.lastParams && this.lastParams.trunk && this.lastParams.trunk.onePiece)
       const junctionMode = (this.lastParams && this.lastParams.trunk && this.lastParams.trunk.junctionMode) || 'none'
-      const unified = junctionMode === 'csg' || junctionMode === 'implicit'
+      const unified = junctionMode === 'csg' || junctionMode === 'implicit' || junctionMode === 'extrude'
       const parts = barkExportParts(this.barkMesh.geometry, this.nodes || [], !!opts.mergeBark || onePiece || unified, onePiece || unified)
       const fruitMat = parts.some((p) => p.name === 'Bark_Fruit') ? this._getFruitExportMaterial() : null
       if (parts.length) {

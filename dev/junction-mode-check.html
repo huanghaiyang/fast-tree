@@ -76,10 +76,25 @@ setTimeout(async () => {
     line('===== 枝干穿插处理下拉 =====')
     const sel = rowSelect('枝干穿插处理')
     check('存在「枝干穿插处理」下拉', !!sel, sel ? [...sel.options].map((o) => o.value).join(',') : '')
+    check('下拉包含挤出式/视觉遮挡/CSG/隐式等档位', !!sel && ['none', 'extrude', 'collar', 'csg', 'implicit'].every((v) =>
+      [...sel.options].some((o) => o.value === v)), sel ? [...sel.options].map((o) => o.value).join(',') : '')
     check('默认 = none', state.params.trunk.junctionMode === 'none', String(state.params.trunk.junctionMode))
     const baseTris = state.stats.barkTriangles
     const baseHash = geomHash(scene.barkMesh.geometry)
     const baseBoundary = boundaryEdges(scene.barkMesh.geometry)
+
+    // 挤出式一体建模
+    sel.value = 'extrude'; sel.dispatchEvent(new Event('change', { bubbles: true }))
+    await waitFor(() => state.params.trunk.junctionMode === 'extrude' && geomHash(scene.barkMesh.geometry) !== baseHash, 30000)
+    await sleep(300)
+    check('挤出式一体建模生效', state.params.trunk.junctionMode === 'extrude' &&
+      geomHash(scene.barkMesh.geometry) !== baseHash, `${baseHash} -> ${geomHash(scene.barkMesh.geometry)}`)
+    check('挤出式自动打开一体建模', state.params.trunk.onePiece === true)
+    const exPreview = await scene.prepareExport('glb', 'junction-extrude.glb')
+    const exJson = parseGLB(await exPreview.payload.blob.arrayBuffer())
+    const exNames = (exJson.nodes || []).map((n) => n.name || '')
+    check('挤出式导出为单个 Bark + 果实', exNames.includes('Bark') && exNames.includes('Bark_Fruit') &&
+      !exNames.some((n) => n === 'Bark_Trunk' || n === 'Bark_Roots' || n.startsWith('Bark_Branch_')), exNames.join(','))
 
     // 视觉遮挡
     sel.value = 'collar'; sel.dispatchEvent(new Event('change', { bubbles: true }))
