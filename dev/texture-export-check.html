@@ -82,7 +82,7 @@ setTimeout(async () => {
     check('GLB textures 含 leaf_diff_2k', texNames.includes('leaf_diff_2k'), texNames.join(','))
     check('GLB textures 含 leaf_nor_gl_1k', texNames.includes('leaf_nor_gl_1k'), texNames.join(','))
     check('GLB textures 含 leaf_alpha_2k', texNames.includes('leaf_alpha_2k'), texNames.join(','))
-    check('GLB textures 含补全的 leaf_rough', texNames.includes('leaf_rough'), texNames.join(','))
+    check('GLB textures 含补全的 leaf_rough_2k', texNames.includes('leaf_rough_2k'), texNames.join(','))
     check('GLB images 同步资源名', imgNames.includes('leaf_diff_2k') && imgNames.includes('leaf_alpha_2k') && imgNames.includes('leaf_nor_gl_1k'),
       imgNames.join(','))
     const leavesNode = (json.nodes || []).find((n) => n.name === 'Leaves')
@@ -95,8 +95,8 @@ setTimeout(async () => {
     check('GLB 叶片材质 alphaMode = MASK', !!leafMat && leafMat.alphaMode === 'MASK' && leafMat.alphaCutoff > 0,
       leafMat ? `${leafMat.alphaMode}/${leafMat.alphaCutoff}` : 'no leaf material')
     check('GLB 树皮默认非 4K 贴图不加 _xk', texNames.some((n) => n === 'bark_diff' || n === 'bark_nor_gl' || n === 'bark_rough'), texNames.join(','))
-    check('所有贴图后缀都属于规范角色', texNames.every((n) => /^(bark|leaf|flower)_(diff|alpha|nor_gl|rough)(_\d+k)?$/.test(n)),
-      texNames.filter((n) => !/^(bark|leaf|flower)_(diff|alpha|nor_gl|rough)(_\d+k)?$/.test(n)).join(','))
+    check('所有贴图后缀都属于规范角色', texNames.every((n) => /^(bark|leaf|flower|fruit)_(diff|alpha|nor_gl|rough)(_\d+k)?$/.test(n)),
+      texNames.filter((n) => !/^(bark|leaf|flower|fruit)_(diff|alpha|nor_gl|rough)(_\d+k)?$/.test(n)).join(','))
 
     line('\n结果: ' + (fail ? 'TEXTURE-EXPORT-FAIL ' + fail : 'TEXTURE-EXPORT-OK'))
     document.title = (fail ? 'TEXTURE-EXPORT-FAIL(' + fail + ')' : 'TEXTURE-EXPORT-OK') + ' :: ' +

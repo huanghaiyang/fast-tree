@@ -23,6 +23,7 @@
       贴图资源命名: <code>_diff</code> / <code>_alpha</code> / <code>_nor_gl</code> / <code>_rough</code>；
       1K/2K/4K 贴图自动追加 <code>_1k</code>/<code>_2k</code>/<code>_4k</code>，其它尺寸不加 <code>_xk</code> 后缀。
       GLB 导出会补全材质的 normal/roughness 贴图；叶片/花朵 alpha 以 baseColor 的 alpha 通道 + <code>MASK</code> 导出。
+      果实导出使用独立的 <code>Fruit</code> 材质，附带 <code>fruit_diff/alpha/nor_gl/rough</code> 资源。
     </p>
     <p class="muted" style="margin: 0">
       风场/生长是顶点着色器效果, 导出的静态网格不含动画; 粒子/落叶等场景特效也不会写进模型文件。

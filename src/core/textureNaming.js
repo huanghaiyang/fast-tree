@@ -7,6 +7,7 @@
  */
 
 import * as THREE from 'three'
+import { normalFromLuminance } from './normalFromAlbedo.js'
 
 const ROLE_SUFFIX = {
   diff: '_diff',
@@ -39,6 +40,138 @@ export function textureResolutionK(texture) {
 
 function safeBase(base) {
   return String(base || 'texture').replace(/[^A-Za-z0-9_.-]+/g, '_').replace(/^_+|_+$/g, '') || 'texture'
+}
+
+function drawTextureToCanvas(texture, width, height) {
+  if (typeof document === 'undefined' || !texture || !texture.image) return null
+  const img = texture.image
+  const w = Math.max(1, Math.round(width || img.width || img.naturalWidth || 0))
+  const h = Math.max(1, Math.round(height || img.height || img.naturalHeight || 0))
+  if (!w || !h) return null
+  const c = document.createElement('canvas')
+  c.width = w
+  c.height = h
+  const ctx = c.getContext('2d')
+  try {
+    ctx.drawImage(img, 0, 0, w, h)
+    // 触发一次读取, 跨域/未解码时直接进入 catch
+    ctx.getImageData(0, 0, 1, 1)
+  } catch {
+    return null
+  }
+  return { canvas: c, ctx, width: w, height: h }
+}
+
+/** 从 RGBA 像素生成全尺寸法线纹理 (Sobel) */
+export function makeNormalTextureFromPixels(pixels, width, height, strength = 1) {
+  if (typeof document === 'undefined' || !pixels) return null
+  const w = Math.max(1, Math.round(width))
+  const h = Math.max(1, Math.round(height))
+  const rgb = normalFromLuminance(pixels, w, h, strength, true)
+  const c = document.createElement('canvas')
+  c.width = w
+  c.height = h
+  const ctx = c.getContext('2d')
+  const out = ctx.createImageData(w, h)
+  for (let i = 0; i < w * h; i++) {
+    out.data[i * 4] = rgb[i * 3]
+    out.data[i * 4 + 1] = rgb[i * 3 + 1]
+    out.data[i * 4 + 2] = rgb[i * 3 + 2]
+    out.data[i * 4 + 3] = 255
+  }
+  ctx.putImageData(out, 0, 0)
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.NoColorSpace
+  tex.needsUpdate = true
+  return tex
+}
+
+/** 从颜色贴图生成本地法线贴图 (Sobel, 和视口自动法线同一套算法, 全尺寸) */
+export function makeNormalTextureFromTexture(texture, width, height, strength = 1) {
+  const src = drawTextureToCanvas(texture, width, height)
+  if (!src) return null
+  let pixels
+  try {
+    pixels = src.ctx.getImageData(0, 0, src.width, src.height).data
+  } catch {
+    return null
+  }
+  return makeNormalTextureFromPixels(pixels, src.width, src.height, strength)
+}
+
+/**
+ * 从颜色贴图的亮度场推导粗糙度 (不是随机噪声):
+ *  - 暗部/纹理沟槽 -> 更粗糙
+ *  - 亮部/光滑区域 -> 更光滑
+ * 再叠加一个很弱的局部梯度项, 让叶脉/花瓣边缘有细节。
+ */
+export function makeRoughnessTextureFromTexture(texture, width, height, baseRoughness = 0.8) {
+  const src = drawTextureToCanvas(texture, width, height)
+  if (!src) return null
+  const { ctx, width: w, height: h } = src
+  let pixels
+  try {
+    pixels = ctx.getImageData(0, 0, w, h).data
+  } catch {
+    return null
+  }
+  const base = Math.max(0, Math.min(1, Number(baseRoughness) || 0))
+  const out = ctx.createImageData(w, h)
+  const lumAt = (x, y) => {
+    const xx = x < 0 ? 0 : x >= w ? w - 1 : x
+    const yy = y < 0 ? 0 : y >= h ? h - 1 : y
+    const i = (yy * w + xx) * 4
+    return (0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2]) / 255
+  }
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const lum = lumAt(x, y)
+      // 颜色越暗 -> 粗糙度越高; 越亮 -> 越光滑
+      let v = base + (0.5 - lum) * 0.42
+      // 局部梯度: 沟槽/边缘略粗, 平坦区域更均匀
+      const gx = lumAt(x + 1, y) - lumAt(x - 1, y)
+      const gy = lumAt(x, y + 1) - lumAt(x, y - 1)
+      v += Math.min(0.12, Math.sqrt(gx * gx + gy * gy) * 0.8)
+      const c = Math.round(Math.max(0, Math.min(1, v)) * 255)
+      const o = (y * w + x) * 4
+      out.data[o] = c
+      out.data[o + 1] = c
+      out.data[o + 2] = c
+      out.data[o + 3] = 255
+    }
+  }
+  ctx.putImageData(out, 0, 0)
+  const tex = new THREE.CanvasTexture(src.canvas)
+  tex.colorSpace = THREE.NoColorSpace
+  tex.needsUpdate = true
+  return tex
+}
+
+/** 由 diffuse 的 alpha 通道生成黑白 alpha 资源 (白=不透明, 黑=透明) */
+export function makeAlphaDataUrl(texture, width, height) {
+  const src = drawTextureToCanvas(texture, width, height)
+  if (!src) return null
+  const { ctx, width: w, height: h } = src
+  let pixels
+  try {
+    pixels = ctx.getImageData(0, 0, w, h).data
+  } catch {
+    return null
+  }
+  const out = ctx.createImageData(w, h)
+  for (let i = 0; i < w * h; i++) {
+    const a = pixels[i * 4 + 3]
+    out.data[i * 4] = a
+    out.data[i * 4 + 1] = a
+    out.data[i * 4 + 2] = a
+    out.data[i * 4 + 3] = 255
+  }
+  ctx.putImageData(out, 0, 0)
+  try {
+    return src.canvas.toDataURL('image/png')
+  } catch {
+    return null
+  }
 }
 
 /** 例: textureAssetName('leaf', 'diff', 4kTexture) -> leaf_diff_4k */
@@ -85,11 +218,18 @@ export function applyExportTextureNames(root) {
       add(kind, 'alpha', m.alphaMap)
       add(kind, 'normal', m.normalMap)
       add(kind, 'rough', m.roughnessMap)
-      // 叶片/花朵卡片的 alpha 在漫反射图的 alpha 通道里
-      if (diffuseName && (kind === 'leaf' || kind === 'flower')) {
+      // 叶片/花朵/果实的 alpha 在漫反射图里; 生成真正的黑白 alpha 资源 (不是复用 RGBA 彩图)
+      if (diffuseName && (kind === 'leaf' || kind === 'flower' || kind === 'fruit')) {
         const alphaName = textureAssetName(kind, 'alpha', m.map)
         if (!alphaAliases.some((a) => a.name === alphaName)) {
-          alphaAliases.push({ name: alphaName, from: diffuseName })
+          const { width, height } = imageSize(m.map)
+          alphaAliases.push({
+            name: alphaName,
+            from: diffuseName,
+            width,
+            height,
+            dataUrl: (m.userData && m.userData.exportAlphaDataUrl) || makeAlphaDataUrl(m.map, width, height),
+          })
         }
       }
     }
@@ -178,15 +318,20 @@ export function patchGlbTextureNames(buffer, alphaAliases = []) {
     }
   }
 
-  // 2) 叶片/花朵的 alpha 资源: 复用 diffuse 的 image / bufferView
+  // 2) 叶片/花朵/果实的 alpha 资源: 优先使用真正的黑白 alpha PNG (data URI)
   for (const alias of alphaAliases) {
     if (!alias || !alias.name || !alias.from) continue
     if (json.textures.some((t) => t && t.name === alias.name)) continue
     const base = json.textures.find((t) => t && t.name === alias.from)
-    if (!base || base.source === undefined) continue
-    const src = json.images && json.images[base.source]
-    if (!src) continue
-    const alphaImg = { ...src, name: alias.name }
+    if (!base) continue
+    let alphaImg = null
+    if (alias.dataUrl) {
+      alphaImg = { name: alias.name, uri: alias.dataUrl, mimeType: 'image/png' }
+    } else {
+      // 兜底: 无法读取像素时复用 diffuse image, 至少保留资源名
+      if (base.source === undefined || !json.images || !json.images[base.source]) continue
+      alphaImg = { ...json.images[base.source], name: alias.name }
+    }
     const alphaIdx = json.images.push(alphaImg) - 1
     const alphaTex = { name: alias.name, source: alphaIdx }
     if (base.sampler !== undefined) alphaTex.sampler = base.sampler
@@ -217,38 +362,35 @@ function makeCanvasTexture(width, height, paint) {
 }
 
 /** 平坦法线 (128,128,255,255): 不改变光照, 只补全导出材质槽 */
-function makeFlatNormalTexture() {
-  return makeCanvasTexture(4, 4, (ctx, w, h) => {
-    const img = ctx.createImageData(w, h)
-    for (let i = 0; i < w * h; i++) {
-      img.data[i * 4] = 128
-      img.data[i * 4 + 1] = 128
-      img.data[i * 4 + 2] = 255
-      img.data[i * 4 + 3] = 255
-    }
-    ctx.putImageData(img, 0, 0)
+function makeFlatNormalTexture(width = 256, height = 256) {
+  return makeCanvasTexture(width, height, (ctx, w, h) => {
+    // 用 fillRect 而不是 createImageData: 4K 贴图也不必分配整块 64MB ImageData
+    ctx.fillStyle = 'rgb(128, 128, 255)'
+    ctx.fillRect(0, 0, w, h)
   })
 }
 
-/** 均匀粗糙度贴图: 与材质标量 roughness 一致 */
-function makeRoughnessTexture(value) {
+/** 无法从颜色贴图推导时的平坦粗糙度兜底 (仍按 diffuse 尺寸, 不是 4×4 单点) */
+function makeFlatRoughnessTexture(value, width = 256, height = 256) {
   const v = Math.round(Math.max(0, Math.min(1, Number(value) || 0)) * 255)
-  return makeCanvasTexture(4, 4, (ctx, w, h) => {
-    const img = ctx.createImageData(w, h)
-    for (let i = 0; i < w * h; i++) {
-      img.data[i * 4] = v
-      img.data[i * 4 + 1] = v
-      img.data[i * 4 + 2] = v
-      img.data[i * 4 + 3] = 255
-    }
-    ctx.putImageData(img, 0, 0)
+  return makeCanvasTexture(width, height, (ctx, w, h) => {
+    ctx.fillStyle = `rgb(${v}, ${v}, ${v})`
+    ctx.fillRect(0, 0, w, h)
   })
+}
+
+/** 回退贴图取材质 diffuse 的尺寸; 没有贴图时用 256 */
+function fallbackSize(material) {
+  const tex = material.map || material.normalMap || material.roughnessMap
+  const { width, height } = imageSize(tex)
+  if (width >= 32 && height >= 32) return { width, height }
+  return { width: 256, height: 256 }
 }
 
 /**
  * 导出前临时补全材质槽:
- *  - normalMap 缺失 -> 平坦法线贴图
- *  - roughnessMap 缺失 -> 与材质 roughness 一致的均匀贴图
+ *  - normalMap 缺失 -> 从颜色贴图亮度场生成法线 (Sobel, 和视口自动法线同算法), 读不到时用平坦法线
+ *  - roughnessMap 缺失 -> 从颜色贴图亮度/梯度推导粗糙度 (不是随机噪声), 读不到时用材质 roughness 纯色
  * 这样 GLB 中每个材质都会实际引用 nor_gl / rough 资源;
  * 返回 restore(), 导出结束必须调用以恢复源材质并释放临时贴图。
  */
@@ -262,15 +404,19 @@ export function ensureExportMaterialMaps(root) {
     for (const m of mats) {
       if (!m || seen.has(m)) continue
       seen.add(m)
+      const { width, height } = fallbackSize(m)
       if (!m.normalMap) {
-        const tex = makeFlatNormalTexture()
+        const strength = (m.userData && m.userData.kind) === 'flower' ? 1.5 : 1
+        let tex = m.map ? makeNormalTextureFromTexture(m.map, width, height, strength) : null
+        if (!tex) tex = makeFlatNormalTexture(width, height)
         if (tex) {
           m.normalMap = tex
           restore.push({ material: m, key: 'normalMap', previous: null, texture: tex })
         }
       }
       if (!m.roughnessMap) {
-        const tex = makeRoughnessTexture(m.roughness)
+        let tex = m.map ? makeRoughnessTextureFromTexture(m.map, width, height, m.roughness) : null
+        if (!tex) tex = makeFlatRoughnessTexture(m.roughness, width, height)
         if (tex) {
           m.roughnessMap = tex
           restore.push({ material: m, key: 'roughnessMap', previous: null, texture: tex })
@@ -283,6 +429,37 @@ export function ensureExportMaterialMaps(root) {
       if (r.material[r.key] === r.texture) r.material[r.key] = r.previous
       else if (r.material[r.key] === null) r.material[r.key] = r.previous
       r.texture.dispose()
+    }
+  }
+}
+
+/**
+ * glTF 的 metallicRoughnessTexture 把 roughness 放 G、metalness 放 B, 直接导出会变成
+ * 绿/蓝彩色图。对 metalness=0 的材质, 临时把 metalnessMap 指向同一张 roughnessMap:
+ * GLTFExporter 会原样使用这张灰度图 (metalnessFactor=0, 蓝通道被忽略), 于是导出的
+ * `_rough` 资源保持灰白, 不再是金属粗糙度合并彩图。
+ */
+export function ensureExportRoughnessGrayscale(root) {
+  const restore = []
+  const seen = new Set()
+  if (!root || typeof root.traverse !== 'function') return () => {}
+  root.traverse((obj) => {
+    if (!obj || !obj.isMesh) return
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material]
+    for (const m of mats) {
+      if (!m || seen.has(m)) continue
+      seen.add(m)
+      if (m.roughnessMap && !m.metalnessMap && Math.abs(Number(m.metalness) || 0) < 1e-6) {
+        m.metalnessMap = m.roughnessMap
+        restore.push({ material: m, previous: null })
+      }
+    }
+  })
+  return () => {
+    for (const r of restore) {
+      if (r.material.metalnessMap && r.material.metalnessMap === r.material.roughnessMap) {
+        r.material.metalnessMap = r.previous
+      }
     }
   }
 }

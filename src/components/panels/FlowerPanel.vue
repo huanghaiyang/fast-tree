@@ -79,7 +79,8 @@
       <span class="fte-open-hint">弹出 3D 面板, 拖动/滚轮/Shift 拖动 调贴图</span>
     </div>
     <SliderRow label="花朵贴图裁切" v-model="f.alphaTest" :min="0.05" :max="0.9" :step="0.01" />
-    <SliderRow label="花朵自动法线" v-model="f.normalFromAlbedo" :min="0" :max="3" :step="0.05" />
+    <SliderRow label="花朵自动法线" v-model="f.normalFromAlbedo" :min="0" :max="3" :step="0.05"
+      hint="从花朵贴图明暗生成法线; 默认 1.5, 花瓣轮廓/褶皱会有真实光照细节" />
   </Section>
 
   <Section title="落花" hint="Falling">

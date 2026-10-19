@@ -82,17 +82,29 @@ export function glbImageArtifacts(buffer, json, bin) {
   const bufferViews = json.bufferViews || []
   for (let i = 0; i < images.length; i++) {
     const img = images[i]
-    if (!img || img.bufferView === undefined) continue
+    if (!img) continue
+    const mime = img.mimeType || 'image/png'
+    const baseName = img.name || names.get(i) || ('embedded_' + i)
+    if (img.bufferView === undefined) {
+      if (typeof img.uri === 'string' && img.uri) {
+        artifacts.push({
+          name: baseName + extForMime(mime),
+          kind: 'image',
+          size: Math.round(Math.max(0, img.uri.length - img.uri.indexOf(',') - 1) * 3 / 4),
+          detail: mime,
+          imageUrl: img.uri,
+        })
+      }
+      continue
+    }
     const bv = bufferViews[img.bufferView]
     if (!bv) continue
     const start = bv.byteOffset || 0
     const end = start + bv.byteLength
     if (end > bin.byteLength) continue
     const bytes = bin.subarray(start, end)
-    const mime = img.mimeType || 'image/png'
     const blob = new Blob([bytes], { type: mime })
     const url = URL.createObjectURL(blob)
-    const baseName = img.name || names.get(i) || ('embedded_' + i)
     artifacts.push({
       name: baseName + extForMime(mime),
       kind: 'image',

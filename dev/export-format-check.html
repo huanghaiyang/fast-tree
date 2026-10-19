@@ -689,6 +689,11 @@ setTimeout(async () => {
         const hashImageViews = async (g) => {
           const out = []
           for (const img of g.json.images || []) {
+            if (img.bufferView === undefined) {
+              // alpha 资源是 data URI (不是 GLB bufferView), 同样参与语义一致性比较
+              out.push('uri:' + await sha256(new TextEncoder().encode(img.uri || '')))
+              continue
+            }
             const bv = g.json.bufferViews[img.bufferView]
             const sub = g.bin.subarray(bv.byteOffset || 0, (bv.byteOffset || 0) + bv.byteLength)
             out.push(await sha256(sub))

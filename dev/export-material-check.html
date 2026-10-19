@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>export-material: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+let fail = 0
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+const check = (name, cond, detail = '') => {
+  if (!cond) fail++
+  line((cond ? '✔ ' : '✘ ') + name + (detail ? ' — ' + detail : ''))
+}
+async function waitFor(fn, timeout = 30000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { if (fn()) return true } catch { /* ignore */ }
+    await sleep(100)
+  }
+  return false
+}
+function parseGLB(buf) {
+  const dv = new DataView(buf)
+  if (dv.getUint32(0, true) !== 0x46546c67) throw new Error('不是 GLB')
+  let off = 12, json = null, bin = null
+  while (off < buf.byteLength) {
+    const len = dv.getUint32(off, true)
+    const type = dv.getUint32(off + 4, true)
+    const data = new Uint8Array(buf, off + 8, len)
+    if (type === 0x4e4f534a) json = JSON.parse(new TextDecoder().decode(data))
+    else if (type === 0x004e4942) bin = data
+    off += 8 + len
+  }
+  return { json, bin }
+}
+function textureName(json, index) {
+  return index === undefined ? '' : ((json.textures || [])[index] || {}).name || ''
+}
+function materialOfNode(json, name) {
+  const node = (json.nodes || []).find((n) => n.name === name)
+  if (!node || node.mesh === undefined) return { node: null, mat: null, mesh: null }
+  const mesh = (json.meshes || [])[node.mesh]
+  const prim = mesh && mesh.primitives && mesh.primitives[0]
+  const mat = prim && prim.material !== undefined ? (json.materials || [])[prim.material] : null
+  return { node, mat, mesh }
+}
+async function imagePixels(json, bin, imgIndex) {
+  const img = (json.images || [])[imgIndex]
+  if (!img) return null
+  let src = img.uri
+  let objectUrl = ''
+  if (!src) {
+    const bv = (json.bufferViews || [])[img.bufferView]
+    if (!bv) return null
+    const bytes = bin.subarray(bv.byteOffset || 0, (bv.byteOffset || 0) + bv.byteLength)
+    objectUrl = URL.createObjectURL(new Blob([bytes], { type: img.mimeType || 'image/png' }))
+    src = objectUrl
+  }
+  const im = new Image()
+  im.src = src
+  await im.decode().catch(() => new Promise((res) => { im.onload = res; im.onerror = res }))
+  const c = document.createElement('canvas')
+  c.width = im.naturalWidth || im.width
+  c.height = im.naturalHeight || im.height
+  const ctx = c.getContext('2d')
+  ctx.drawImage(im, 0, 0)
+  const data = ctx.getImageData(0, 0, c.width, c.height).data
+  if (objectUrl) URL.revokeObjectURL(objectUrl)
+  return { data, width: c.width, height: c.height }
+}
+function stats(pixels, channel = 'rgb') {
+  const d = pixels.data
+  let n = 0, sum = 0, sum2 = 0, min = 255, max = 0
+  for (let i = 0; i < d.length; i += 4) {
+    const v = channel === 'alpha' ? d[i + 3] : Math.round((d[i] + d[i + 1] + d[i + 2]) / 3)
+    n++; sum += v; sum2 += v * v; if (v < min) min = v; if (v > max) max = v
+  }
+  const mean = sum / n
+  return { mean, std: Math.sqrt(Math.max(0, sum2 / n - mean * mean)), min, max, n }
+}
+
+let win, doc
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    for (let i = 0; i < 150 && !win; i++) await sleep(100)
+    await waitFor(() => win.__fastTree && win.__fastTree.ready && win.__fastTreeScene && win.__fastTreeSceneApi, 30000)
+    const scene = win.__fastTreeScene
+    const state = win.__fastTree
+    await sleep(500)
+
+    // 打开花朵 + 果实; 给花朵一个真实花卡贴图
+    state.params.flower.enabled = true
+    state.params.flower.levels = [false, true, true, true, true]
+    state.params.flower.normalFromAlbedo = 1.5
+    state.params.flower.texture = '/leaves/batch1/v2_leaf1_r01_c01.png'
+    state.params.fruit.enabled = true
+    state.params.fruit.levels = [false, true, true, true, true]
+    win.__fastTreeSceneApi.rebuildNow(true)
+    await sleep(1800)
+
+    line('===== 导出材质补全检查 =====')
+    const preview = await scene.prepareExport('glb', 'material-check.glb')
+    const blob = preview.payload.blob
+    const { json, bin } = parseGLB(await blob.arrayBuffer())
+    const texNames = (json.textures || []).map((t) => t.name || '')
+    const nodes = (json.nodes || []).map((n) => n.name || '')
+    check('GLB 有花朵节点', nodes.includes('Flowers'), nodes.join(','))
+    check('GLB 有果实节点 Bark_Fruit', nodes.includes('Bark_Fruit'), nodes.join(','))
+
+    const flower = materialOfNode(json, 'Flowers')
+    const flowerNormalName = textureName(json, flower.mat && flower.mat.normalTexture && flower.mat.normalTexture.index)
+    check('花朵材质引用 normal 贴图', !!flower.mat && !!flower.mat.normalTexture, flowerNormalName)
+    if (flower.mat && flower.mat.normalTexture) {
+      const t = json.textures[flower.mat.normalTexture.index]
+      const px = await imagePixels(json, bin, t.source)
+      const st = stats(px)
+      check('花朵法线不是纯平坦法线 (有轮廓)', st.std > 2.0 && st.max - st.min > 8, `std=${st.std.toFixed(2)} range=${st.min}-${st.max}`)
+    } else {
+      check('花朵法线不是纯平坦法线 (有轮廓)', false)
+    }
+
+    const fruit = materialOfNode(json, 'Bark_Fruit')
+    check('果实节点使用独立 Fruit 材质', !!fruit.mat && fruit.mat.name === 'Fruit', fruit.mat ? fruit.mat.name : 'no material')
+    const fruitNames = {
+      diff: textureName(json, fruit.mat && fruit.mat.pbrMetallicRoughness && fruit.mat.pbrMetallicRoughness.baseColorTexture && fruit.mat.pbrMetallicRoughness.baseColorTexture.index),
+      nor: textureName(json, fruit.mat && fruit.mat.normalTexture && fruit.mat.normalTexture.index),
+      rough: textureName(json, fruit.mat && fruit.mat.pbrMetallicRoughness && fruit.mat.pbrMetallicRoughness.metallicRoughnessTexture && fruit.mat.pbrMetallicRoughness.metallicRoughnessTexture.index),
+    }
+    check('果实 diff = fruit_diff_1k', fruitNames.diff === 'fruit_diff_1k', fruitNames.diff)
+    check('果实 nor = fruit_nor_gl_1k', fruitNames.nor === 'fruit_nor_gl_1k', fruitNames.nor)
+    check('果实 rough = fruit_rough_1k', fruitNames.rough === 'fruit_rough_1k', fruitNames.rough)
+    check('果实 alpha 资源存在', texNames.includes('fruit_alpha_1k'), texNames.join(','))
+
+    if (fruit.mat && fruit.mat.normalTexture) {
+      const t = json.textures[fruit.mat.normalTexture.index]
+      const px = await imagePixels(json, bin, t.source)
+      const st = stats(px)
+      check('果实法线有果皮细节 (非平坦)', st.std > 2.0 && st.max - st.min > 8, `std=${st.std.toFixed(2)} range=${st.min}-${st.max}`)
+    } else {
+      check('果实法线有果皮细节 (非平坦)', false)
+    }
+
+    // alpha 资源必须是黑白灰度, 且不是 diffuse 彩图
+    for (const name of ['flower_alpha', 'leaf_alpha', 'fruit_alpha_1k']) {
+      const idx = texNames.indexOf(name)
+      if (idx < 0) { check('alpha 资源存在: ' + name, false); continue }
+      const t = json.textures[idx]
+      const px = await imagePixels(json, bin, t.source)
+      const d = px.data
+      let gray = true, opaque = true, hasBlack = false, hasWhite = false
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i] !== d[i + 1] || d[i] !== d[i + 2]) gray = false
+        if (d[i + 3] !== 255) opaque = false
+        if (d[i] < 12) hasBlack = true
+        if (d[i] > 243) hasWhite = true
+      }
+      check('alpha 为黑白灰度: ' + name, gray && opaque && hasBlack && hasWhite,
+        `gray=${gray} opaque=${opaque} black=${hasBlack} white=${hasWhite}`)
+    }
+
+    // rough 资源必须是灰白 (R=G=B), 不能是金属粗糙度合并的绿/蓝图
+    const roughNames = texNames.filter((n) => /_rough(_\d+k)?$/.test(n))
+    let roughGray = roughNames.length > 0
+    for (const name of roughNames) {
+      const idx = texNames.indexOf(name)
+      const t = json.textures[idx]
+      const px = await imagePixels(json, bin, t.source)
+      const d = px.data
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i] !== d[i + 1] || d[i] !== d[i + 2]) { roughGray = false; break }
+      }
+      if (!roughGray) break
+    }
+    check('所有 rough 图都是灰白 (R=G=B)', roughGray, roughNames.join(','))
+
+    // rough 不能是随机纯噪声/纯色: 应来自 diffuse 亮度场
+    const leafRoughIdx = texNames.findIndex((n) => /^leaf_rough/.test(n))
+    check('存在 leaf_rough 资源', leafRoughIdx >= 0, texNames.join(','))
+    if (leafRoughIdx >= 0) {
+      const t = json.textures[leafRoughIdx]
+      const px = await imagePixels(json, bin, t.source)
+      const st = stats(px)
+      check('leaf_rough 有来自贴图的明暗变化', st.std > 0.8 && st.max - st.min > 4, `std=${st.std.toFixed(2)} range=${st.min}-${st.max}`)
+    }
+
+    line('\n结果: ' + (fail ? 'MATERIAL-EXPORT-FAIL ' + fail : 'MATERIAL-EXPORT-OK'))
+    document.title = (fail ? 'MATERIAL-EXPORT-FAIL(' + fail + ')' : 'MATERIAL-EXPORT-OK') + ' :: ' +
+      R.filter((s) => s.startsWith('✘')).slice(0, 6).join(' | ')
+  } catch (e) {
+    document.title = 'MATERIAL-EXPORT-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 900)
+    line('EX: ' + (e && e.stack ? e.stack : e))
+  }
+}, 2200)
+</script></body></html>

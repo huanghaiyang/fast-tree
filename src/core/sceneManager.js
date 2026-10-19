@@ -15,6 +15,7 @@ import { buildLeafLitter, litterRebuildKey } from './litter.js'
 import { generateImpostor } from './impostor.js'
 import { buildFrustumChunks, hideSourceMesh } from './renderChunks.js'
 import { buildGLBPreview, buildOBJPreview, buildPNGPreview } from './exportPreview.js'
+import { createFruitExportMaterial, disposeFruitExportMaterial } from './fruitMaterial.js'
 import { boxInfo } from './mathUtils.js'
 import { cloneParams } from './params.js'
 import { makeRng } from './rng.js'
@@ -154,6 +155,8 @@ export class TreeScene {
     this.barkMesh = null
     this.leafMesh = null
     this.flowerMesh = null
+    this._fruitExportMaterial = null
+    this._fruitExportKey = ''
     // 视锥分块: 只用于 LOD0 渲染; 源网格保留给导出/统计/粒子采样
     this._cullChunks = []
     // 动态 LOD: LOD0 = 上面的主网格; LOD1/2 首次需要时才构建并缓存
@@ -245,8 +248,7 @@ export class TreeScene {
     return this.materials
   }
 
-  updateMaterialParams(params) {
-    this.updateParticles(params)
+  updateMaterialParams(params) {    this.updateParticles(params)
     this.updateFall(params)
     this.updateFlowerFall(params)
     this.updateLitter(params)
@@ -1188,11 +1190,25 @@ export class TreeScene {
    * 且部分特效材质是 ShaderMaterial, glTF 无法表达。
    * 用 clone() 只复制节点(共享 geometry/material), 不改动场景里的原对象。
    */
+  /** 果实导出材质 (独立于树皮; 参数变了才重建, 避免每次预览都生成 1K 贴图) */
+  _getFruitExportMaterial() {
+    const F = (this.lastParams && this.lastParams.fruit) || {}
+    const seed = (this.lastParams && this.lastParams.seed) || 1
+    const key = JSON.stringify({
+      type: F.type, color: F.color, capColor: F.capColor, seed,
+    })
+    if (this._fruitExportMaterial && this._fruitExportKey === key) return this._fruitExportMaterial
+    disposeFruitExportMaterial(this._fruitExportMaterial)
+    this._fruitExportMaterial = createFruitExportMaterial(F, seed)
+    this._fruitExportKey = key
+    return this._fruitExportMaterial
+  }
+
   buildExportGroup() {
     const g = new THREE.Group()
     g.name = this.treeGroup.name || 'FastTree'
-    const add = (mesh, geometry, name) => {
-      const c = new THREE.Mesh(geometry, mesh.material)
+    const add = (mesh, geometry, name, material) => {
+      const c = new THREE.Mesh(geometry, material || mesh.material)
       c.name = name
       // 网格自身一般无变换, 但仍按世界矩阵归一化, 保证导出坐标正确
       c.matrix.copy(mesh.matrixWorld)
@@ -1204,8 +1220,9 @@ export class TreeScene {
     if (this.barkMesh) {
       const opts = (this.lastParams && this.lastParams.exportOptions) || {}
       const parts = barkExportParts(this.barkMesh.geometry, this.nodes || [], !!opts.mergeBark)
+      const fruitMat = parts.some((p) => p.name === 'Bark_Fruit') ? this._getFruitExportMaterial() : null
       if (parts.length) {
-        for (const p of parts) add(this.barkMesh, p.geometry, p.name)
+        for (const p of parts) add(this.barkMesh, p.geometry, p.name, p.name === 'Bark_Fruit' ? fruitMat : null)
       } else {
         add(this.barkMesh, this.barkMesh.geometry, 'Bark')
       }
@@ -1288,6 +1305,8 @@ export class TreeScene {
     }
     this.materials?.bark?.dispose()
     this.materials?.leaf?.dispose()
+    disposeFruitExportMaterial(this._fruitExportMaterial)
+    this._fruitExportMaterial = null
     this.ground.geometry.dispose()
     this.groundMat.dispose()
     this.sky.geometry.dispose()

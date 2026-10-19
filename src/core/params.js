@@ -305,7 +305,7 @@ export function defaultParams() {
       textureRotation: 0,    // 贴图旋转 (弧度)
       tintMode: 'texture',   // 花朵贴图染色模式 (同树叶)
       alphaTest: 0.35,      // 贴图裁切阈值: 0 会让透明区变黑边
-      normalFromAlbedo: 0,   // 花朵贴图自动法线 (可选)
+      normalFromAlbedo: 1.5, // 花朵贴图自动法线 (默认从花瓣明暗生成轮廓, 0 = 关闭)
       cardId: '',
       cardAspect: 1,
       cross: 'none',          // 十字交叉: none | v (竖向交叉) | h (横向交叉) | both
