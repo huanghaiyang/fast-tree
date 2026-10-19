@@ -609,7 +609,8 @@ const trunkBoundary = (() => {
   return boundary
 })()
 check('主干完全封闭 (基部与分叉顶端都封口, 不出现截断截面)', trunkBoundary === 0, 'boundary=' + trunkBoundary)
-check('枝/根基部开口数 = 埋进父枝的那些环 (不是可见破洞)', be.boundary > 0 && be.boundary < 12 * (oakR.stats.branches + 8), 'boundary=' + be.boundary)
+// 所有管状部件 (主干/树枝/树根) 首尾都加三角扇端盖 -> 整树树皮无边界边
+check('树干/树枝/树根全部首尾闭合 (无边界边)', be.boundary === 0, 'boundary=' + be.boundary)
 // 分叉后主干仍然长到接近全高 (不是被截断的树桩)
 check('分叉时主干不被截断 (整树高度 >= 0.9 × 主干高度)',
   oakR.stats.height >= oakP.trunk.height * 0.9,
@@ -1436,6 +1437,10 @@ console.log('\n[27] 导出节点拆分')
   check('每个拆分节点都有几何且属性齐全', parts.every((x) =>
     x.triangles > 0 && x.geometry.attributes.position && x.geometry.attributes.normal &&
     x.geometry.attributes.uv && x.geometry.attributes.color && x.geometry.attributes.aNodeId && x.geometry.index))
+  // 端盖顶点必须带正确的 aNodeId, 否则拆分后端盖会掉到别的节点/留下开口
+  const openTubeParts = parts.filter((x) => x.name !== 'Bark_Fruit' && boundaryEdges(x.geometry).boundary !== 0)
+  check('拆分后的树干/树枝/树根节点仍首尾闭合', openTubeParts.length === 0,
+    openTubeParts.map((x) => x.name + ':' + boundaryEdges(x.geometry).boundary).join(', '))
   const byId = new Map(r.nodes.map((n) => [n.id, n]))
   let mixed = ''
   for (const part of parts) {

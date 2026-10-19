@@ -163,6 +163,7 @@ export function buildTube(frames, o = {}) {
       0, 0,
       clamp01(color.r), clamp01(color.g), clamp01(color.b),
       wind0, phase, origin.x, origin.y, origin.z, grow[0], grow[1],
+      nodeId,
     )
     const b0 = rings[0]
     for (let j = 0; j < radialSegments; j++) {

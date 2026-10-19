@@ -97,7 +97,6 @@ export function defaultParams() {
       knots: 2,             // 节瘤数量
       knotSize: 0.35,       // 节瘤凸起强度
       squash: 1.0,          // 椭圆化 (1 = 圆)
-      capBase: true,
       fork: {
         enabled: false,    // 主干分叉 (多主枝): 橡树这类乔木常在 1/3 高处分成 2~4 条主枝
         count: 3,          // 分出的主枝数 (2~6)

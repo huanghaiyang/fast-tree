@@ -143,7 +143,7 @@ export const SPECIES = [
         height: 11.5, baseRadius: 0.56, taper: 0.09, radiusCurve: 1.5,
         segments: 16, radialSegments: 16, curve: 0.3, curveVariance: 0.45,
         lean: 0.05, leanDirection: 20, twist: 0.12, gnarl: 0.8,
-        flare: 1.5, flareHeight: 0.18, knots: 4, knotSize: 0.32, squash: 1.0, capBase: true,
+        flare: 1.5, flareHeight: 0.18, knots: 4, knotSize: 0.32, squash: 1.0,
         fork: { ...OAK_FORK, enabled: true },
       },
       // 板根贴着地面向外铺 (原来 pitch 116° 是往地下扎, 所以几乎看不见)
