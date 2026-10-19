@@ -448,6 +448,9 @@ export class TreeScene {
     if (this.lodCache.has(level)) return this.lodCache.get(level)
     const base = this.lastParams
     if (!base || !base.lod || !this.treeGroup) return null
+    // 布尔并集/隐式重建很重; 远景 LOD 直接复用 LOD0, 避免每个档位重复做一遍 CSG
+    const jm = base.trunk && base.trunk.junctionMode
+    if (jm === 'csg' || jm === 'implicit') return null
     const cfg = base.lod
     const keep = level === 1 ? (cfg.keep1 === undefined ? 0.3 : cfg.keep1) : (cfg.keep2 === undefined ? 0.08 : cfg.keep2)
     const p = cloneParams(base)
@@ -1220,7 +1223,9 @@ export class TreeScene {
     if (this.barkMesh) {
       const opts = (this.lastParams && this.lastParams.exportOptions) || {}
       const onePiece = !!(this.lastParams && this.lastParams.trunk && this.lastParams.trunk.onePiece)
-      const parts = barkExportParts(this.barkMesh.geometry, this.nodes || [], !!opts.mergeBark || onePiece, onePiece)
+      const junctionMode = (this.lastParams && this.lastParams.trunk && this.lastParams.trunk.junctionMode) || 'none'
+      const unified = junctionMode === 'csg' || junctionMode === 'implicit'
+      const parts = barkExportParts(this.barkMesh.geometry, this.nodes || [], !!opts.mergeBark || onePiece || unified, onePiece || unified)
       const fruitMat = parts.some((p) => p.name === 'Bark_Fruit') ? this._getFruitExportMaterial() : null
       if (parts.length) {
         for (const p of parts) add(this.barkMesh, p.geometry, p.name, p.name === 'Bark_Fruit' ? fruitMat : null)

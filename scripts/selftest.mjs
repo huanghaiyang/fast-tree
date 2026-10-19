@@ -617,6 +617,17 @@ const oneR = buildTree(oneP)
 const oneBE = boundaryEdges(oneR.barkGeometry)
 check('一体建模改变树干/树枝/树根几何', geomHash(oneR.barkGeometry) !== geomHash(oakR.barkGeometry))
 check('一体建模仍保持首尾封闭', oneBE.boundary === 0 && oneBE.nonManifold === 0, JSON.stringify(oneBE))
+// 布尔并集 / 隐式重建 (可选高级模式): 生成新几何并保留自定义顶点属性
+const csgP = { ...oakP, trunk: { ...oakP.trunk, junctionMode: 'csg', onePiece: true } }
+const csgR = buildTree(csgP)
+check('CSG 布尔并集生成新几何', csgR.stats.barkTriangles > 0 &&
+  geomHash(csgR.barkGeometry) !== geomHash(oakR.barkGeometry) &&
+  csgR.barkGeometry.attributes.aWind && csgR.barkGeometry.attributes.color,
+  `tris=${csgR.stats.barkTriangles}`)
+const impP = { ...oakP, trunk: { ...oakP.trunk, junctionMode: 'implicit', onePiece: true } }
+const impR = buildTree(impP)
+check('隐式重建几何不同于 CSG 并集', geomHash(impR.barkGeometry) !== geomHash(csgR.barkGeometry),
+  `${geomHash(csgR.barkGeometry)} vs ${geomHash(impR.barkGeometry)}`)
 // 分叉后主干仍然长到接近全高 (不是被截断的树桩)
 check('分叉时主干不被截断 (整树高度 >= 0.9 × 主干高度)',
   oakR.stats.height >= oakP.trunk.height * 0.9,

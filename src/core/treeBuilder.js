@@ -11,6 +11,7 @@ import { makeRng } from './rng.js'
 import { buildTube } from './bark.js'
 import { buildLeafTemplate, buildLeafCardTemplate, pushLeafInstance } from './leaf.js'
 import { buildFruitTemplate, pushFruitInstance } from './fruit.js'
+import { applyBarkJunction } from './barkJunction.js'
 import { buildOcclusionGrid, bakeOcclusion, bakeOcclusionByRanges } from './ambientOcclusion.js'
 import {
   GeoAcc, growFrames, sampleFrame, anyPerp, azimuthPerp, rotateTowardUp,
@@ -51,6 +52,8 @@ export function buildTree(params) {
   const P = params
   const branchParams = P.branches
   const onePiece = !!(P.trunk && P.trunk.onePiece)
+  const junctionMode = (P.trunk && P.trunk.junctionMode) || 'none'
+  const collarMode = junctionMode === 'collar'
   const L = P.leaves
   const F = P.fruit || { enabled: false, levels: [] }
   // 挂果层级回退: 如果设置里勾选的层级在这棵树上一级都没有 (比如默认树只有 3 层枝,
@@ -409,8 +412,10 @@ export function buildTree(params) {
       // 末梢圆钝收尖 (不是平截面) + 基部领口 (与父枝平滑融合, 避免大小半径硬拼接)
       tipRound: o.tipRound === undefined ? 0.06 : o.tipRound,
       // 一体建模时加大基部领口, 让枝条与树干/父枝更像连续长出来的一棵树
-      baseFlare: (o.baseFlare === undefined ? (level === 1 ? 0.45 : 0.32) : o.baseFlare) + (onePiece ? 0.14 : 0),
-      baseFlareLen: (o.baseFlareLen === undefined ? (level === 1 ? 0.16 : 0.13) : o.baseFlareLen) + (onePiece ? 0.02 : 0),
+      baseFlare: (o.baseFlare === undefined ? (level === 1 ? 0.45 : 0.32) : o.baseFlare) +
+        (onePiece ? 0.14 : 0) + (collarMode ? 0.35 : 0),
+      baseFlareLen: (o.baseFlareLen === undefined ? (level === 1 ? 0.16 : 0.13) : o.baseFlareLen) +
+        (onePiece ? 0.02 : 0) + (collarMode ? 0.1 : 0),
       vertexNoise: 0.05,
       nodeId: mySlot,
     }))
@@ -598,7 +603,7 @@ export function buildTree(params) {
         phase: rootRng.range(0, Math.PI * 2),
         capStart: true,
         capEnd: true,
-        baseFlare: onePiece ? 0.16 : 0,
+        baseFlare: (onePiece ? 0.16 : 0) + (collarMode ? 0.2 : 0),
         baseFlareLen: 0.1,
         vertexNoise: 0.07,
         nodeId: rootSlot,
@@ -741,7 +746,14 @@ export function buildTree(params) {
   /* ------------------------------------------------------------------ */
   const barkGeometry = (() => {
     if (fruitAcc.vertexCount > 0) barkParts.push(fruitAcc.build())
-    return barkParts.length ? mergeGeometries(barkParts, false) : new GeoAcc().build()
+    let geo = barkParts.length ? mergeGeometries(barkParts, false) : new GeoAcc().build()
+    // 真布尔并集 / 隐式重建: 在 AO/节点表之前替换树皮几何
+    if (junctionMode === 'csg' || junctionMode === 'implicit') {
+      const nodeList = slots.map((s, id) => ({ id, ...s }))
+      const unified = applyBarkJunction(geo, nodeList, junctionMode)
+      if (unified) geo = unified
+    }
+    return geo
   })()
   const leafGeometry = leafAcc.vertexCount > 0 ? leafAcc.build() : null
 
