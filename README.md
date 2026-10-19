@@ -87,6 +87,7 @@ npm run selftest     # 无浏览器自检 (确定性/参数隔离/几何合法�
 朝向：相对枝条俯仰、俯仰随机、自重下垂、叶面朝上、滚转随机、叶柄扭转、对齐枝条程度；
 颜色：叶基色、叶尖色、颜色随机；
 LOD：树皮细节倍率、叶片保留比例、叶片数上限。
+贴图卡片模式与内置叶片卡片库位于「树叶」面板（叶片形态下方）；材质面板只保留材质本身的颜色/贴图/PBR 参数。
 
 ### 5. 风场 + 生长动画 (Wind / Growth)
 - **自动风场**：勾选后由种子推导 **风向 / 强度 / 阵风 / 湍流 / 相位空间尺度 / 柔度衰减 / 叶扇动量**；也可以随时 🎲 重新随机风向风场
@@ -200,6 +201,8 @@ src/
 │  ├─ ControlPanel.vue                左侧 8 个参数标签页
 │  ├─ ChatPanel.vue                   AI 对话助手 (历史/图片/思考过程/联网搜索/会话管理)
 │  ├─ TwistGizmo.vue                  视口扭曲句柄叠层 (树干/树枝曲线拖拽编辑)
+│  ├─ LeafShapeGallery.vue            叶形白模预览 (单 WebGL canvas 分格渲染)
+│  ├─ LeafCardPicker.vue              内置叶片卡片库 (贴图卡片模式/批次/叶形/应用)
 │  ├─ NodeDock.vue                    右侧可收起的「模型节点」面板 (默认不展示)
 │  ├─ ParamTip.vue                    参数 hover 说明浮层 (事件委托 + 词典查表)
 │  ├─ WindCompass.vue                 视口风向指示器 (世界风向投影到相机地面基)
@@ -448,6 +451,7 @@ node scripts/shot-receiver.mjs        # 监听 127.0.0.1:5274, 把页面回传�
 - `dev/triangle-stats-check.html` —— 面数显示准确性自检: 开满花时「全模三角面」包含花朵，LOD0/1/2 的「当前面数」与实际可见模型几何、lodInfo 逐项一致，切换 LOD 时全模面数保持不变
 - `dev/double-sided-leaf-check.html` —— 双面叶片材质自检: 用真实 `createLeafMaterial` 渲染平面，正面白贴图/背面蓝贴图、只换背面颜色、关闭恢复等场景逐像素验证，并确认 shader 注入 `gl_FrontFacing`
 - `dev/double-sided-ui-check.html` —— 双面叶片 UI 自检: 真实点击「材质 → 树叶材质 → 双面独立颜色/贴图」开关，验证参数、`uBackEnabled`、DoubleSide、背面贴图库选择/跟随正面、背面贴图绑定、背面颜色 uniform、shader 编译无错误
+- `dev/leaf-move-check.html` —— 面板迁移自检: 「内置叶片卡片」分组已从材质面板移到树叶面板，批次/叶形/应用叶子仍可用；材质面板不再出现该分组且保留「树叶材质」
 - `dev/environments-check.html` —— 环境预设自检: 9 种环境的背景/太阳/环境光/地面/曝光/雾/星空逐项校验 + 真实点击「场景 → 环境预设」按钮；群星星空跟随相机、切环境不重建树几何
 - `dev/export-split-check.html` —— 导出节点拆分自检: 视口场景与真实导出的 GLB/OBJ 中，树干、树枝各层、根、果实、树叶是否都是独立节点/mesh，且面数守恒；「合并树干与树枝 mesh」开关打开后是否只剩单棵 `Bark` 节点、关闭后恢复拆分
 - `dev/export-format-check.html` —— 导出数据格式自检: GLB 按 glTF 2.0 规范校验容器/accessor/min-max/贴图/节点并用官方 GLTFLoader 回读, OBJ 按 Wavefront 文法校验并用 OBJLoader 回读, PNG 校验签名/IHDR/CRC/IDAT/行滤波并确认非空帧, 参数 JSON 校验结构完整性与导入回环, 以及"特效全开时的富场景导出"

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>leaf-move: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+/* 叶片卡片设置迁移自检: 材质面板 -> 树叶面板 */
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+let fail = 0
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+const check = (name, cond, detail = '') => {
+  if (!cond) fail++
+  line((cond ? '✔ ' : '✘ ') + name + (detail ? ' — ' + detail : ''))
+}
+async function waitFor(fn, timeout = 20000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { if (fn()) return true } catch (e) { /* ignore */ }
+    await sleep(100)
+  }
+  return false
+}
+let win, doc
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    for (let i = 0; i < 120 && !win; i++) await sleep(100)
+    await waitFor(() => win.__fastTree && win.__fastTree.ready, 30000)
+    const state = win.__fastTree
+    const sectionHead = (text) => [...doc.querySelectorAll('.section-head')].find((h) => (h.textContent || '').includes(text))
+
+    line('===== 叶片卡片设置迁移 =====')
+    const leafTab = [...doc.querySelectorAll('.tab')].find((t) => (t.textContent || '').includes('树叶'))
+    leafTab.click()
+    await sleep(700)
+    const leafPicker = sectionHead('内置叶片卡片')
+    check('树叶面板出现「内置叶片卡片」分组', !!leafPicker)
+    if (leafPicker) {
+      const body = leafPicker.parentElement.querySelector('.section-body')
+      if (body && win.getComputedStyle(body).display === 'none') leafPicker.click()
+    }
+    await sleep(500)
+    check('分组内有「应用这张叶子」按钮', [...doc.querySelectorAll('button')].some((b) => (b.textContent || '').includes('应用这张叶子')))
+    const leafBody = leafPicker && leafPicker.parentElement.querySelector('.section-body')
+    const pickerChips = leafBody ? [...leafBody.querySelectorAll('.chip')] : []
+    check('分组内有批次/叶形选择', !!leafBody && (leafBody.textContent || '').includes('批次') &&
+      (leafBody.textContent || '').includes('叶形') &&
+      pickerChips.some((b) => /^#\d/.test((b.textContent || '').trim())),
+      pickerChips.slice(0, 8).map((b) => (b.textContent || '').trim()).join(' | '))
+    // 应用一张叶子: 叶形或贴图应变化
+    const texBefore = state.params.leafMat.texture
+    const applyBtn = [...doc.querySelectorAll('button')].find((b) => (b.textContent || '').includes('应用这张叶子'))
+    if (applyBtn) applyBtn.click()
+    await sleep(700)
+    check('应用叶片卡片后叶子贴图/叶形发生变化', state.params.leafMat.texture !== texBefore || state.params.leaves.cardMode === true,
+      'texture=' + String(state.params.leafMat.texture).slice(0, 28) + ' cardMode=' + state.params.leaves.cardMode)
+
+    // 材质面板不再出现该分组
+    const matTab = [...doc.querySelectorAll('.tab')].find((t) => (t.textContent || '').includes('材质'))
+    matTab.click()
+    await sleep(600)
+    check('材质面板不再有「内置叶片卡片」分组', !sectionHead('内置叶片卡片'))
+    check('材质面板仍保留「树叶材质」分组', !!sectionHead('树叶材质'))
+
+    line('\n结果: ' + (fail ? 'LEAFMOVE-FAIL ' + fail : 'LEAFMOVE-OK'))
+    document.title = (fail ? 'LEAFMOVE-FAIL(' + fail + ')' : 'LEAFMOVE-OK') + ' :: ' +
+      R.filter((s) => s.startsWith('✘')).slice(0, 5).join(' | ')
+  } catch (e) {
+    document.title = 'LEAFMOVE-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 900)
+    line('EX: ' + (e && e.stack ? e.stack : e))
+  }
+}, 2200)
+</script></body></html>

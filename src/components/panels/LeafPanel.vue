@@ -37,6 +37,8 @@
     <SliderRow label="叶柄长度比例" v-model="L.petiole" :min="0" :max="0.4" :step="0.01" />
   </Section>
 
+  <LeafCardPicker />
+
   <Section title="叶片朝向" hint="Orientation" :default-collapsed="true">
     <SliderRow label="相对枝条俯仰" v-model="L.pitch" :min="-110" :max="110" :step="1" unit="°" />
     <SliderRow label="俯仰随机" v-model="L.pitchVariance" :min="0" :max="90" :step="1" unit="°" />
@@ -97,6 +99,7 @@ import ToggleRow from '../ui/ToggleRow.vue'
 import ColorRow from '../ui/ColorRow.vue'
 import SelectRow from '../ui/SelectRow.vue'
 import LeafShapeGallery from '../LeafShapeGallery.vue'
+import LeafCardPicker from '../LeafCardPicker.vue'
 import { state } from '../../store/treeStore.js'
 
 const L = state.params.leaves
