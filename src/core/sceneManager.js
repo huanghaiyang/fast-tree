@@ -80,7 +80,8 @@ export class TreeScene {
     this.controls.enableDamping = true
     this.controls.dampingFactor = 0.08
     this.controls.target.set(0, 4, 0)
-    this.controls.maxPolarAngle = Math.PI * 0.495
+    // 不锁地平线: 允许相机绕到地面以下, 从下往上观察树冠/根系/果实的底面
+    this.controls.maxPolarAngle = Math.PI
     this.controls.minDistance = 0.5
     this.controls.maxDistance = 400
 

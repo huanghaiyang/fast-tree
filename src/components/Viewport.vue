@@ -23,7 +23,7 @@
     </div>
 
     <div class="overlay help">
-      左键旋转 · 右键平移 · 滚轮缩放 · N 节点面板 · W 线框
+      左键旋转 (可转到地下从下往上看) · 右键平移 · 滚轮缩放 · N 节点面板 · W 线框
     </div>
 
     <WindCompass />

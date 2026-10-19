@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>view-angle: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+/* 视角自由度自检: 相机必须能绕到地面以下, 从下往上看 */
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+let fail = 0
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+const check = (name, cond, detail = '') => {
+  if (!cond) fail++
+  line((cond ? '✔ ' : '✘ ') + name + (detail ? ' — ' + detail : ''))
+}
+async function waitFor(fn, timeout = 20000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { if (fn()) return true } catch (e) { /* ignore */ }
+    await sleep(100)
+  }
+  return false
+}
+let win, doc
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    for (let i = 0; i < 120 && !win; i++) await sleep(100)
+    await waitFor(() => win.__fastTree && win.__fastTreeScene && win.__fastTree.ready, 30000)
+    const scene = win.__fastTreeScene
+    const controls = scene.controls
+    await sleep(500)
+
+    line('===== 视角自由度 =====')
+    check('相机轨道最大极角已解锁 (>= 0.95π)', controls.maxPolarAngle >= Math.PI * 0.95,
+      'maxPolarAngle=' + controls.maxPolarAngle.toFixed(4) + ' (旧值≈1.555)')
+
+    // 把目标放在树高一半, 相机放到地面以下, 再让 OrbitControls 自己 clamp
+    const targetY = Math.max(1, (scene.treeHeight || 8) * 0.5)
+    controls.target.set(0, targetY, 0)
+    scene.camera.position.set(0.8, targetY - Math.max(8, (scene.treeHeight || 8) * 1.2), 0.8)
+    controls.update()
+    const v = scene.camera.position.clone().sub(controls.target)
+    const dist = v.length()
+    const polar = Math.acos(Math.max(-1, Math.min(1, v.y / dist)))
+    check('相机能到达地面以下 (camera.y < 0)', scene.camera.position.y < 0,
+      'cameraY=' + scene.camera.position.y.toFixed(2))
+    check('极角超过地平线 (polar > π/2)', polar > Math.PI / 2,
+      'polar=' + (polar * 180 / Math.PI).toFixed(1) + '°')
+    check('保持轨道距离 (没有被强制弹回)', dist > 1, 'dist=' + dist.toFixed(2))
+    check('俯视/仰视切换后 target 不变', Math.abs(controls.target.y - targetY) < 1e-6)
+
+    // 再调用一次 frameCamera 后回到正常取景, 且仍不被锁死
+    scene.frameCamera()
+    controls.update()
+    check('取景后仍可继续向下转 (maxPolarAngle 不变)', controls.maxPolarAngle >= Math.PI * 0.95)
+
+    // 向上看时树仍在相机前方的有效距离内 (只是确认坐标没坏)
+    const toTree = scene.treeCenter.clone().sub(scene.camera.position)
+    check('下方视角到树心距离有限', Number.isFinite(toTree.length()) && toTree.length() > 0,
+      'd=' + toTree.length().toFixed(2))
+
+    line('\n结果: ' + (fail ? 'VIEWANGLE-FAIL ' + fail : 'VIEWANGLE-OK'))
+    document.title = (fail ? 'VIEWANGLE-FAIL(' + fail + ')' : 'VIEWANGLE-OK') + ' :: ' +
+      R.filter((s) => s.startsWith('✘')).slice(0, 5).join(' | ')
+  } catch (e) {
+    document.title = 'VIEWANGLE-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 900)
+    line('EX: ' + (e && e.stack ? e.stack : e))
+  }
+}, 2200)
+</script></body></html>
