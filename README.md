@@ -223,7 +223,7 @@ src/
    ├─ appApi.js        浏览器侧命令执行器 + 本地桥客户端
    └─ sceneManager.js  渲染器/相机/灯光/天空/地面/动画循环/选中框/聚焦/相机基
 scripts/
-├─ selftest.mjs        232 项无浏览器自检 (含导出格式/节点拆分、AO、LOD、环境预设、扭曲曲线、模板卫生)
+├─ selftest.mjs        239 项无浏览器自检 (含导出格式/节点拆分、AO、LOD、环境预设、扭曲曲线、站点图标、模板卫生)
 ├─ paramAudit.mjs      参数有效性审计核心 (几何/材质/风场三路签名比对)
 ├─ audit-params.mjs    npm run audit 入口
 ├─ app-bridge-server.mjs  本地应用桥 / MCP 服务器 / 大模型代理 (Key 只在服务端)
@@ -232,7 +232,16 @@ scripts/
 ├─ vite-sandbox.mjs    受限沙箱/CI 下绕过 Vite net use 探测 (npm run dev 的入口)
 ├─ vite-plugin-app-bridge.mjs  dev 时自动启动/复用/升级应用桥 + MCP (vite 插件)
 └─ shot-receiver.mjs   开发用截图接收器 (配合 dev/ 自检页面)
+public/
+├─ favicon.svg        站点图标源文件 (64×64, 渐变树形)
+├─ favicon.ico        16/32/48 多尺寸 (PNG 图层)
+├─ favicon-16/32.png  浏览器标签页图标
+├─ apple-touch-icon.png  180×180 苹果主屏图标
+└─ favicon-512.png    高清备用
 ```
+
+> 站点图标由 [public/favicon.svg](public/favicon.svg) 设计，栅格版从同一 SVG 渲染，保证各尺寸一致；
+> 想改图标只需改 SVG 后重新导出 PNG/ICO。
 
 ### 渲染开销
 整棵树只合并成 **2 个几何体 = 2 个 draw call**（树皮 1 + 树叶 1）。
@@ -376,7 +385,7 @@ npm run chat:check   # 对话链路自检 (需要 Key + 网络)
 ## 自检与诊断
 
 ```bash
-npm run selftest     # 232 项断言
+npm run selftest     # 239 项断言
 npm run audit        # 参数有效性审计 (改了就一定变)
 ```
 

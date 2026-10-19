@@ -24,7 +24,7 @@ import { viewAngles, atlasLayout, crossCardQuads, alphaCoverage, elevationAngles
 import { ellipseLeafTexture, resolveEffectTexture, resolveEffectAspect } from '../src/core/leafTexture.js'
 import { LEAF_CARDS } from '../src/core/leafCards.generated.js'
 import { motionMetrics, swayEnvelope } from '../src/core/windModel.js'
-import { readFileSync, readdirSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { runAudit, AUDIT_EXEMPT, STORE_LEVEL } from './paramAudit.mjs'
 import { docFor, DOC_KEYS } from '../src/core/paramDocs.js'
@@ -1418,6 +1418,51 @@ console.log('\n[27] 导出节点拆分')
     split2.some((x) => x.name === 'Bark_Branch_L1'))
   check('导出开关不改变几何与面数', merged.reduce((s, x) => s + x.triangles, 0) === r.stats.barkTriangles &&
     split2.reduce((s, x) => s + x.triangles, 0) === r.stats.barkTriangles)
+}
+
+/* 28. 站点图标 (favicon) */
+console.log('\n[28] 站点图标')
+{
+  const icons = ['favicon.svg', 'favicon.ico', 'favicon-16.png', 'favicon-32.png', 'apple-touch-icon.png']
+  check('图标文件齐全', icons.every((f) => existsSync(join('public', f))), icons.filter((f) => !existsSync(join('public', f))).join(', '))
+  const svg = readFileSync(join('public', 'favicon.svg'), 'utf8')
+  check('SVG 图标合法 (viewBox + 渐变树形)', /viewBox="0 0 64 64"/.test(svg) && /<linearGradient/.test(svg) && /<circle/.test(svg))
+  const pngInfo = (file) => {
+    const b = readFileSync(file)
+    const sig = b.subarray(0, 8).toString('hex') === '89504e470d0a1a0a'
+    const w = b.readUInt32BE(16)
+    const h = b.readUInt32BE(20)
+    const bit = b[24]
+    const color = b[25]
+    return { sig, w, h, bit, color, bytes: b.length }
+  }
+  const p16 = pngInfo(join('public', 'favicon-16.png'))
+  const p32 = pngInfo(join('public', 'favicon-32.png'))
+  const p180 = pngInfo(join('public', 'apple-touch-icon.png'))
+  check('PNG 图标签名/尺寸/颜色类型正确', [p16, p32, p180].every((p, i) =>
+    p.sig && p.w === [16, 32, 180][i] && p.h === [16, 32, 180][i] && p.bit === 8 && p.color === 6),
+    `16=${p16.w} 32=${p32.w} 180=${p180.w}`)
+  check('PNG 图标不是空文件', p16.bytes > 200 && p32.bytes > 200 && p180.bytes > 1000,
+    `${p16.bytes}/${p32.bytes}/${p180.bytes}`)
+  // ICO: header + 3 个 PNG 编码的 16/32/48 图层
+  const ico = readFileSync(join('public', 'favicon.ico'))
+  const count = ico.readUInt16LE(4)
+  const sizes = []
+  let icoOK = ico.readUInt16LE(0) === 0 && ico.readUInt16LE(2) === 1 && count === 3
+  for (let i = 0; i < count; i++) {
+    const e = 6 + i * 16
+    const w = ico[e] === 0 ? 256 : ico[e]
+    sizes.push(w)
+    const len = ico.readUInt32LE(e + 8)
+    const off = ico.readUInt32LE(e + 12)
+    if (ico.subarray(off, off + 8).toString('hex') !== '89504e470d0a1a0a') icoOK = false
+    if (off + len > ico.length) icoOK = false
+  }
+  check('ICO 容器合法 (3 个 PNG 图层)', icoOK, sizes.join(','))
+  check('ICO 包含 16/32/48 三种尺寸', sizes.join(',') === '16,32,48', sizes.join(','))
+  const html = readFileSync('index.html', 'utf8')
+  check('index.html 已引用 SVG/ICO/苹果图标', /rel="icon"[^>]*favicon\.svg/.test(html) &&
+    /rel="icon"[^>]*favicon\.ico|href="\/favicon.ico"/.test(html) && /apple-touch-icon/.test(html) && /theme-color/.test(html))
 }
 
 /* 汇总 */
