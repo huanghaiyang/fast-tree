@@ -55,11 +55,23 @@ setTimeout(async () => {
     const info2 = state.lodInfo || []
     const l0 = info2.find((x) => x.level === 0)
     const l2 = info2.find((x) => x.level === 2)
+    const lod2 = scene.lodCache.get(2)
+    const samePos = (a, b) => {
+      const pa = a && a.attributes && a.attributes.position && a.attributes.position.array
+      const pb = b && b.attributes && b.attributes.position && b.attributes.position.array
+      return !!pa && !!pb && pa.length === pb.length && pa.every((v, i) => v === pb[i])
+    }
     check('LOD2 面数 < LOD0', !!l2 && !!l0 && l2.triangles < l0.triangles, `${l2 && l2.triangles} < ${l0 && l0.triangles}`)
-    check('LOD2 面数 ≤ LOD0 的 35% (远景真正省面)', !!l2 && !!l0 && l2.triangles <= l0.triangles * 0.35, `${l2 && l2.triangles}`)
+    check('LOD2 面数明显下降 (≤ LOD0 的 90%)', !!l2 && !!l0 && l2.triangles <= l0.triangles * 0.9, `${l2 && l2.triangles}`)
     check('LOD2 叶片数 < LOD0', !!l2 && !!l0 && l2.leaves < l0.leaves, `${l2 && l2.leaves} < ${l0 && l0.leaves}`)
-    check('LOD2 不再生成花朵几何', !scene.lodCache.get(2).flowerMesh)
-    check('低模可见 / 高模隐藏', scene.lodCache.get(2).barkMesh.visible === true && scene.barkMesh.visible === false)
+    check('LOD2 树干/树枝几何与全模完全一致 (不再换树)', samePos(lod2 && lod2.barkMesh && lod2.barkMesh.geometry, scene.barkMesh.geometry))
+    check('LOD2 花朵几何与全模一致', (() => {
+      const a = lod2 && lod2.flowerMesh ? lod2.flowerMesh.geometry : null
+      const b = scene.flowerMesh ? scene.flowerMesh.geometry : null
+      if (!a || !b) return !a && !b
+      return samePos(a, b)
+    })())
+    check('低模可见 / 高模隐藏', lod2.barkMesh.visible === true && scene.barkMesh.visible === false)
 
     // 中间距离 -> LOD1
     const mid = scene.treeHeight * (state.params.lod.distance1 + 0.35)
@@ -74,6 +86,7 @@ setTimeout(async () => {
     check('LOD1 面数 < LOD0', !!m1 && !!m0 && m1.triangles < m0.triangles, `${m1 && m1.triangles} < ${m0 && m0.triangles}`)
     check('LOD2 面数 < LOD1', !!m2 && !!m1 && m2.triangles < m1.triangles, `${m2 && m2.triangles} < ${m1 && m1.triangles}`)
     check('LOD1 叶片数 < LOD0', !!m1 && !!m0 && m1.leaves < m0.leaves, `${m1 && m1.leaves} < ${m0 && m0.leaves}`)
+    check('LOD1 树干/树枝几何与全模完全一致', samePos(scene.lodCache.get(1).barkMesh.geometry, scene.barkMesh.geometry))
 
     // 拉近 -> LOD0
     scene.camera.position.set(cx + 2.5, cy + 1.5, cz + 2.5)

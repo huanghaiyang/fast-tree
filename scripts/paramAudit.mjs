@@ -213,8 +213,6 @@ export const STORE_LEVEL = {
   'lod.distance2': 'sceneManager.updateLod 的 LOD1->LOD2 切换距离 (×树高)',
   'lod.keep1': '仅用于按需生成 LOD1 几何 (叶片保留比例)',
   'lod.keep2': '仅用于按需生成 LOD2 几何 (叶片保留比例)',
-  'lod.detail1': '仅用于按需生成 LOD1 几何 (树皮分段倍率)',
-  'lod.detail2': '仅用于按需生成 LOD2 几何 (树皮分段倍率)',
   'lod.force': '调试/截图时强制指定 LOD 档位, 由 sceneManager 消费',
 }
 

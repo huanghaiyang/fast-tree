@@ -89,7 +89,7 @@
       <p class="muted" style="margin: 0">
         当前 <b>L{{ state.lodLevel }}</b>
         <span v-for="e in state.lodInfo" :key="e.level"> · L{{ e.level }} {{ e.triangles.toLocaleString() }} 面</span>
-        <br />LOD1/2 首次需要时才构建并缓存; 选中高亮/线框模式会自动回到 LOD0。
+        <br />LOD1/2 首次需要时才构建并缓存；远景只抽稀叶片，树干/树枝/果实/花朵与全模完全一致；选中高亮/线框模式会自动回到 LOD0。
       </p>
     </template>
   </Section>

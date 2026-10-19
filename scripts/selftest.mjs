@@ -1278,7 +1278,22 @@ console.log('\n[24b] 动态 LOD 叶片抽样')
   const fullC = mkNoAo(1)
   const lowC = mkNoAo(0.35)
   check('关闭 AO 后叶片抽稀不改变树皮顶点色', fullC.barkGeometry.attributes.color.array.every((v, i) => v === lowC.barkGeometry.attributes.color.array[i]))
-  check('LOD 参数齐全 (动态距离/保留比例)', ['dynamic', 'distance1', 'distance2', 'keep1', 'keep2', 'detail1', 'detail2', 'force']
+  // 花朵与叶片共用位置采样: 抽稀后花朵几何也必须完全一致
+  const mkFlower = (ratio) => {
+    const p = normalizeParams(applyPreset(defaultParams(), 'oak', 'mature', 'summer'))
+    p.flower.enabled = true
+    p.flower.count = 8
+    p.lod.leafRatio = ratio
+    return buildTree(p)
+  }
+  const fullF = mkFlower(1)
+  const lowF = mkFlower(0.35)
+  const sameFlower = fullF.flowerGeometry && lowF.flowerGeometry &&
+    fullF.flowerGeometry.attributes.position.array.length === lowF.flowerGeometry.attributes.position.array.length &&
+    fullF.flowerGeometry.attributes.position.array.every((v, i) => v === lowF.flowerGeometry.attributes.position.array[i])
+  check('LOD 叶片抽稀不改变花朵几何/数量', sameFlower && fullF.stats.flowerTriangles === lowF.stats.flowerTriangles,
+    `${fullF.stats.flowerTriangles} / ${lowF.stats.flowerTriangles}`)
+  check('LOD 参数齐全 (动态距离/保留比例)', ['dynamic', 'distance1', 'distance2', 'keep1', 'keep2', 'force']
     .every((k) => Object.prototype.hasOwnProperty.call(defaultParams().lod, k)))
 }
 

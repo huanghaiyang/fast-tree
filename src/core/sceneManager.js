@@ -391,35 +391,12 @@ export class TreeScene {
     if (!base || !base.lod || !this.treeGroup) return null
     const cfg = base.lod
     const keep = level === 1 ? (cfg.keep1 === undefined ? 0.3 : cfg.keep1) : (cfg.keep2 === undefined ? 0.08 : cfg.keep2)
-    const detail = level === 1 ? (cfg.detail1 === undefined ? 0.6 : cfg.detail1) : (cfg.detail2 === undefined ? 0.3 : cfg.detail2)
-    const segScale = level === 1 ? 0.7 : 0.45
     const p = cloneParams(base)
+    // 远景 LOD 只抽稀叶片: 树干/树枝/果实/花朵的几何必须与 LOD0 完全一致,
+    // 否则相机拉远时会看到"换了一棵树"(枝条/分叉/果实形状全变了)。
+    // 叶片抽稀是确定性等间隔抽样, 保留下来的叶片位置与全模一致。
     p.lod.leafRatio = Math.max(0.002, Math.min(1, (base.lod.leafRatio || 1) * Math.max(0.01, keep)))
     p.lod.maxLeaves = Math.max(40, Math.round((base.lod.maxLeaves || 60000) * Math.max(0.01, keep)))
-    p.lod.barkDetail = Math.max(0.2, (base.lod.barkDetail || 1) * Math.max(0.15, detail))
-    // SpeedTree 远景会略微放大叶片, 用更少的卡片维持树冠轮廓
-    p.leaves.size = (base.leaves.size || 0.42) * (level === 1 ? 1.08 : 1.22)
-    // 同时降低纵向分段数与叶片细分: 只降周向分段的话, 树皮面数降不下来
-    p.trunk.segments = Math.max(4, Math.round((base.trunk.segments || 14) * segScale))
-    if (Array.isArray(p.branches.level)) {
-      for (const b of p.branches.level) {
-        if (b && Number.isFinite(b.segments)) b.segments = Math.max(4, Math.round(b.segments * segScale))
-      }
-    }
-    if (p.leaves && Number.isFinite(p.leaves.segments)) {
-      p.leaves.segments = Math.min(p.leaves.segments, level === 1 ? 3 : 2)
-    }
-    if (level === 2) p.flower.enabled = false
-    // 果实/橡果在小枝上往往贡献大量面数 (每个果实的车削面), 远景必须一起降级
-    if (p.fruit && p.fruit.enabled) {
-      if (level === 2) {
-        p.fruit.enabled = false
-      } else {
-        p.fruit.maxCount = Math.max(0, Math.round((base.fruit.maxCount || 0) * 0.4))
-        p.fruit.chance = Math.max(0, (base.fruit.chance === undefined ? 0.5 : base.fruit.chance) * 0.6)
-        if (Number.isFinite(p.fruit.radial)) p.fruit.radial = Math.min(p.fruit.radial, 6)
-      }
-    }
     let r
     try {
       r = buildTree(p)
