@@ -96,7 +96,7 @@ const r = state.params.roots
 const f = state.params.trunk.fork
 const junctionModes = [
   { value: 'none', label: '不处理（基础管状相交）' },
-  { value: 'extrude', label: '挤出式一体建模（分支从表面挤出）' },
+  { value: 'extrude', label: '挤出式一体建模（表面贴合，不加大领口）' },
   { value: 'collar', label: '视觉遮挡（加大领口，非并集）' },
   { value: 'csg', label: '布尔并集（CSG，消除内部重叠）' },
   { value: 'implicit', label: '隐式平滑重建（CSG + 平滑，实验性）' },

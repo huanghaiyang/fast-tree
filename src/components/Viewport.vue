@@ -26,6 +26,10 @@
       左键旋转 (可转到地下从下往上看) · 右键平移 · 滚轮缩放 · N 节点面板 · W 线框
     </div>
 
+    <div class="overlay growth-quick">
+      <button class="btn small" @click="playGrowth">🌱 从 0 播放生长</button>
+    </div>
+
     <WindCompass />
 
     <!-- 扭曲句柄叠层 (树干/树枝扭转曲线) -->
@@ -73,6 +77,12 @@ const activeLodTriangles = computed(() => {
 
 function clearSelection() {
   clearSelectionAction()
+}
+
+function playGrowth() {
+  state.params.growth.enabled = true
+  state.params.growth.value = 0
+  state.params.growth.auto = true
 }
 
 let scene = null

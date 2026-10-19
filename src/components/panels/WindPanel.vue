@@ -1,4 +1,14 @@
 <template>
+  <Section title="生长动画" hint="Growth">
+    <ToggleRow label="启用生长动画" v-model="g.enabled" />
+    <SliderRow label="生长进度" v-model="g.value" :min="0" :max="1" :step="0.001" />
+    <ToggleRow label="播放时自动生长" v-model="g.auto" />
+    <SliderRow label="生长速度" v-model="g.speed" :min="0.05" :max="2" :step="0.01" />
+    <div class="inline">
+      <button class="btn small" @click="playGrowth">▶ 从 0 播放生长</button>
+    </div>
+  </Section>
+
   <Section title="风场" hint="Wind">
     <ToggleRow label="启用风" v-model="w.enabled" />
     <ToggleRow label="自动风场 (由种子推导)" v-model="autoModel"
@@ -38,16 +48,6 @@
       ②绕固定水平轴 (垂直于风向) 的铰链式俯仰。全程没有绕垂直轴的自转,
       加上顺风偏置 (风只推不拉), 所以轨迹是来回的线段而不是圆圈。
     </p>
-  </Section>
-
-  <Section title="生长动画" hint="Growth" :default-collapsed="true">
-    <ToggleRow label="启用生长动画" v-model="g.enabled" />
-    <SliderRow label="生长进度" v-model="g.value" :min="0" :max="1" :step="0.001" />
-    <ToggleRow label="播放时自动生长" v-model="g.auto" />
-    <SliderRow label="生长速度" v-model="g.speed" :min="0.05" :max="2" :step="0.01" />
-    <div class="inline">
-      <button class="btn small" @click="playGrowth">▶ 从 0 播放生长</button>
-    </div>
   </Section>
 </template>
 

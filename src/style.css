@@ -303,6 +303,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 }
 .overlay.stats { right: 12px; bottom: 12px; min-width: 168px; }
 .overlay.help { left: 12px; bottom: 12px; color: var(--fg-dim); }
+.overlay.growth-quick { right: 12px; top: 12px; pointer-events: auto; padding: 6px; }
 .overlay.selection {
   left: 12px;
   top: 12px;

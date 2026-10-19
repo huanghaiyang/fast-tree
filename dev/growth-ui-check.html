@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>growth: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+let fail = 0
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+const check = (name, cond, detail = '') => {
+  if (!cond) fail++
+  line((cond ? '✔ ' : '✘ ') + name + (detail ? ' — ' + detail : ''))
+}
+async function waitFor(fn, timeout = 30000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { if (fn()) return true } catch { /* ignore */ }
+    await sleep(100)
+  }
+  return false
+}
+let win, doc
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    for (let i = 0; i < 150 && !win; i++) await sleep(100)
+    await waitFor(() => win.__fastTree && win.__fastTree.ready && win.__fastTreeScene, 30000)
+    const scene = win.__fastTreeScene
+    const state = win.__fastTree
+    await sleep(500)
+    const windTab = [...doc.querySelectorAll('.tab')].find((t) => (t.textContent || '').includes('风/生长'))
+    check('存在 风/生长 标签页', !!windTab)
+    windTab && windTab.click(); await sleep(350)
+
+    const sections = [...doc.querySelectorAll('.section')]
+    const growthSec = sections.find((s) => (s.querySelector('.section-head')?.textContent || '').includes('生长动画'))
+    check('存在「生长动画」区块', !!growthSec)
+    const growthBody = growthSec && growthSec.querySelector('.section-body')
+    check('生长动画区块默认展开 (不再藏在折叠里)', !!growthBody && growthBody.style.display !== 'none',
+      growthBody ? 'display=' + (growthBody.style.display || 'block') : '')
+    check('生长动画区块在风场前面/首屏可见', !!growthSec && !!growthBody &&
+      growthBody.getBoundingClientRect().top < 700, growthBody ? String(growthBody.getBoundingClientRect().top) : '')
+
+    const playBtn = [...doc.querySelectorAll('button')].find((b) => (b.textContent || '').includes('从 0 播放生长'))
+    check('存在「从 0 播放生长」按钮', !!playBtn)
+    const quickBtn = [...doc.querySelectorAll('.overlay.growth-quick button')].find((b) => (b.textContent || '').includes('播放生长'))
+    check('视口存在生长快捷按钮', !!quickBtn)
+
+    // 手动进度: 设置进度后 scene uniform 必须同步
+    state.params.growth.enabled = true
+    state.params.growth.auto = false
+    state.params.growth.value = 0.15
+    await sleep(250)
+    const u0 = scene.uniforms.uGrowth.value
+    const enabled0 = scene.uniforms.uGrowthEnabled.value
+    const url0 = scene.renderer.domElement.toDataURL()
+    state.params.growth.value = 0.9
+    await sleep(250)
+    const u1 = scene.uniforms.uGrowth.value
+    const url1 = scene.renderer.domElement.toDataURL()
+    check('生长进度同步到 shader uniform', Math.abs(u0 - 0.15) < 1e-3 && Math.abs(u1 - 0.9) < 1e-3, `${u0} -> ${u1}`)
+    check('生长进度变化会改变视口画面', url0 !== url1)
+    check('进度 < 1 时 shader 生长开关打开', enabled0 === 1, String(enabled0))
+
+    // 自动生长: 把进度归零开自动, 应该自己往前推进
+    state.params.growth.value = 0
+    state.params.growth.auto = true
+    await sleep(1200)
+    check('自动生长会推进进度', state.params.growth.value > 0.01 && state.params.growth.value < 1,
+      String(state.params.growth.value))
+    check('自动生长同步到 shader', Math.abs(scene.uniforms.uGrowth.value - state.params.growth.value) < 1e-3,
+      `${scene.uniforms.uGrowth.value} vs ${state.params.growth.value}`)
+
+    // 快捷按钮: 归零并开启自动
+    state.params.growth.value = 0.7
+    state.params.growth.auto = false
+    await sleep(100)
+    quickBtn && quickBtn.click()
+    await sleep(200)
+    check('视口快捷按钮会从 0 重新播放', state.params.growth.value < 0.2 && state.params.growth.auto === true,
+      `value=${state.params.growth.value} auto=${state.params.growth.auto}`)
+
+    line('\n结果: ' + (fail ? 'GROWTH-FAIL ' + fail : 'GROWTH-OK'))
+    document.title = (fail ? 'GROWTH-FAIL(' + fail + ')' : 'GROWTH-OK') + ' :: ' +
+      R.filter((s) => s.startsWith('✘')).slice(0, 6).join(' | ')
+  } catch (e) {
+    document.title = 'GROWTH-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 900)
+    line('EX: ' + (e && e.stack ? e.stack : e))
+  }
+}, 2200)
+</script></body></html>
