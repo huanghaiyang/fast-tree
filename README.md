@@ -122,7 +122,7 @@ LOD：树皮细节倍率、叶片保留比例、叶片数上限。
 - **树叶**：色调、顶点色混合、粗糙度、金属度、**自发光强度**、Alpha 裁剪、**透光度(背光)**、双面渲染，
   **可上传带 alpha 的叶片贴图与法线贴图**；
   **双面叶片**：正面/背面可分别设置颜色与贴图（背面贴图支持 alpha，留空则沿用正面贴图仅换颜色），
-  片元用 `gl_FrontFacing` 切换正/背面贴图与颜色，开启后自动双面渲染；背面不参与正面季节顶点色染色
+  背面贴图可直接从**内置叶片贴图库**按批次/叶形选择缩略图，也可上传自定义图；片元用 `gl_FrontFacing` 切换正/背面贴图与颜色，开启后自动双面渲染；背面不参与正面季节顶点色染色
 - **自定义 GLSL**：面板里直接写顶点/片元片段，注入到标准 PBR 材质中：
   - 顶点：`transformed / position / normal / uv / uTime / uSeed / aWind / aPhase / aOrigin / aGrow`
   - 片元：`diffuseColor / vTreeUv / vColor(需 .rgb) / uTime / uSeed / uTint`
@@ -447,7 +447,7 @@ node scripts/shot-receiver.mjs        # 监听 127.0.0.1:5274, 把页面回传�
 - `dev/leaf-shapes-check.html` —— 叶形白模预览自检: 9 种叶形共用 1 个 WebGL canvas，每格都有实际像素白模，拖拽格子可多视角旋转且不误切换叶形，点击格子可切换当前叶形并正确高亮
 - `dev/triangle-stats-check.html` —— 面数显示准确性自检: 开满花时「全模三角面」包含花朵，LOD0/1/2 的「当前面数」与实际可见模型几何、lodInfo 逐项一致，切换 LOD 时全模面数保持不变
 - `dev/double-sided-leaf-check.html` —— 双面叶片材质自检: 用真实 `createLeafMaterial` 渲染平面，正面白贴图/背面蓝贴图、只换背面颜色、关闭恢复等场景逐像素验证，并确认 shader 注入 `gl_FrontFacing`
-- `dev/double-sided-ui-check.html` —— 双面叶片 UI 自检: 真实点击「材质 → 树叶材质 → 双面独立颜色/贴图」开关，验证参数、`uBackEnabled`、DoubleSide、背面贴图绑定、背面颜色 uniform、shader 编译无错误
+- `dev/double-sided-ui-check.html` —— 双面叶片 UI 自检: 真实点击「材质 → 树叶材质 → 双面独立颜色/贴图」开关，验证参数、`uBackEnabled`、DoubleSide、背面贴图库选择/跟随正面、背面贴图绑定、背面颜色 uniform、shader 编译无错误
 - `dev/environments-check.html` —— 环境预设自检: 9 种环境的背景/太阳/环境光/地面/曝光/雾/星空逐项校验 + 真实点击「场景 → 环境预设」按钮；群星星空跟随相机、切环境不重建树几何
 - `dev/export-split-check.html` —— 导出节点拆分自检: 视口场景与真实导出的 GLB/OBJ 中，树干、树枝各层、根、果实、树叶是否都是独立节点/mesh，且面数守恒；「合并树干与树枝 mesh」开关打开后是否只剩单棵 `Bark` 节点、关闭后恢复拆分
 - `dev/export-format-check.html` —— 导出数据格式自检: GLB 按 glTF 2.0 规范校验容器/accessor/min-max/贴图/节点并用官方 GLTFLoader 回读, OBJ 按 Wavefront 文法校验并用 OBJLoader 回读, PNG 校验签名/IHDR/CRC/IDAT/行滤波并确认非空帧, 参数 JSON 校验结构完整性与导入回环, 以及"特效全开时的富场景导出"

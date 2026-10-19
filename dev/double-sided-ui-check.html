@@ -68,6 +68,26 @@ setTimeout(async () => {
     check('UI 出现背面颜色/贴图控件', [...doc.querySelectorAll('.section label')].some((l) => (l.textContent || '').includes('背面颜色')) &&
       [...doc.querySelectorAll('.section label')].some((l) => (l.textContent || '').includes('背面贴图')))
 
+    // 从背面贴图库选一张 (不应改变正面贴图)
+    const backCard = doc.querySelector('.back-card')
+    check('背面贴图库有可选贴图', !!backCard)
+    const frontTexBefore = state.params.leafMat.texture
+    if (backCard) {
+      backCard.click()
+      await waitFor(() => !!state.params.leafMat.backTexture, 5000)
+      check('点击背面贴图库已选入 backTexture', !!state.params.leafMat.backTexture, state.params.leafMat.backTexture.slice(0, 32))
+      check('选背面贴图不影响正面贴图', state.params.leafMat.texture === frontTexBefore)
+      await waitFor(() => uniforms.uHasBackMap.value === 1, 5000)
+    }
+    // 跟随正面
+    const follow = doc.querySelector('.back-follow')
+    check('存在「跟随正面贴图」选项', !!follow)
+    if (follow) {
+      follow.click()
+      await waitFor(() => state.params.leafMat.backTexture === '', 3000)
+      check('跟随正面后 backTexture 清空', state.params.leafMat.backTexture === '')
+    }
+
     // 设置背面贴图 + 光照无关的验证: uniform 绑定 & 图片加载
     const url = solidDataURL('#33aaff')
     state.params.leafMat.backTexture = url

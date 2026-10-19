@@ -78,8 +78,33 @@
       hint="开启后自动双面渲染: 正面用现有叶色/贴图, 背面用下面的独立颜色和贴图" />
     <template v-if="lm.backEnabled">
       <ColorRow label="背面颜色" v-model="lm.backColor" />
+      <div class="pick-label">背面贴图库 (点击选择)</div>
+      <div class="chips">
+        <button class="chip nowrap back-follow" :class="{ active: !lm.backTexture }" @click="lm.backTexture = ''">
+          跟随正面贴图
+        </button>
+      </div>
+      <div class="chips">
+        <span class="muted">批次</span>
+        <button v-for="bt in batches" :key="'back-' + bt" class="chip"
+          :class="{ active: backBatch === bt }"
+          @click="backBatch = bt; backRow = leafCardRows(bt)[0]">{{ batchLabel(bt) }}</button>
+      </div>
+      <div class="chips">
+        <span class="muted">叶形</span>
+        <button v-for="r in leafCardRows(backBatch)" :key="'backrow-' + r" class="chip"
+          :class="{ active: backRow === r }" @click="backRow = r">#{{ r }}</button>
+      </div>
+      <div class="chips">
+        <button v-for="cd in backCards" :key="'backcard-' + cd.id" class="chip dot back-card"
+          :class="{ active: lm.backTexture === cd.url }" :data-url="cd.url" :title="cd.id"
+          @click="useBackCard(cd)">
+          <img :src="cd.url" alt="" @error="onThumbError(e)" />
+        </button>
+        <button class="btn small" title="随机一张背面贴图" @click="randomBackCard">🎲</button>
+      </div>
       <TextureRow label="背面贴图 (含 alpha)" v-model="lm.backTexture"
-        hint="留空 = 沿用正面贴图, 只应用背面颜色; 上传后可给背面完全不同的图案" />
+        hint="也可以直接从上面的贴图库选择; 留空 = 沿用正面贴图, 只应用背面颜色" />
       <p class="muted" style="margin: 0">
         背面颜色会与背面贴图相乘；背面不参与正面的季节顶点色染色。
       </p>
@@ -335,6 +360,19 @@ const total = LEAF_CARDS.length
 const batch = ref('batch1')
 const row = ref(1)
 const col = ref(1)
+// 背面贴图选择独立于正面: 自己的批次/叶形行, 不改变正面贴图或当前叶形
+const backBatch = ref('batch1')
+const backRow = ref(1)
+const backCards = computed(() => alive(leafCardsFor(backBatch.value, backRow.value)))
+function useBackCard(card) {
+  if (!card) return
+  lm.backTexture = card.url
+}
+function randomBackCard() {
+  const pool = backCards.value.length ? backCards.value : alive(LEAF_CARDS)
+  const card = pool[Math.floor(Math.random() * pool.length)]
+  if (card) lm.backTexture = card.url
+}
 const cardsOfShape = computed(() => leafCardsFor(batch.value, row.value))
 const variantCards = computed(() => alive(cardsOfShape.value))
 const current = computed(() => cardsOfShape.value[Math.min(col.value - 1, cardsOfShape.value.length - 1)] || cardsOfShape.value[0] || LEAF_CARDS[0])
