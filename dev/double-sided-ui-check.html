@@ -68,9 +68,14 @@ setTimeout(async () => {
     check('UI 出现背面颜色/贴图控件', [...doc.querySelectorAll('.section label')].some((l) => (l.textContent || '').includes('背面颜色')) &&
       [...doc.querySelectorAll('.section label')].some((l) => (l.textContent || '').includes('背面贴图')))
 
-    // 从背面贴图库选一张 (不应改变正面贴图)
+    // 从背面贴图库选一张 (不应改变正面贴图); 先等 HEAD 探测/图片加载完成
+    await waitFor(() => !!doc.querySelector('.back-card'), 8000)
     const backCard = doc.querySelector('.back-card')
     check('背面贴图库有可选贴图', !!backCard)
+    const backImgs = [...doc.querySelectorAll('.back-card img')]
+    await waitFor(() => backImgs.length > 0 && backImgs.every((img) => img.complete && img.naturalWidth > 0), 8000)
+    check('背面贴图库已过滤不存在的贴图 (无 404 空图标)', backImgs.length > 0 &&
+      backImgs.every((img) => img.complete && img.naturalWidth > 0), 'thumbs=' + backImgs.length)
     const frontTexBefore = state.params.leafMat.texture
     if (backCard) {
       backCard.click()

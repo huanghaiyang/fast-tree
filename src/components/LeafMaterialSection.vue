@@ -54,6 +54,7 @@
           <img :src="cd.url" alt="" @error="onThumbError(e)" />
         </button>
         <button class="btn small" title="随机一张背面贴图" @click="randomBackCard">🎲</button>
+        <span v-if="!backCards.length" class="muted">正在检测可用贴图…</span>
       </div>
       <TextureRow label="背面贴图 (含 alpha)" v-model="lm.backTexture"
         hint="也可以直接从上面的贴图库选择; 留空 = 沿用正面贴图, 只应用背面颜色" />
@@ -63,21 +64,46 @@
     </template>
     <TextureRow label="自定义叶片贴图 (含 alpha)" v-model="lm.texture" />
     <TextureRow label="自定义法线贴图" v-model="lm.normalTexture" />
+    <div class="pad-row">
+      <div class="pad-box">
+        <div class="pick-label">贴图偏移（二维拖动）</div>
+        <TexturePad v-model="texOffset" :min="-1" :max="1" />
+        <button class="btn small" style="margin-top: 6px" @click="resetTexture">↺ 一键复位贴图</button>
+      </div>
+      <div class="pad-side">
+        <SliderRow label="叶片贴图横向平铺" v-model="lm.textureRepeatU" :min="0.1" :max="8" :step="0.05" />
+        <SliderRow label="叶片贴图纵向平铺" v-model="lm.textureRepeatV" :min="0.1" :max="8" :step="0.05" />
+        <SliderRow label="叶片贴图旋转" v-model="lm.textureRotation" :min="-3.14" :max="3.14" :step="0.02" />
+      </div>
+    </div>
   </Section>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import Section from './ui/Section.vue'
 import ColorRow from './ui/ColorRow.vue'
 import SelectRow from './ui/SelectRow.vue'
 import SliderRow from './ui/SliderRow.vue'
 import ToggleRow from './ui/ToggleRow.vue'
 import TextureRow from './ui/TextureRow.vue'
+import TexturePad from './ui/TexturePad.vue'
 import { state } from '../store/treeStore.js'
 import { LEAF_CARDS, LEAF_CARD_BATCHES, LEAF_CARD_BATCH_NAMES, leafCardsFor, leafCardRows } from '../core/leafCards.generated.js'
 
 const lm = state.params.leafMat
+// 二维偏移手柄 <-> leafMat.textureU / textureV
+const texOffset = computed({
+  get: () => [lm.textureU || 0, lm.textureV || 0],
+  set: (v) => { lm.textureU = v[0]; lm.textureV = v[1] },
+})
+function resetTexture() {
+  lm.textureU = 0
+  lm.textureV = 0
+  lm.textureRepeatU = 1
+  lm.textureRepeatV = 1
+  lm.textureRotation = 0
+}
 const tintOptions = [
   { value: 'texture', label: '原色 (贴图不变色)' },
   { value: 'season', label: '跟随季节叶色' },
@@ -86,6 +112,23 @@ const tintOptions = [
 
 /* ---------------- 背面贴图库 ---------------- */
 const missing = ref({})
+const exists = ref({})
+async function probe(urls) {
+  const todo = urls.filter((x) => exists.value[x] === undefined && missing.value[x] !== true)
+  if (!todo.length) return
+  await Promise.all(todo.map(async (url) => {
+    try {
+      const r = await fetch(url, { method: 'HEAD' })
+      // dev server 对缺失文件会 SPA 回退成 200 + index.html -> 必须校验 content-type
+      const ct = (r.headers.get('content-type') || '').toLowerCase()
+      const ok = r.ok && ct.startsWith('image/')
+      if (ok) exists.value = { ...exists.value, [url]: true }
+      else missing.value = { ...missing.value, [url]: true }
+    } catch {
+      missing.value = { ...missing.value, [url]: true }
+    }
+  }))
+}
 function onThumbError(e) {
   const img = e && e.target
   if (!img) return
@@ -94,18 +137,21 @@ function onThumbError(e) {
   const btn = img.parentElement
   if (btn) btn.style.display = 'none'
 }
-const alive = (list) => (list || []).filter((x) => !missing.value[x.url])
 const batches = Object.keys(LEAF_CARD_BATCHES)
 const batchLabel = (bt) => LEAF_CARD_BATCH_NAMES[bt] || bt
 const backBatch = ref('batch1')
 const backRow = ref(1)
-const backCards = computed(() => alive(leafCardsFor(backBatch.value, backRow.value)))
+const backUrlList = computed(() => leafCardsFor(backBatch.value, backRow.value).map((c) => c.url))
+// 只显示 HEAD 探测确认存在的贴图; 不再把 404 的空图标放进贴图库
+const backCards = computed(() => leafCardsFor(backBatch.value, backRow.value)
+  .filter((c) => exists.value[c.url] === true && missing.value[c.url] !== true))
+watch(backUrlList, (urls) => probe(urls), { immediate: true })
 function useBackCard(card) {
   if (!card) return
   lm.backTexture = card.url
 }
 function randomBackCard() {
-  const pool = backCards.value.length ? backCards.value : alive(LEAF_CARDS)
+  const pool = backCards.value.length ? backCards.value : LEAF_CARDS.filter((c) => exists.value[c.url] === true)
   const card = pool[Math.floor(Math.random() * pool.length)]
   if (card) lm.backTexture = card.url
 }
@@ -121,4 +167,7 @@ function randomBackCard() {
 .chip.dot img { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .chips .chip { white-space: nowrap; }
+.pad-row { display: flex; gap: 12px; align-items: flex-start; margin: 6px 0; }
+.pad-box { width: 132px; flex: 0 0 auto; }
+.pad-side { flex: 1; min-width: 0; }
 </style>

@@ -13,6 +13,7 @@ import { buildParticlePoints, updateParticleMaterial } from './particles.js'
 import { buildFallingLeaves, updateFallingLeaves, fallRebuildKey } from './fallingLeaves.js'
 import { buildLeafLitter, litterRebuildKey } from './litter.js'
 import { generateImpostor } from './impostor.js'
+import { buildFrustumChunks, hideSourceMesh } from './renderChunks.js'
 import { boxInfo } from './mathUtils.js'
 import { cloneParams } from './params.js'
 import { makeRng } from './rng.js'
@@ -152,6 +153,8 @@ export class TreeScene {
     this.barkMesh = null
     this.leafMesh = null
     this.flowerMesh = null
+    // 视锥分块: 只用于 LOD0 渲染; 源网格保留给导出/统计/粒子采样
+    this._cullChunks = []
     // 动态 LOD: LOD0 = 上面的主网格; LOD1/2 首次需要时才构建并缓存
     this.lastParams = null
     this.lodCache = new Map()
@@ -252,6 +255,9 @@ export class TreeScene {
     if (this.barkMesh) this.barkMesh.material = mats.bark
     if (this.leafMesh) this.leafMesh.material = mats.leaf
     if (this.flowerMesh) this.flowerMesh.material = mats.flower || mats.leaf
+    for (const c of this._cullChunks) {
+      c.mesh.material = c.kind === 'bark' ? mats.bark : c.kind === 'leaf' ? mats.leaf : (mats.flower || mats.leaf)
+    }
   }
 
   rebindCustomShader(params) {
@@ -278,6 +284,7 @@ export class TreeScene {
     const t = performance.now()
     this.lastParams = params
     this._disposeLods()
+    this._disposeCullChunks()
     this.lodLevel = 0
     const result = buildTree(params)
     this.ensureMaterials(params)
@@ -321,6 +328,9 @@ export class TreeScene {
       this.flowerMesh.name = 'Flowers'
       this.treeGroup.add(this.flowerMesh)
     }
+    // 把合并几何切成空间块: 每块独立包围球, 相机视锥外的块由 Three 自动剔除。
+    // 源网格仍在 treeGroup 中 (隐藏于默认相机层), 供导出/统计/粒子采样/LOD/线框复用。
+    this._buildCullChunks()
     this.applyShadowFlags()
     // 叶片粒子发射 (从叶片位置采样发射点)
     this.rebuildParticles(params)
@@ -356,6 +366,52 @@ export class TreeScene {
     if (this.callbacks.onStats) this.callbacks.onStats(this.stats)
     if (this.callbacks.onModel) this.callbacks.onModel({ nodes: this.nodes, groups: this.groups })
     return this.stats
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 视锥分块渲染                                                        */
+  /* ------------------------------------------------------------------ */
+  _buildCullChunks() {
+    this._disposeCullChunks()
+    const add = (kind, mesh, material, shadow) => {
+      if (!mesh || !mesh.geometry) return
+      const chunks = buildFrustumChunks(mesh.geometry, material, {
+        name: mesh.name || kind,
+        grid: [2, 2, 2],
+        castShadow: shadow.castShadow,
+        receiveShadow: shadow.receiveShadow,
+      })
+      if (!chunks.length) return
+      for (const m of chunks) {
+        m.layers.enable(0)
+        this.treeGroup.add(m)
+        this._cullChunks.push({ kind, mesh: m })
+      }
+      // 源网格只保留给导出/统计/粒子/线框, 不参与默认相机层渲染
+      hideSourceMesh(mesh)
+    }
+    add('bark', this.barkMesh, this.materials.bark, { castShadow: true, receiveShadow: true })
+    add('leaf', this.leafMesh, this.materials.leaf, { castShadow: true, receiveShadow: false })
+    add('flower', this.flowerMesh, this.materials.flower || this.materials.leaf, { castShadow: true, receiveShadow: false })
+    this._syncCullChunks(0)
+  }
+
+  _disposeCullChunks() {
+    for (const c of this._cullChunks) {
+      this.treeGroup.remove(c.mesh)
+      c.mesh.geometry.dispose()
+    }
+    this._cullChunks = []
+  }
+
+  /** 源网格的逻辑可见性(visible)同步到分块; LOD0 才用分块渲染 */
+  _syncCullChunks(level = this.lodLevel) {
+    if (!this._cullChunks.length) return
+    const on = level === 0
+    for (const c of this._cullChunks) {
+      const src = c.kind === 'bark' ? this.barkMesh : c.kind === 'leaf' ? this.leafMesh : this.flowerMesh
+      c.mesh.visible = on && !!src && src.visible !== false
+    }
   }
 
   /* ------------------------------------------------------------------ */
@@ -456,6 +512,7 @@ export class TreeScene {
     if (this.barkMesh) this.barkMesh.visible = target === 0
     if (this.leafMesh) this.leafMesh.visible = target === 0
     if (this.flowerMesh) this.flowerMesh.visible = target === 0
+    this._syncCullChunks(target)
     for (const e of this.lodCache.values()) {
       const on = e.level === target
       if (e.barkMesh) e.barkMesh.visible = on
@@ -556,6 +613,7 @@ export class TreeScene {
     const on = !!this.shadowsEnabled && !isolate
     if (this.barkMesh) this.barkMesh.castShadow = on
     if (this.leafMesh) this.leafMesh.castShadow = on
+    for (const c of this._cullChunks) c.mesh.castShadow = on
     for (const e of this.lodCache.values()) {
       if (e.leafMesh) e.leafMesh.castShadow = on
       if (e.barkMesh) e.barkMesh.castShadow = on
@@ -720,11 +778,13 @@ export class TreeScene {
     if (solid) {
       this.barkMesh.material.wireframe = false
       if (this.leafMesh) this.leafMesh.material.wireframe = false
+      this._syncCullChunks(this.lodLevel)
       return
     }
     // overlay: 保留实体, 叠加线框; only: 只显示线框
     this.barkMesh.visible = m === 'overlay'
     if (this.leafMesh) this.leafMesh.visible = m === 'overlay'
+    this._syncCullChunks(this.lodLevel)
     const mk = (geo, color) => {
       const mat = new THREE.MeshBasicMaterial({
         color,
@@ -967,7 +1027,8 @@ export class TreeScene {
     if (this.leafMesh) box.expandByObject(this.leafMesh)
     if (box.isEmpty()) throw new Error('还没有可用的树')
     const bbox = { min: box.min, max: box.max }
-    const hide = [this.ground, this.grid, this.sky, this.particles, this.fallMesh, this.litterMesh, this.flowerMesh, this.flowerFallMesh, this.flowerLitterMesh, this._impostorGroup]
+    const hide = [this.ground, this.grid, this.sky, this.particles, this.fallMesh, this.litterMesh, this.flowerMesh, this.flowerFallMesh, this.flowerLitterMesh, this._impostorGroup,
+      ...this._cullChunks.filter((c) => c.kind === 'flower').map((c) => c.mesh)]
     return generateImpostor({
       renderer: this.renderer,
       scene: this.scene,
@@ -1190,6 +1251,7 @@ export class TreeScene {
     if (this.stars) this.stars.position.copy(this.camera.position)
     this.controls.update()
     this.updateLod()
+    this._syncCullChunks(this.lodLevel)
     this.renderer.render(this.scene, this.camera)
     if (this.callbacks.onFrame) this.callbacks.onFrame(this.renderer.info.render)
   }
@@ -1203,6 +1265,7 @@ export class TreeScene {
     this.barkMesh?.geometry.dispose()
     this.leafMesh?.geometry.dispose()
     this.flowerMesh?.geometry.dispose()
+    this._disposeCullChunks()
     if (this.selBox) {
       this.scene.remove(this.selBox)
       this.selBox.geometry.dispose()

@@ -1297,6 +1297,31 @@ console.log('\n[24b] 动态 LOD 叶片抽样')
     .every((k) => Object.prototype.hasOwnProperty.call(defaultParams().lod, k)))
 }
 
+/* 24c. 叶/花模型旋转 (贴图偏移导致叶梗/花梗反向时的模型校正) */
+console.log('\n[24c] 叶/花模型旋转')
+{
+  const baseP = normalizeParams(applyPreset(defaultParams(), 'oak', 'mature', 'summer'))
+  const base = buildTree(baseP)
+  const rotP = cloneParams(baseP)
+  rotP.leaves.modelRotation = 180
+  const rot = buildTree(rotP)
+  const sameBark = base.barkGeometry.attributes.position.array.every((v, i) => v === rot.barkGeometry.attributes.position.array[i])
+  const leafChanged = base.leafGeometry.attributes.position.array.some((v, i) => v !== rot.leafGeometry.attributes.position.array[i])
+  check('叶模型旋转改变叶片几何', leafChanged)
+  check('叶模型旋转不改变树干/树枝几何', sameBark)
+
+  const fP = cloneParams(baseP)
+  fP.flower.enabled = true
+  fP.flower.count = 8
+  const f0 = buildTree(fP)
+  const fP2 = cloneParams(fP)
+  fP2.flower.modelRotation = 90
+  const f1 = buildTree(fP2)
+  check('花朵模型旋转改变花朵几何', !!f0.flowerGeometry && !!f1.flowerGeometry &&
+    f0.flowerGeometry.attributes.position.array.some((v, i) => v !== f1.flowerGeometry.attributes.position.array[i]))
+  check('花朵模型旋转不改变树干/树枝几何', f0.barkGeometry.attributes.position.array.every((v, i) => v === f1.barkGeometry.attributes.position.array[i]))
+}
+
 /* 25. 环境预设 (天空/光照/雾/地面/星空) */
 console.log('\n[25] 环境预设')
 {

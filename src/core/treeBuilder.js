@@ -252,6 +252,12 @@ export function buildTree(params) {
         if (zA.lengthSq() < 1e-8) anyPerp(yA, zA)
         zA.normalize()
         const xA = new THREE.Vector3().crossVectors(yA, zA).normalize()
+        // 模型旋转: 绕叶面法线转整张叶片 (贴图偏移/叶柄方向反了时 ±180 校正)
+        const modelRot = (L.modelRotation || 0) * DEG
+        if (modelRot) {
+          xA.applyAxisAngle(zA, modelRot)
+          yA.applyAxisAngle(zA, modelRot)
+        }
 
         const size = Math.max(0.005, L.size * rng.vary(L.sizeVariance))
         // z 轴是叶片的"横向/离面"方向, 必须和宽度同尺度缩放,
@@ -795,6 +801,12 @@ export function buildTree(params) {
           const spin = (FL.twist || 0) + fRng.signed() * rollVar
           const bxRot = bx.clone().applyAxisAngle(byRot, spin)
           const bzRot = new THREE.Vector3().crossVectors(bxRot, byRot).normalize()
+          // 花朵模型旋转: 绕花面法线转整张花卡
+          const flowerModelRot = (FL.modelRotation || 0) * DEG
+          if (flowerModelRot) {
+            bxRot.applyAxisAngle(bzRot, flowerModelRot)
+            byRot.applyAxisAngle(bzRot, flowerModelRot)
+          }
           const v0 = flowerAcc.vertexCount
           pushLeafInstance(
             flowerAcc, tpl,

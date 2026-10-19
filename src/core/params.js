@@ -165,6 +165,7 @@ export function defaultParams() {
       rollVariance: 180,
       faceUp: 0.5,         // 叶面朝上程度 0..1
       twist: 0.25,         // 叶柄扭转
+      modelRotation: 0,    // 叶模型绕叶面法线旋转 (度); 贴图偏移导致叶柄反向时用 ±180 校正
       color: '#5da03a',
       colorTip: '#a6d45e',
       colorVariance: 0.22,
@@ -282,6 +283,7 @@ export function defaultParams() {
       rollVariance: 0.6,     // 朝向随机
       faceUp: true,          // 花朵尽量朝上
       twist: 0,
+      modelRotation: 0,      // 花朵模型绕花面法线旋转 (度); 贴图偏移导致花梗反方向时用 ±180 校正
       segments: 3,           // 程序化花形分段
       curl: 0.1,
       fold: 0.05,
@@ -370,6 +372,11 @@ export function defaultParams() {
       normalFromAlbedo: 0.8,
       normalScale: 1.0,           // 法线强度 (normalMap 缩放)
       texture: '',
+      textureU: 0,              // 叶片贴图横向偏移 (与花朵一致的 UV 偏移)
+      textureV: 0,              // 叶片贴图纵向偏移
+      textureRepeatU: 1,        // 叶片贴图横向平铺
+      textureRepeatV: 1,        // 叶片贴图纵向平铺
+      textureRotation: 0,       // 叶片贴图旋转 (弧度)
       normalTexture: '',
     },
 

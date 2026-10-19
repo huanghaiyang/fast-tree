@@ -125,6 +125,8 @@ LOD：树皮细节倍率、叶片保留比例、叶片数上限。
 - **树皮**：4 种程序化花纹（粗糙 / 白桦 / 松鳞 / 光滑）、花纹缩放与对比、双色渐变、色调 tint、粗糙度、金属度、法线强度、凹凸强度、顶点色混合、UV 横/纵向重复，**可上传自己的颜色贴图与法线贴图**
 - **树叶**：色调、顶点色混合、粗糙度、金属度、**自发光强度**、Alpha 裁剪、**透光度(背光)**、双面渲染，
   **可上传带 alpha 的叶片贴图与法线贴图**；
+  **贴图偏移**：树叶/花朵都支持二维拖动 U/V 偏移、横向/纵向平铺、贴图旋转，以及各自的一键复位；
+  **模型旋转**：树叶/花朵可绕自身法线旋转模型（±180° 可校正贴图偏移造成的叶梗/花梗反向）；
   **双面叶片**：正面/背面可分别设置颜色与贴图（背面贴图支持 alpha，留空则沿用正面贴图仅换颜色），
   背面贴图可直接从**内置叶片贴图库**按批次/叶形选择缩略图，也可上传自定义图；片元用 `gl_FrontFacing` 切换正/背面贴图与颜色，开启后自动双面渲染；背面不参与正面季节顶点色染色
 - **自定义 GLSL**：面板里直接写顶点/片元片段，注入到标准 PBR 材质中：
@@ -151,7 +153,7 @@ LOD：树皮细节倍率、叶片保留比例、叶片数上限。
   并可「仅显示它」
 - **选中提示条**：视口左上角显示当前选中（例如 `树枝 L2 · 35 个节点 · 高亮`）
 
-实现要点（不增加 draw call，仍然是 2 个）：
+实现要点（选择本身不增加 draw call；渲染分块见「渲染开销」）：
 
 1. 生成阶段给每个元素一个顺序 `slot`，顶点属性 `aNodeId` 写 slot；
 2. 生成结束后按"组"重排成最终 node id（**同组 id 连续**），并把顶点里的 slot 原地改写成 node id；
@@ -206,6 +208,8 @@ src/
 │  ├─ TwistGizmo.vue                  视口扭曲句柄叠层 (树干/树枝曲线拖拽编辑)
 │  ├─ LeafShapeGallery.vue            叶形白模预览 (单 WebGL canvas 分格渲染)
 │  ├─ LeafCardPicker.vue              内置叶片卡片库 (贴图卡片模式/批次/叶形/应用)
+│  ├─ LeafMaterialSection.vue         树叶材质 / 双面叶片 / 背面贴图库 / 贴图偏移
+│  ├─ LeafEffectsSections.vue         落叶堆积 / 落叶 / 叶片粒子发射
 │  ├─ NodeDock.vue                    右侧可收起的「模型节点」面板 (默认不展示)
 │  ├─ ParamTip.vue                    参数 hover 说明浮层 (事件委托 + 词典查表)
 │  ├─ WindCompass.vue                 视口风向指示器 (世界风向投影到相机地面基)
@@ -219,6 +223,7 @@ src/
    ├─ paramDocs.js     176 个面板标签的 hover 说明词典
    ├─ presets.js       7 个树种 + autoGenerate + autoWind
    ├─ mathUtils.js     属性布局 GeoAcc (含 aNodeId) / 骨架生长 / 帧插值
+   ├─ renderChunks.js  视锥分块: 叶/花/果实所在合并几何按空间切块, 相机外块自动剔除 (源几何不动)
    ├─ windModel.js     风场/叶片运动学的 JS 转录 (供自检做轨迹与方向验证)
    ├─ bark.js          管状树皮几何 (平行移动坐标系, 支持星形截面/节瘤/外扩)
    ├─ leaf.js          叶片模板 (5 种轮廓) + 实例化写入
@@ -235,7 +240,7 @@ src/
    ├─ appApi.js        浏览器侧命令执行器 + 本地桥客户端
    └─ sceneManager.js  渲染器/相机/灯光/天空/地面/动画循环/选中框/聚焦/相机基
 scripts/
-├─ selftest.mjs        248 项无浏览器自检 (含导出格式/节点拆分、AO、LOD、环境预设、扭曲曲线、站点图标、面数统计、双面叶片、模板卫生)
+├─ selftest.mjs        252 项无浏览器自检 (含导出格式/节点拆分、AO、LOD、模型旋转、环境预设、扭曲曲线、站点图标、面数统计、双面叶片、模板卫生)
 ├─ paramAudit.mjs      参数有效性审计核心 (几何/材质/风场三路签名比对)
 ├─ audit-params.mjs    npm run audit 入口
 ├─ app-bridge-server.mjs  本地应用桥 / MCP 服务器 / 大模型代理 (Key 只在服务端)
@@ -256,7 +261,9 @@ public/
 > 想改图标只需改 SVG 后重新导出 PNG/ICO。
 
 ### 渲染开销
-整棵树只合并成 **2 个几何体 = 2 个 draw call**（树皮 1 + 树叶 1）。
+整棵树源几何只合并成 **2 个几何体**（树皮含果实 + 树叶）。渲染时按空间切成视锥分块
+（默认 2×2×2，每块独立包围球）：相机窗口外的树皮/果实/树叶/花朵块由 Three.js 直接视锥剔除，
+不再提交渲染；源几何仍保留在内存里，导出、统计、粒子采样、LOD、线框全部继续使用源几何，**导出结果完全不受影响**。
 默认橡树约 190 根枝条 / 11.5k 叶片 / ~191k 三角面（含果实/花朵），构建耗时 20–80ms（AO 开启约 +30ms）；
 动态 LOD 远景只抽稀叶片：LOD1 ≈ 145k、LOD2 ≈ 128k 三角面，树干/树枝/果实/花朵几何与全模逐字节一致。
 视口右下角「**全模三角面**」= 树皮(含果实) + 树叶 + 花朵（统一由 `modelStats.js` 计算，不会漏掉花朵）；
@@ -273,12 +280,13 @@ Wind (Games)、Forces、Vertex Colors/AO、Level of Detail 与导出等章节，
 | 手册主题 | 当前实现 |
 | --- | --- |
 | **Level of Detail (动态 LOD)** | `lod.dynamic` 默认开启: LOD0 全模 → LOD1 → LOD2，按相机距离 × 树高切换并带滞回；LOD1/2 首次需要时才构建并缓存。**远景只做确定性叶片抽稀，树干/树枝/果实/花朵几何与全模完全一致**（不会出现"拉远后换了一棵树"）；面数从 191k 降到 LOD1≈145k / LOD2≈128k |
+| **视锥分块剔除** | LOD0 的树皮(含果实)/树叶/花朵按空间 2×2×2 分块，每块独立包围球；相机窗口外的块由 Three.js 自动剔除。源几何保留给导出/统计/粒子/LOD/线框，**GLB/OBJ 导出完全不受影响** |
 | **叶片抽稀不跳变** | `lod.leafRatio` 为**确定性等间隔抽样**（不是随机丢弃），LOD1/2 保留下来的叶片位置与全模完全一致，只少画叶子 → 距离切换时树形不抖 |
 | **Vertex Colors / Ambient Occlusion** | `ao.enabled/strength/radius`: 用叶片/花朵中心点云 + 空间哈希估算互相遮挡，按几何体自身 85 分位归一化后乘进 `COLOR_0`；按实例区间烘焙（叶片/花朵每张卡只查一次），默认树仅增加 ~30ms；导出 GLB 自带烘焙后的顶点色 |
 | **Wind (Games)** | 已有: 风向/强度/阵风/湍流/顺风偏置/相位空间尺度/树干摆幅/叶片扇动/铰链俯仰；顶点着色器实时计算，参数实时生效 |
 | **Growth / Seasons** | 已有: 生长进度/自动播放；树种 × 5 阶段 × 4 季节，物候只改颜色/密度不改形态 |
 | **Billboard / 伪装卡** | 已有: 多视角图集 + 交叉卡 + 俯仰层，可预览/导出 |
-| **导出结构** | GLB/OBJ 默认按节点拆分：`Bark_Trunk`、`Bark_Branch_L1..L5`、`Bark_Roots`、`Bark_Fruit`、`Leaves`、`Flowers` 各自独立 mesh/node（渲染内部仍合并成 2 个 draw call）；导出面板「合并树干与树枝 mesh」开关可切回单棵 `Bark` mesh |
+| **导出结构** | GLB/OBJ 默认按节点拆分：`Bark_Trunk`、`Bark_Branch_L1..L5`、`Bark_Roots`、`Bark_Fruit`、`Leaves`、`Flowers` 各自独立 mesh/node（视口用视锥分块渲染，导出仍用完整源几何）；导出面板「合并树干与树枝 mesh」开关可切回单棵 `Bark` mesh |
 | 尚未实现（后续可做） | Rules 程序化规则、Forces/Zones 物体、Frond/Cap 生成器、Collision 导出、Lightmap UV(UV2)、.spm/Unity 原生格式 |
 
 **已知取舍**：LOD 只影响视口渲染，GLB/OBJ 导出的是 LOD0 全模（游戏引擎通常按 LOD 分文件导出）；
@@ -400,7 +408,7 @@ npm run chat:check   # 对话链路自检 (需要 Key + 网络)
 ## 自检与诊断
 
 ```bash
-npm run selftest     # 248 项断言
+npm run selftest     # 252 项断言
 npm run audit        # 参数有效性审计 (改了就一定变)
 ```
 
@@ -413,7 +421,7 @@ npm run audit        # 参数有效性审计 (改了就一定变)
 并以"旧版整片自转"公式作对照，证明指标能抓到绕圈），
 **模型节点表**（`aNodeId` 齐全、id 在范围内、节点/组面数合计等于几何面数、包围盒有限、
 组 id 区间连续且互不重叠、选区压缩 ≤8 段、节点表与种子一致），
-**参数有效性审计**（Node 侧 137 项：扰动每个参数后几何/材质/uniform 必须变化，0 失效、0 异常），
+**参数有效性审计**（Node 侧 204 项通过，0 失效、0 异常；86 项需浏览器、10 项条件豁免），
 以及 **hover 说明覆盖率**（164 个面板标签 100% 有说明），
 以及 **树种 × 阶段 × 季节**（140 个组合全部可生成且在面数预算内、阶段高度严格递增、
 季节只改物候不改形态、冬/春/秋的物候特例、橡树低分叉与开张树冠、同组合不同种子必然不同）。
@@ -429,8 +437,8 @@ npm run audit        # 参数有效性审计 (改了就一定变)
 | 风场 | 比较共享 uniform + **每个材质自己的**风场 uniform | 18 |
 | 豁免 | 仅由 store/场景循环消费（自动风场档位、时间缩放等），逐条写明理由 | 4 |
 
-Node 侧无法判定的 13 项（`bark.color`、程序化贴图、贴图上传等需要 canvas/ImageLoader）
-由 `dev/audit-check.html` 在浏览器里跑同一套审计 → **133 项全部通过**。
+Node 侧无法判定的 86 项（`bark.color`、程序化贴图、贴图上传/偏移/平铺/旋转等需要 canvas/ImageLoader）
+由 `dev/audit-check.html` 在浏览器里跑同一套审计 → **86 项全部通过**。
 审计过程还抓出并修掉了 4 个真·死参数：`roots.startT`、`branches.level[].tipShorten`、
 `leaves.orientToBranch`、`bark.roughnessTexture`（另有 `leafMat.emissive` 之前没接线，现已接通）。
 
@@ -447,6 +455,8 @@ node scripts/shot-receiver.mjs        # 监听 127.0.0.1:5274, 把页面回传�
 - `dev/gallery-check.html` —— 批量生成"橡树 5 个生长阶段 + 4 个季节 + 其他树种"并逐个截图存档
 - `dev/classify-check.html` —— 点真实的树种/阶段/季节 chips, 验证重建/重新取景/生长进度不被重置
 - `dev/ui-check.html` —— hover 说明浮层 + 风向指示器箭头角度 + 不同风向下的屏幕摆动
+- `dev/leaf-flower-fixes-check.html` —— 叶片/花朵修复自检: 花朵「一键复位偏移」、树叶贴图 U/V 偏移 + 横向/纵向平铺 + 旋转真正写入材质 map 并可一键复位、树叶/花朵模型旋转改变自身几何但不影响树皮、随机叶片多次点击能切换卡片
+- `dev/cull-chunks-check.html` —— 视锥分块剔除自检: LOD0 生成空间分块、源网格保留给导出、分块有独立包围球且视锥外块被剔除、分块三角面合计不丢、导出三角面与全模一致
 - `dev/speedtree-check.html` —— SpeedTree 风格功能自检: 相机拉远/拉近驱动动态 LOD (档位/面数递减/缓存复用/选中回全模)，验证 LOD1/2 的树干、树枝、花朵几何与全模逐字节一致；AO 开关/强度/恢复对比
 - `dev/view-angle-check.html` —— 视角自由度自检: 相机轨道不再锁地平线，能绕到地面以下（camera.y < 0）从下往上看，且取景/重建后不被重新锁死
 - `dev/twist-check.html` —— 扭曲句柄自检: 视口出现 5 个可拖拽句柄，模拟拖拽后验证树干/树枝曲线参数、几何重建、树枝层级/无枝层级提示、关闭句柄
@@ -454,7 +464,7 @@ node scripts/shot-receiver.mjs        # 监听 127.0.0.1:5274, 把页面回传�
 - `dev/leaf-shapes-check.html` —— 叶形白模预览自检: 9 种叶形共用 1 个 WebGL canvas，每格都有实际像素白模，拖拽格子可多视角旋转且不误切换叶形，点击格子可切换当前叶形并正确高亮
 - `dev/triangle-stats-check.html` —— 面数显示准确性自检: 开满花时「全模三角面」包含花朵，LOD0/1/2 的「当前面数」与实际可见模型几何、lodInfo 逐项一致，切换 LOD 时全模面数保持不变
 - `dev/double-sided-leaf-check.html` —— 双面叶片材质自检: 用真实 `createLeafMaterial` 渲染平面，正面白贴图/背面蓝贴图、只换背面颜色、关闭恢复等场景逐像素验证，并确认 shader 注入 `gl_FrontFacing`
-- `dev/double-sided-ui-check.html` —— 双面叶片 UI 自检: 真实点击「树叶 → 树叶材质 → 双面独立颜色/贴图」开关，验证参数、`uBackEnabled`、DoubleSide、背面贴图库选择/跟随正面、背面贴图绑定、背面颜色 uniform、shader 编译无错误
+- `dev/double-sided-ui-check.html` —— 双面叶片 UI 自检: 真实点击「树叶 → 树叶材质 → 双面独立颜色/贴图」开关，验证参数、`uBackEnabled`、DoubleSide、背面贴图库自动过滤 404 空图标、选择/跟随正面、背面贴图绑定、背面颜色 uniform、shader 编译无错误
 - `dev/leaf-move-check.html` —— 面板迁移自检: 内置叶片卡片、树叶材质、落叶堆积、落叶、叶片粒子发射全部从材质面板移到树叶面板；批次/叶形/应用叶子仍可用，材质面板不再出现这些分组且保留树皮材质/自定义 GLSL
 - `dev/environments-check.html` —— 环境预设自检: 9 种环境的背景/太阳/环境光/地面/曝光/雾/星空逐项校验 + 真实点击「场景 → 环境预设」按钮；群星星空跟随相机、切环境不重建树几何
 - `dev/export-split-check.html` —— 导出节点拆分自检: 视口场景与真实导出的 GLB/OBJ 中，树干、树枝各层、根、果实、树叶是否都是独立节点/mesh，且面数守恒；「合并树干与树枝 mesh」开关打开后是否只剩单棵 `Bark` 节点、关闭后恢复拆分

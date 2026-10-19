@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>cull: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+import * as THREE from 'three'
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+let fail = 0
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+const check = (name, cond, detail = '') => {
+  if (!cond) fail++
+  line((cond ? '✔ ' : '✘ ') + name + (detail ? ' — ' + detail : ''))
+}
+async function waitFor(fn, timeout = 30000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { if (fn()) return true } catch (e) { /* ignore */ }
+    await sleep(100)
+  }
+  return false
+}
+let win, doc
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    for (let i = 0; i < 150 && !win; i++) await sleep(100)
+    await waitFor(() => win.__fastTree && win.__fastTree.ready && win.__fastTreeScene && win.__fastTreeSceneApi, 30000)
+    const state = win.__fastTree
+    const scene = win.__fastTreeScene
+    const api = win.__fastTreeSceneApi
+    await sleep(600)
+    // 开启花朵, 同时验证花朵分块
+    state.params.flower.enabled = true
+    api.rebuildNow(false)
+    await sleep(800)
+    line('===== 视锥分块剔除 =====')
+    const chunks = scene._cullChunks || []
+    check('已生成视锥分块', chunks.length > 0, 'chunks=' + chunks.length)
+    check('每个分块都有独立包围球', chunks.every((c) => c.mesh.geometry.boundingSphere && isFinite(c.mesh.geometry.boundingSphere.radius)),
+      chunks.slice(0, 4).map((c) => c.mesh.name + ':' + c.mesh.geometry.boundingSphere.radius.toFixed(2)).join(' | '))
+    check('分块已开启 frustumCulled', chunks.every((c) => c.mesh.frustumCulled === true))
+    check('源网格不再走默认相机层渲染 (给导出/统计保留)',
+      (scene.barkMesh.layers.mask & 1) === 0 && (!scene.leafMesh || (scene.leafMesh.layers.mask & 1) === 0))
+    const vis0 = chunks.filter((c) => c.mesh.visible).length
+    check('LOD0 分块参与渲染', vis0 > 0, 'visible=' + vis0)
+    scene.applyLod(1)
+    const vis1 = chunks.filter((c) => c.mesh.visible).length
+    check('LOD1 改用低模网格, 分块隐藏', vis1 === 0, 'visible=' + vis1)
+    scene.applyLod(0)
+    const visBack = chunks.filter((c) => c.mesh.visible).length
+    check('切回 LOD0 分块恢复', visBack === vis0, 'visible=' + visBack)
+
+    // 相机放在树冠中心朝一侧看: 背后的分块应在视锥外
+    const c = scene.treeCenter
+    const h = scene.treeHeight || 8
+    const oldFov = scene.camera.fov
+    scene.camera.fov = 40
+    scene.camera.updateProjectionMatrix()
+    scene.camera.position.set(c.x, c.y + h * 0.05, c.z)
+    scene.camera.lookAt(c.x + h * 0.2, c.y + h * 0.05, c.z + h)
+    scene.camera.updateMatrixWorld(true)
+    const frustum = new THREE.Frustum().setFromProjectionMatrix(
+      new THREE.Matrix4().multiplyMatrices(scene.camera.projectionMatrix, scene.camera.matrixWorldInverse))
+    const inView = chunks.filter((ch) => {
+      const s = ch.mesh.geometry.boundingSphere.clone()
+      s.center.applyMatrix4(ch.mesh.matrixWorld)
+      return frustum.intersectsSphere(s)
+    }).length
+    check('视锥外的分块确实被剔除', inView > 0 && inView < chunks.length, 'inView=' + inView + '/' + chunks.length)
+    scene.camera.fov = oldFov
+    scene.camera.updateProjectionMatrix()
+
+    // 导出仍用完整源几何, 与统计一致
+    const eg = scene.buildExportGroup()
+    let exportLeaf = 0
+    let exportFlower = 0
+    const egNames = []
+    eg.traverse((o) => {
+      if (!o.isMesh || !o.geometry) return
+      const n = o.geometry.index ? o.geometry.index.count / 3 : o.geometry.attributes.position.count / 3
+      egNames.push(o.name + ':' + n)
+      if (String(o.name).startsWith('Leaves')) exportLeaf += n
+      if (String(o.name).startsWith('Flowers')) exportFlower += n
+    })
+    check('导出树叶三角面 = 全模树叶面数', exportLeaf === state.stats.leafTriangles,
+      exportLeaf + ' / ' + state.stats.leafTriangles + ' src=' + (scene.leafMesh.geometry.index ? scene.leafMesh.geometry.index.count / 3 : '?') + ' names=' + egNames.slice(0, 8).join(','))
+    check('导出花朵三角面 = 全模花朵面数', exportFlower === (state.stats.flowerTriangles || 0), exportFlower + ' / ' + (state.stats.flowerTriangles || 0))
+
+    scene.renderer.render(scene.scene, scene.camera)
+    const drawn = scene.renderer.info.render.triangles || 0
+    check('分块网格确实参与渲染 (有三角面提交)', drawn > 10000, 'triangles=' + drawn)
+    const leafChunks = chunks.filter((c) => c.kind === 'leaf')
+    const leafChunkTris = leafChunks.reduce((n, c) => n + c.mesh.geometry.index.count / 3, 0)
+    check('分块不丢失叶片三角面 (分块合计 = 全模)', leafChunkTris === state.stats.leafTriangles,
+      leafChunkTris + ' / ' + state.stats.leafTriangles)
+    line('\n结果: ' + (fail ? 'CULLCHUNKS-FAIL ' + fail : 'CULLCHUNKS-OK'))
+    document.title = (fail ? 'CULLCHUNKS-FAIL(' + fail + ')' : 'CULLCHUNKS-OK') + ' :: ' +
+      R.filter((s) => s.startsWith('✘')).slice(0, 4).join(' | ')
+  } catch (e) {
+    document.title = 'CULLCHUNKS-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 900)
+    line('EX: ' + (e && e.stack ? e.stack : e))
+  }
+}, 2200)
+</script></body></html>

@@ -11,6 +11,7 @@
           <img :src="c.url" alt="" @error="onThumbError(e)" />
         </button>
         <button class="btn small" title="随机一张" @click="lt.cardId = randomCardId()">🎲</button>
+        <span v-if="!cardChoices.length" class="muted">正在检测可用贴图…</span>
       </div>
       <SliderRow label="落叶数量 (堆积)" v-model="lt.count" :min="10" :max="2000" :step="10" />
       <SliderRow label="分布半径" v-model="lt.radius" :min="0.2" :max="3" :step="0.05"
@@ -39,6 +40,7 @@
           <img :src="c.url" alt="" @error="onThumbError(e)" />
         </button>
         <button class="btn small" title="随机一张" @click="fl.cardId = randomCardId()">🎲</button>
+        <span v-if="!cardChoices.length" class="muted">正在检测可用贴图…</span>
       </div>
       <SliderRow label="落叶数量" v-model="fl.count" :min="4" :max="600" :step="1" />
       <SliderRow label="落叶大小" v-model="fl.size" :min="0.05" :max="1.2" :step="0.01" />
@@ -82,7 +84,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import Section from './ui/Section.vue'
 import ToggleRow from './ui/ToggleRow.vue'
 import SliderRow from './ui/SliderRow.vue'
@@ -96,6 +98,22 @@ const pt = state.params.particles
 
 /* 落叶/堆积的贴图候选: 每个批次/叶形取一张代表卡 (最多 12 张) */
 const missing = ref({})
+const exists = ref({})
+async function probe(urls) {
+  const todo = urls.filter((x) => exists.value[x] === undefined && missing.value[x] !== true)
+  if (!todo.length) return
+  await Promise.all(todo.map(async (url) => {
+    try {
+      const r = await fetch(url, { method: 'HEAD' })
+      const ct = (r.headers.get('content-type') || '').toLowerCase()
+      const ok = r.ok && ct.startsWith('image/')
+      if (ok) exists.value = { ...exists.value, [url]: true }
+      else missing.value = { ...missing.value, [url]: true }
+    } catch {
+      missing.value = { ...missing.value, [url]: true }
+    }
+  }))
+}
 function onThumbError(e) {
   const img = e && e.target
   if (!img) return
@@ -104,7 +122,6 @@ function onThumbError(e) {
   const btn = img.parentElement
   if (btn) btn.style.display = 'none'
 }
-const alive = (list) => (list || []).filter((x) => !missing.value[x.url])
 const cardChoicesRaw = computed(() => {
   const out = []
   const seen = new Set()
@@ -117,9 +134,14 @@ const cardChoicesRaw = computed(() => {
   }
   return out
 })
-const cardChoices = computed(() => alive(cardChoicesRaw.value))
+// 只展示 HEAD 探测确认存在的卡片, 过滤 404 贴图
+const cardChoices = computed(() => cardChoicesRaw.value.filter((c) =>
+  exists.value[c.url] === true && missing.value[c.url] !== true))
+watch(cardChoicesRaw, (list) => probe(list.map((c) => c.url)), { immediate: true })
 function randomCardId() {
-  return LEAF_CARDS[Math.floor(Math.random() * LEAF_CARDS.length)].id
+  const pool = cardChoices.value.length ? cardChoices.value : LEAF_CARDS.filter((c) => exists.value[c.url] === true)
+  if (!pool.length) return ''
+  return pool[Math.floor(Math.random() * pool.length)].id
 }
 </script>
 

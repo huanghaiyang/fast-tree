@@ -135,6 +135,7 @@ export const CONDITIONS = {
   'flower.shape': { 'flower.enabled': true, 'flower.useShape': true },
   'flower.textureU': { 'flower.enabled': true },
   'flower.textureV': { 'flower.enabled': true },
+  'flower.modelRotation': { 'flower.enabled': true },
   'flower.textureRepeat': { 'flower.enabled': true },
   'flower.textureRotation': { 'flower.enabled': true },
   'flower.sizeVariance': { 'flower.enabled': true },
@@ -185,6 +186,8 @@ export const DOM_DEPENDENT = new Set([
   'bark.procedural.enabled', 'bark.procedural.style', 'bark.procedural.scale', 'bark.procedural.contrast',
   'bark.texture', 'bark.normalTexture', 'bark.normalFromAlbedo', 'bark.uvWarp', 'bark.uvWarpScale',
   'leafMat.texture', 'leafMat.normalTexture', 'leafMat.normalFromAlbedo',
+  'leafMat.textureU', 'leafMat.textureV',
+  'leafMat.textureRepeatU', 'leafMat.textureRepeatV', 'leafMat.textureRotation',
   'leafMat.backTexture',
   'flower.texture', 'flower.normalFromAlbedo', 'flower.alphaTest',
   'flower.textureRepeatU', 'flower.textureRepeatV',
@@ -332,8 +335,9 @@ function perturbValue(v) {
 /** 贴图签名: 区分"有没有贴图"以及"程序化贴图内容是否变了" (浏览器环境才有 canvas) */
 function texSig(tex) {
   if (!tex) return 'none'
+  const tf = `${tex.offset.x.toFixed(3)},${tex.offset.y.toFixed(3)}:${tex.repeat.x.toFixed(3)},${tex.repeat.y.toFixed(3)}:${(tex.rotation || 0).toFixed(3)}`
   const img = tex.image
-  if (!img) return 'tex'
+  if (!img) return 'tex:' + tf
   if (img.tagName === 'CANVAS' && typeof img.getContext === 'function') {
     try {
       const d = img.getContext('2d').getImageData(0, 0, img.width, img.height).data
@@ -342,12 +346,12 @@ function texSig(tex) {
         h ^= d[i] + d[i + 1] * 3 + d[i + 2] * 7
         h = Math.imul(h, 16777619)
       }
-      return 'canvas:' + (h >>> 0).toString(16)
+      return 'canvas:' + (h >>> 0).toString(16) + ':' + tf
     } catch (e) {
-      return 'canvas-unreadable'
+      return 'canvas-unreadable:' + tf
     }
   }
-  return 'img:' + String(img.src || '').slice(-48)
+  return 'img:' + String(img.src || '').slice(-48) + ':' + tf
 }
 
 function materialSignature(params) {

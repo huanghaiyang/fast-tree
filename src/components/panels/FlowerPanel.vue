@@ -13,6 +13,8 @@
     <SliderRow label="花朵下垂" v-model="f.droop" :min="-1" :max="1" :step="0.02" />
     <SliderRow label="朝向离散" v-model="f.rollVariance" :min="0" :max="1" :step="0.01" />
     <ToggleRow label="花朵尽量朝上" v-model="f.faceUp" hint="花朵法线尽量朝向天空 (真实花多向上开)" />
+    <SliderRow label="花朵模型旋转" v-model="f.modelRotation" :min="-180" :max="180" :step="1" unit="°"
+      hint="绕花面法线旋转整张花卡; 贴图偏移导致花梗方向相反时用 180° 校正" />
     <SliderRow label="花朵分段" v-model="f.segments" :min="2" :max="12" :step="1" />
     <SliderRow label="花朵纵向弯曲" v-model="f.curl" :min="-0.6" :max="0.6" :step="0.01" />
     <SliderRow label="花朵横向折叠" v-model="f.fold" :min="-0.4" :max="0.8" :step="0.01" />
@@ -65,6 +67,7 @@
       <div class="pad-box">
         <div class="pick-label">贴图偏移（二维拖动）</div>
         <TexturePad v-model="texOffset" :min="-1" :max="1" />
+        <button class="btn small" style="margin-top: 6px" @click="resetTexOffset">↺ 一键复位偏移</button>
       </div>
       <div class="pad-side">
         <SliderRow label="贴图横向平铺" v-model="f.textureRepeatU" :min="0.1" :max="8" :step="0.05" />
@@ -124,6 +127,10 @@ const texOffset = computed({
   get: () => [f.value.textureU || 0, f.value.textureV || 0],
   set: (v) => { f.value.textureU = v[0]; f.value.textureV = v[1] },
 })
+function resetTexOffset() {
+  f.value.textureU = 0
+  f.value.textureV = 0
+}
 const cardBatch = ref('fl_batch1')
 const cardRow = ref(1)
 const batchName = (bt) => LEAF_CARD_BATCH_NAMES[bt] || bt

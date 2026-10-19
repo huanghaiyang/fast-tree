@@ -5,12 +5,12 @@
     <div class="chips">
       <span class="muted">批次</span>
       <button v-for="bt in batches" :key="bt" class="chip" :class="{ active: batch === bt }"
-        @click="batch = bt; row = leafCardRows(bt)[0]; col = 1">{{ batchLabel(bt) }} · {{ batchRealCount(bt) === null ? batchCount(bt) + '…' : batchRealCount(bt) }}</button>
+        @click="batch = bt; row = leafCardRows(bt)[0]">{{ batchLabel(bt) }} · {{ batchRealCount(bt) === null ? batchCount(bt) + '…' : batchRealCount(bt) }}</button>
     </div>
     <div class="chips">
       <span class="muted">叶形</span>
       <button v-for="r in leafCardRows(batch)" :key="r" class="chip" :class="{ active: row === r }"
-        @click="row = r; col = 1">#{{ r }}</button>
+        @click="row = r">#{{ r }}</button>
     </div>
     <div class="chips">
       <span class="muted">颜色变体</span>
@@ -19,6 +19,7 @@
         @click="use(cd)" :title="cd.id + ' (' + cd.w + '×' + cd.h + ')'">
         <img :src="cd.url" alt="" />
       </button>
+      <span v-if="!variantCards.length" class="muted">正在检测可用贴图…</span>
     </div>
     <div class="inline">
       <button class="btn small primary" @click="use(current)">应用这张叶子</button>
@@ -37,7 +38,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import Section from './ui/Section.vue'
 import ToggleRow from './ui/ToggleRow.vue'
-import { state, applyLeafCard, randomLeafCard, fitLeafCardToTexture } from '../store/treeStore.js'
+import { state, applyLeafCard, fitLeafCardToTexture } from '../store/treeStore.js'
 import { LEAF_CARDS, LEAF_CARD_BATCHES, LEAF_CARD_BATCH_NAMES, leafCardsFor, leafCardRows } from '../core/leafCards.generated.js'
 
 const lv = state.params.leaves
@@ -62,7 +63,6 @@ async function probe(urls) {
     }
   }))
 }
-const alive = (list) => (list || []).filter((x) => !missing.value[x.url])
 
 /* ---------------- 卡片库 ---------------- */
 const batches = Object.keys(LEAF_CARD_BATCHES)
@@ -71,10 +71,11 @@ const batchCount = (bt) => (LEAF_CARD_BATCHES[bt] ? Object.values(LEAF_CARD_BATC
 const total = LEAF_CARDS.length
 const batch = ref('batch1')
 const row = ref(1)
-const col = ref(1)
 const cardsOfShape = computed(() => leafCardsFor(batch.value, row.value))
-const variantCards = computed(() => alive(cardsOfShape.value))
-const current = computed(() => cardsOfShape.value[Math.min(col.value - 1, cardsOfShape.value.length - 1)] || cardsOfShape.value[0] || LEAF_CARDS[0])
+// 只展示 HEAD 探测确认存在的卡片, 避免 404 缩略图/空图标
+const variantCards = computed(() => cardsOfShape.value.filter((c) =>
+  exists.value[c.url] === true && missing.value[c.url] !== true))
+const current = computed(() => variantCards.value[0] || null)
 
 function use(card) {
   if (!card) return
@@ -83,12 +84,16 @@ function use(card) {
 }
 
 function rand() {
-  const card = randomLeafCard(batch.value, row.value) || randomLeafCard()
-  if (card) {
-    batch.value = card.batch
-    row.value = card.row
-    col.value = Math.max(1, leafCardsFor(card.batch, card.row).findIndex((x) => x.id === card.id) + 1)
-  }
+  // 随机叶片: 从已探测存在的卡片里随机挑一张并立即应用
+  // (以前只改批次/叶形、不应用, 且探测未完成时 variantCards 为空 -> 看起来"失效")
+  const valid = LEAF_CARDS.filter((c) => exists.value[c.url] === true && missing.value[c.url] !== true)
+  const pool = valid.length ? valid : variantCards.value
+  if (!pool.length) return
+  const card = pool[Math.floor(Math.random() * pool.length)]
+  if (!card) return
+  batch.value = card.batch
+  row.value = card.row
+  applyLeafCard(card.id)
 }
 
 async function onFitLeafTexture() {

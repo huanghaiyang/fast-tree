@@ -36,6 +36,16 @@ function statNum(doc, label) {
   return nums.length ? toNum(nums[nums.length - 1]) : null
 }
 function visibleModelTriangles(scene) {
+  // LOD0 用视锥分块渲染, 源网格只给导出/统计; 按分块几何统计实际渲染面数
+  if (scene.lodLevel === 0 && Array.isArray(scene._cullChunks) && scene._cullChunks.length) {
+    let n = 0
+    for (const c of scene._cullChunks) {
+      if (!c.mesh.visible || !c.mesh.geometry) continue
+      const g = c.mesh.geometry
+      n += g.index ? g.index.count / 3 : (g.attributes.position ? g.attributes.position.count / 3 : 0)
+    }
+    return Math.round(n)
+  }
   let n = 0
   scene.treeGroup.traverse((o) => {
     if (!o.isMesh || !o.visible || !o.geometry) return

@@ -45,7 +45,10 @@
     <SliderRow label="自重下垂" v-model="L.droop" :min="0" :max="1.2" :step="0.01" />
     <SliderRow label="叶面朝上" v-model="L.faceUp" :min="0" :max="1" :step="0.01" />
     <SliderRow label="滚转随机" v-model="L.rollVariance" :min="0" :max="360" :step="1" unit="°" />
-    <SliderRow label="叶柄扭转" v-model="L.twist" :min="0" :max="1.5" :step="0.01" />  </Section>
+    <SliderRow label="叶柄扭转" v-model="L.twist" :min="0" :max="1.5" :step="0.01" />
+    <SliderRow label="叶模型旋转" v-model="L.modelRotation" :min="-180" :max="180" :step="1" unit="°"
+      hint="绕叶面法线旋转整张叶子; 贴图偏移导致叶柄方向相反时用 180° 校正" />
+  </Section>
 
   <Section title="叶片颜色" hint="Color" :default-collapsed="true">
     <ColorRow label="叶基颜色" v-model="L.color" />
@@ -90,6 +93,7 @@
         当前 <b>L{{ state.lodLevel }}</b>
         <span v-for="e in state.lodInfo" :key="e.level"> · L{{ e.level }} {{ e.triangles.toLocaleString() }} 面</span>
         <br />LOD1/2 首次需要时才构建并缓存；远景只抽稀叶片，树干/树枝/果实/花朵与全模完全一致；选中高亮/线框模式会自动回到 LOD0。
+        <br />窗口外的树叶/花朵/果实按视锥分块自动剔除，不提交渲染；导出始终使用完整几何。
       </p>
     </template>
   </Section>

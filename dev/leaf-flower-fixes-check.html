@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>leaf-flower-fixes: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+let fail = 0
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+const check = (name, cond, detail = '') => {
+  if (!cond) fail++
+  line((cond ? '✔ ' : '✘ ') + name + (detail ? ' — ' + detail : ''))
+}
+async function waitFor(fn, timeout = 30000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { if (fn()) return true } catch { /* ignore */ }
+    await sleep(100)
+  }
+  return false
+}
+let win, doc
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+const tab = (name) => [...doc.querySelectorAll('.tab')].find((t) => (t.textContent || '').includes(name))
+const sectionHead = (name) => [...doc.querySelectorAll('.section-head')].find((h) => (h.textContent || '').includes(name))
+const expand = async (name) => {
+  const h = sectionHead(name)
+  if (!h) return false
+  const body = h.parentElement.querySelector('.section-body')
+  if (body && win.getComputedStyle(body).display === 'none') h.click()
+  await sleep(250)
+  return true
+}
+const btn = (text) => [...doc.querySelectorAll('button')].find((b) => (b.textContent || '').includes(text))
+setTimeout(async () => {
+  try {
+    for (let i = 0; i < 150 && !win; i++) await sleep(100)
+    await waitFor(() => win.__fastTree && win.__fastTree.ready && win.__fastTreeScene && win.__fastTreeSceneApi, 30000)
+    const state = win.__fastTree
+    const scene = win.__fastTreeScene
+    const api = win.__fastTreeSceneApi
+    await sleep(600)
+
+    line('===== 花朵贴图偏移复位 =====')
+    tab('花朵').click(); await sleep(600)
+    state.params.flower.textureU = 0.28
+    state.params.flower.textureV = -0.17
+    await sleep(100)
+    const reset = btn('一键复位偏移')
+    check('花朵面板存在「一键复位偏移」按钮', !!reset)
+    if (reset) { reset.click(); await sleep(250) }
+    check('点击后贴图偏移 U/V 归零', state.params.flower.textureU === 0 && state.params.flower.textureV === 0,
+      `${state.params.flower.textureU},${state.params.flower.textureV}`)
+
+    line('\n===== 树叶贴图偏移 =====')
+    tab('树叶').click(); await sleep(600)
+    await expand('树叶材质')
+    check('树叶材质里有「贴图偏移（二维拖动）」控件', [...doc.querySelectorAll('.pick-label')].some((e) => (e.textContent || '').includes('贴图偏移')))
+    // 用 1×1 PNG 确保叶子有 map, 再改 UV 偏移
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lv0nWQAAAABJRU5ErkJggg=='
+    state.params.leafMat.texture = png
+    state.params.leafMat.textureU = 0.23
+    state.params.leafMat.textureV = -0.12
+    state.params.leafMat.textureRepeatU = 2.5
+    state.params.leafMat.textureRepeatV = 3.5
+    state.params.leafMat.textureRotation = 0.4
+    scene.updateMaterialParams(state.params)
+    await sleep(300)
+    const lm = scene.materials.leaf
+    check('树叶贴图 map.offset 已应用 U/V', !!lm.map && Math.abs(lm.map.offset.x - 0.23) < 1e-6 && Math.abs(lm.map.offset.y + 0.12) < 1e-6,
+      lm.map ? `${lm.map.offset.x},${lm.map.offset.y}` : 'no map')
+    check('树叶贴图 repeat/rotation 已应用',
+      !!lm.map && Math.abs(lm.map.repeat.x - 2.5) < 1e-6 && Math.abs(lm.map.repeat.y - 3.5) < 1e-6 && Math.abs(lm.map.rotation - 0.4) < 1e-6,
+      lm.map ? `${lm.map.repeat.x},${lm.map.repeat.y},${lm.map.rotation}` : 'no map')
+    check('树叶材质里有平铺/旋转控件', [...doc.querySelectorAll('.row-head, label')].some((e) => (e.textContent || '').includes('叶片贴图横向平铺')) &&
+      [...doc.querySelectorAll('.row-head, label')].some((e) => (e.textContent || '').includes('叶片贴图旋转')))
+    const leafReset = btn('一键复位贴图')
+    check('树叶存在「一键复位贴图」按钮', !!leafReset)
+    if (leafReset) { leafReset.click(); await sleep(250) }
+    check('复位后偏移/平铺/旋转全部恢复默认',
+      state.params.leafMat.textureU === 0 && state.params.leafMat.textureV === 0 &&
+      state.params.leafMat.textureRepeatU === 1 && state.params.leafMat.textureRepeatV === 1 &&
+      state.params.leafMat.textureRotation === 0,
+      JSON.stringify({
+        u: state.params.leafMat.textureU, v: state.params.leafMat.textureV,
+        ru: state.params.leafMat.textureRepeatU, rv: state.params.leafMat.textureRepeatV,
+        rot: state.params.leafMat.textureRotation,
+      }))
+
+    line('\n===== 树叶/花朵模型旋转 =====')
+    // 做一次干净重建, 比较叶片位置哈希
+    state.params.leafMat.texture = ''
+    state.params.leafMat.textureU = 0
+    state.params.leafMat.textureV = 0
+    state.params.leaves.modelRotation = 0
+    state.params.flower.enabled = true
+    state.params.flower.modelRotation = 0
+    api.rebuildNow(false)
+    await sleep(500)
+    const leafA = Array.from(scene.leafMesh.geometry.attributes.position.array.slice(0, 6000))
+    const flowerA = scene.flowerMesh ? Array.from(scene.flowerMesh.geometry.attributes.position.array.slice(0, 6000)) : []
+    state.params.leaves.modelRotation = 180
+    api.rebuildNow(false)
+    await sleep(500)
+    const leafB = Array.from(scene.leafMesh.geometry.attributes.position.array.slice(0, 6000))
+    check('叶模型旋转改变叶片几何', leafA.some((v, i) => v !== leafB[i]))
+    state.params.flower.modelRotation = 90
+    api.rebuildNow(false)
+    await sleep(500)
+    const flowerB = scene.flowerMesh ? Array.from(scene.flowerMesh.geometry.attributes.position.array.slice(0, 6000)) : []
+    check('花朵模型旋转改变花朵几何', flowerA.length > 0 && flowerB.length === flowerA.length && flowerA.some((v, i) => v !== flowerB[i]))
+    // 树干不应被模型旋转改变
+    state.params.leaves.modelRotation = 0
+    state.params.flower.enabled = false
+    api.rebuildNow(false)
+    await sleep(400)
+    const barkA = Array.from(scene.barkMesh.geometry.attributes.position.array.slice(0, 6000))
+    state.params.leaves.modelRotation = 180
+    api.rebuildNow(false)
+    await sleep(400)
+    const barkB = Array.from(scene.barkMesh.geometry.attributes.position.array.slice(0, 6000))
+    check('叶模型旋转不影响树干/树枝几何', barkA.every((v, i) => v === barkB[i]))
+
+    line('\n===== 随机叶片 =====')
+    state.params.leaves.modelRotation = 0
+    state.params.leafMat.texture = ''
+    api.rebuildNow(false)
+    await sleep(500)
+    tab('树叶').click(); await sleep(400)
+    await expand('内置叶片卡片')
+    await waitFor(() => [...doc.querySelectorAll('.btn')].some((b) => (b.textContent || '').includes('随机叶片')), 8000)
+    const rand = btn('随机叶片')
+    check('随机叶片按钮存在', !!rand)
+    if (rand) {
+      const ids = new Set()
+      for (let i = 0; i < 5; i++) {
+        rand.click()
+        await sleep(250)
+        ids.add(state.cardId || '')
+      }
+      check('随机叶片能真正切换卡片 (多次点击出现不同 cardId)', ids.size > 1, [...ids].join(','))
+    }
+
+    line('\n结果: ' + (fail ? 'LEAFFLOWER-FIX-FAIL ' + fail : 'LEAFFLOWER-FIX-OK'))
+    document.title = (fail ? 'LEAFFLOWER-FIX-FAIL(' + fail + ')' : 'LEAFFLOWER-FIX-OK') + ' :: ' +
+      R.filter((s) => s.startsWith('✘')).slice(0, 5).join(' | ')
+  } catch (e) {
+    document.title = 'LEAFFLOWER-FIX-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 900)
+    line('EX: ' + (e && e.stack ? e.stack : e))
+  }
+}, 2200)
+</script></body></html>
