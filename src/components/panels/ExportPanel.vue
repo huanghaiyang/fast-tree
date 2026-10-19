@@ -12,7 +12,7 @@
       :artifacts="preview?.artifacts || []" :nodes="preview?.nodes || []"
       @confirm="confirmExport" @cancel="cancelPreview" />
     <ToggleRow label="合并树干与树枝 mesh" v-model="eo.mergeBark"
-      hint="关闭 = 按节点拆分树干/树枝各层/根/果实 (默认); 打开 = 树干与树枝合并为一个 Bark mesh" />
+      hint="关闭 = 按节点拆分树干/树枝各层/根/果实 (默认); 打开 = 树干与树枝合并为一个 Bark mesh。若树干面板开启「一体建模」, 树根也会一起合并。" />
     <p v-if="status" class="muted" style="margin: 0">{{ status }}</p>
     <p class="muted" style="margin: 0">
       GLB = glTF 2.0 二进制 (含贴图/顶点色, 标准格式, 静态网格); OBJ = 纯几何 (Wavefront, 不含材质/贴图/顶点色);
@@ -28,9 +28,11 @@
     <p class="muted" style="margin: 0">
       风场/生长是顶点着色器效果, 导出的静态网格不含动画; 粒子/落叶等场景特效也不会写进模型文件。
       动态 LOD 只影响视口, 导出的是 LOD0 全模; 程序化 AO 已烘焙进顶点色 (COLOR_0) 一起导出。
-      当前导出节点: {{ eo.mergeBark
-        ? '树干+树枝合并为一个 Bark mesh (根/果实仍分开)'
-        : '树干、树枝各层、树根、果实、树叶、花朵都是独立节点' }}。
+      当前导出节点: {{ onePiece
+        ? '树干+树枝+树根合并为一个 Bark mesh (果实/树叶/花朵仍独立)'
+        : eo.mergeBark
+          ? '树干+树枝合并为一个 Bark mesh (根/果实仍分开)'
+          : '树干、树枝各层、树根、果实、树叶、花朵都是独立节点' }}。
       但如果自定义 GLSL 改动过材质, 参数 JSON 可以完整复现。
     </p>
   </Section>
@@ -99,6 +101,7 @@ const stats = computed(() => state.stats)
 const renderInfo = computed(() => state.renderInfo)
 const modelVertices = computed(() => modelVertexCount(state.stats))
 const eo = state.params.exportOptions
+const onePiece = computed(() => !!state.params.trunk.onePiece)
 const busy = ref(false)
 /* 伪装卡生成器 */
 const impMode = ref('atlas')

@@ -611,6 +611,12 @@ const trunkBoundary = (() => {
 check('主干完全封闭 (基部与分叉顶端都封口, 不出现截断截面)', trunkBoundary === 0, 'boundary=' + trunkBoundary)
 // 所有管状部件 (主干/树枝/树根) 首尾都加三角扇端盖 -> 整树树皮无边界边
 check('树干/树枝/树根全部首尾闭合 (无边界边)', be.boundary === 0, 'boundary=' + be.boundary)
+// 一体建模开关: 改变分支/树根基部领口几何, 但端盖仍保留 -> 仍然封闭
+const oneP = { ...oakP, trunk: { ...oakP.trunk, onePiece: true } }
+const oneR = buildTree(oneP)
+const oneBE = boundaryEdges(oneR.barkGeometry)
+check('一体建模改变树干/树枝/树根几何', geomHash(oneR.barkGeometry) !== geomHash(oakR.barkGeometry))
+check('一体建模仍保持首尾封闭', oneBE.boundary === 0 && oneBE.nonManifold === 0, JSON.stringify(oneBE))
 // 分叉后主干仍然长到接近全高 (不是被截断的树桩)
 check('分叉时主干不被截断 (整树高度 >= 0.9 × 主干高度)',
   oakR.stats.height >= oakP.trunk.height * 0.9,
@@ -1441,6 +1447,10 @@ console.log('\n[27] 导出节点拆分')
   const openTubeParts = parts.filter((x) => x.name !== 'Bark_Fruit' && boundaryEdges(x.geometry).boundary !== 0)
   check('拆分后的树干/树枝/树根节点仍首尾闭合', openTubeParts.length === 0,
     openTubeParts.map((x) => x.name + ':' + boundaryEdges(x.geometry).boundary).join(', '))
+  const oneParts = splitBarkGeometryByNodeGroups(r.barkGeometry, r.nodes, { mergeTrunkBranches: true, mergeRoots: true })
+  const oneNames = oneParts.map((x) => x.name)
+  check('一体建模拆分: 树干/树枝/树根合并为单个 Bark', oneNames.includes('Bark') &&
+    !oneNames.some((n) => n === 'Bark_Trunk' || n === 'Bark_Roots' || n.startsWith('Bark_Branch_')), oneNames.join(', '))
   const byId = new Map(r.nodes.map((n) => [n.id, n]))
   let mixed = ''
   for (const part of parts) {

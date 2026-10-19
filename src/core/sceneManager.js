@@ -1219,7 +1219,8 @@ export class TreeScene {
     // 树皮导出: 默认按节点组拆开; 用户可在导出面板选择合并树干与树枝
     if (this.barkMesh) {
       const opts = (this.lastParams && this.lastParams.exportOptions) || {}
-      const parts = barkExportParts(this.barkMesh.geometry, this.nodes || [], !!opts.mergeBark)
+      const onePiece = !!(this.lastParams && this.lastParams.trunk && this.lastParams.trunk.onePiece)
+      const parts = barkExportParts(this.barkMesh.geometry, this.nodes || [], !!opts.mergeBark || onePiece, onePiece)
       const fruitMat = parts.some((p) => p.name === 'Bark_Fruit') ? this._getFruitExportMaterial() : null
       if (parts.length) {
         for (const p of parts) add(this.barkMesh, p.geometry, p.name, p.name === 'Bark_Fruit' ? fruitMat : null)

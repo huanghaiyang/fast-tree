@@ -40,24 +40,27 @@ export function barkGroupName(node) {
 /**
  * 按导出设置返回树皮部分:
  *   merge=true  -> 树干 + 树枝各层合并为一个 Bark mesh; 树根/果实仍独立
+ *   merge=true + mergeRoots=true -> 树干 + 树枝 + 树根一起合并为 Bark (一体建模)
  *   merge=false -> 按树干/树枝各层/根/果实拆分
  * @param {import('three').BufferGeometry} geometry
  * @param {Array<object>} nodes
  * @param {boolean} merge
+ * @param {boolean} mergeRoots
  */
-export function barkExportParts(geometry, nodes, merge = false) {
+export function barkExportParts(geometry, nodes, merge = false, mergeRoots = false) {
   if (!geometry || !geometry.attributes || !geometry.attributes.position) return []
-  return splitBarkGeometryByNodeGroups(geometry, nodes, { mergeTrunkBranches: !!merge })
+  return splitBarkGeometryByNodeGroups(geometry, nodes, { mergeTrunkBranches: !!merge, mergeRoots: !!mergeRoots })
 }
 
 /**
  * @param {import('three').BufferGeometry} geometry 合并后的树皮几何
  * @param {Array<object>} nodes finalizeNodes 节点表
- * @param {{mergeTrunkBranches?:boolean}} [opts] mergeTrunkBranches = 把树干与树枝合成一个 Bark 节点 (根/果实仍独立)
+ * @param {{mergeTrunkBranches?:boolean, mergeRoots?:boolean}} [opts] mergeTrunkBranches = 把树干与树枝合成一个 Bark 节点; mergeRoots = 连树根也并进 Bark
  * @returns {Array<{name:string, geometry:import('three').BufferGeometry, triangles:number, vertices:number}>}
  */
 export function splitBarkGeometryByNodeGroups(geometry, nodes, opts = {}) {
   const mergeTrunkBranches = !!opts.mergeTrunkBranches
+  const mergeRoots = !!opts.mergeRoots
   if (!geometry || !geometry.attributes || !geometry.attributes.position) return []
   const idAttr = geometry.attributes.aNodeId
   const nodeList = Array.isArray(nodes) ? nodes : []
@@ -65,6 +68,7 @@ export function splitBarkGeometryByNodeGroups(geometry, nodes, opts = {}) {
   const labelOf = (nodeId) => {
     const label = barkGroupName(nodeById.get(nodeId))
     if (mergeTrunkBranches && (label === 'Bark_Trunk' || label.startsWith('Bark_Branch_'))) return 'Bark'
+    if (mergeRoots && label === 'Bark_Roots') return 'Bark'
     return label
   }
 

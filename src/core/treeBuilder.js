@@ -50,6 +50,7 @@ export function buildTree(params) {
   const t0 = now()
   const P = params
   const branchParams = P.branches
+  const onePiece = !!(P.trunk && P.trunk.onePiece)
   const L = P.leaves
   const F = P.fruit || { enabled: false, levels: [] }
   // 挂果层级回退: 如果设置里勾选的层级在这棵树上一级都没有 (比如默认树只有 3 层枝,
@@ -407,8 +408,9 @@ export function buildTree(params) {
       capEnd: true,
       // 末梢圆钝收尖 (不是平截面) + 基部领口 (与父枝平滑融合, 避免大小半径硬拼接)
       tipRound: o.tipRound === undefined ? 0.06 : o.tipRound,
-      baseFlare: o.baseFlare === undefined ? (level === 1 ? 0.45 : 0.32) : o.baseFlare,
-      baseFlareLen: o.baseFlareLen === undefined ? (level === 1 ? 0.16 : 0.13) : o.baseFlareLen,
+      // 一体建模时加大基部领口, 让枝条与树干/父枝更像连续长出来的一棵树
+      baseFlare: (o.baseFlare === undefined ? (level === 1 ? 0.45 : 0.32) : o.baseFlare) + (onePiece ? 0.14 : 0),
+      baseFlareLen: (o.baseFlareLen === undefined ? (level === 1 ? 0.16 : 0.13) : o.baseFlareLen) + (onePiece ? 0.02 : 0),
       vertexNoise: 0.05,
       nodeId: mySlot,
     }))
@@ -596,6 +598,8 @@ export function buildTree(params) {
         phase: rootRng.range(0, Math.PI * 2),
         capStart: true,
         capEnd: true,
+        baseFlare: onePiece ? 0.16 : 0,
+        baseFlareLen: 0.1,
         vertexNoise: 0.07,
         nodeId: rootSlot,
       }))

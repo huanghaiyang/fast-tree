@@ -31,6 +31,8 @@
     <SliderRow label="扭转" v-model="t.twist" :min="-1" :max="1" :step="0.01" hint="沿高度的截面螺旋" />
     <SliderRow label="不规则生长 (gnarl)" v-model="t.gnarl" :min="0" :max="1.5" :step="0.01" />
     <SliderRow label="椭圆化" v-model="t.squash" :min="0.4" :max="2" :step="0.02" hint="1 = 正圆截面" />
+    <ToggleRow label="树干树枝树根一体建模" v-model="t.onePiece"
+      hint="开启 = 树干/树枝/树根作为同一棵树体建模，分支基部领口更融合，导出合并为单个 Bark mesh；关闭 = 分开建模并保留 Bark_Trunk/Branch/Roots 节点。注意：这是对象/节点级合并，不是实体布尔并集，枝干表面相交处仍可能有交线。端盖始终保留，几何保持封闭。" />
   </Section>
 
   <Section title="主干分叉 (多主枝)" hint="Fork / Leaders" :default-collapsed="true">
@@ -57,7 +59,6 @@
     <SliderRow label="外扩高度比例" v-model="t.flareHeight" :min="0.02" :max="0.6" :step="0.01" />
     <SliderRow label="节瘤数量" v-model="t.knots" :min="0" :max="12" :step="1" />
     <SliderRow label="节瘤大小" v-model="t.knotSize" :min="0" :max="1.2" :step="0.02" />
-    <ToggleRow label="封闭树干底部" v-model="t.capBase" />
   </Section>
 
   <Section title="树根" hint="Roots" :default-collapsed="true">

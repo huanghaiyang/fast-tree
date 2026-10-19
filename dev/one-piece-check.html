@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>one-piece: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+let fail = 0
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+const check = (name, cond, detail = '') => {
+  if (!cond) fail++
+  line((cond ? '✔ ' : '✘ ') + name + (detail ? ' — ' + detail : ''))
+}
+async function waitFor(fn, timeout = 30000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { if (fn()) return true } catch { /* ignore */ }
+    await sleep(100)
+  }
+  return false
+}
+function parseGLB(buf) {
+  const dv = new DataView(buf)
+  if (dv.getUint32(0, true) !== 0x46546c67) throw new Error('不是 GLB')
+  let off = 12
+  while (off < buf.byteLength) {
+    const len = dv.getUint32(off, true)
+    const type = dv.getUint32(off + 4, true)
+    const data = new Uint8Array(buf, off + 8, len)
+    if (type === 0x4e4f534a) return JSON.parse(new TextDecoder().decode(data))
+    off += 8 + len
+  }
+  throw new Error('缺少 JSON chunk')
+}
+let win, doc
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+const labelToggle = (text) => [...doc.querySelectorAll('.section')].flatMap((s) => [...s.querySelectorAll('label')]).find((l) => (l.textContent || '').includes(text))
+const geomHash = (geo) => {
+  const a = geo && geo.attributes && geo.attributes.position && geo.attributes.position.array
+  if (!a) return ''
+  let h = 0
+  for (let i = 0; i < a.length; i += 7) h = (h * 31 + Math.round(a[i] * 1e5)) | 0
+  return String(h)
+}
+setTimeout(async () => {
+  try {
+    for (let i = 0; i < 150 && !win; i++) await sleep(100)
+    await waitFor(() => win.__fastTree && win.__fastTree.ready && win.__fastTreeScene, 30000)
+    const scene = win.__fastTreeScene
+    const state = win.__fastTree
+    await sleep(500)
+
+    line('===== 树干树枝树根一体建模 =====')
+    const trunkTab = [...doc.querySelectorAll('.tab')].find((t) => (t.textContent || '').includes('树干'))
+    trunkTab && trunkTab.click(); await sleep(300)
+    const toggle = labelToggle('树干树枝树根一体建模')
+    check('树干面板存在「一体建模」开关', !!toggle)
+    check('默认关闭 (分体建模)', state.params.trunk.onePiece === false, String(state.params.trunk.onePiece))
+
+    const beforeHash = geomHash(scene.barkMesh.geometry)
+    const beforeTri = state.stats.barkTriangles
+    toggle && toggle.click()
+    await sleep(900)
+    check('打开开关后参数 = true', state.params.trunk.onePiece === true)
+    check('一体建模改变树干/树枝/树根几何', geomHash(scene.barkMesh.geometry) !== beforeHash,
+      `${beforeHash} -> ${geomHash(scene.barkMesh.geometry)}`)
+
+    const onPreview = await scene.prepareExport('glb', 'one-piece.glb')
+    const onJson = parseGLB(await onPreview.payload.blob.arrayBuffer())
+    const onNames = (onJson.nodes || []).map((n) => n.name || '')
+    check('一体建模导出合并为单个 Bark 节点', onNames.includes('Bark') &&
+      !onNames.some((n) => n === 'Bark_Trunk' || n === 'Bark_Roots' || n.startsWith('Bark_Branch_')), onNames.join(','))
+    check('一体建模仍保留果实独立节点', onNames.includes('Bark_Fruit'), onNames.join(','))
+
+    toggle && toggle.click()
+    await sleep(900)
+    check('关闭开关后恢复分体参数', state.params.trunk.onePiece === false)
+    const offPreview = await scene.prepareExport('glb', 'split-piece.glb')
+    const offJson = parseGLB(await offPreview.payload.blob.arrayBuffer())
+    const offNames = (offJson.nodes || []).map((n) => n.name || '')
+    check('关闭后恢复 Bark_Trunk/Branch/Roots 节点', offNames.includes('Bark_Trunk') &&
+      offNames.some((n) => n.startsWith('Bark_Branch_')) && offNames.includes('Bark_Roots'), offNames.join(','))
+    check('一体/分体三角面总数守恒', state.stats.barkTriangles === beforeTri,
+      `${state.stats.barkTriangles} vs ${beforeTri}`)
+
+    line('\n结果: ' + (fail ? 'ONEPIECE-FAIL ' + fail : 'ONEPIECE-OK'))
+    document.title = (fail ? 'ONEPIECE-FAIL(' + fail + ')' : 'ONEPIECE-OK') + ' :: ' +
+      R.filter((s) => s.startsWith('✘')).slice(0, 5).join(' | ')
+  } catch (e) {
+    document.title = 'ONEPIECE-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 900)
+    line('EX: ' + (e && e.stack ? e.stack : e))
+  }
+}, 2200)
+</script></body></html>

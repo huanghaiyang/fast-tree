@@ -66,7 +66,10 @@ npm run selftest     # 无浏览器自检 (确定性/参数隔离/几何合法�
 
 ### 1. 树干 (Trunk)
 高度、底部半径、锥度、锥度曲线、纵向/周向分段、弯曲、弯曲随机、倾斜与倾斜方向、扭转、不规则生长 (gnarl)、椭圆截面；
-根部外扩 (flare) 与外扩高度、**节瘤 (knots)** 数量/大小、树干底部封盖。
+根部外扩 (flare) 与外扩高度、**节瘤 (knots)** 数量/大小；
+**树干树枝树根一体建模**开关：开启 = 分支基部领口更融合、导出合并为单个 `Bark` mesh；关闭 = 分开建模并保留节点拆分。
+所有树干/树枝/树根管状部件始终首尾三角扇封口，保持闭合。
+注意：一体建模是**对象/节点级合并**，不是实体布尔并集；树干、树枝、树根仍是独立的管状表面，枝干相交处仍会保留交线/穿插，若需要完全无穿插需做布尔并集或隐式重建。
 
 ### 2. 树根 (Roots)
 数量、长度、长度随机、半径比、辐射范围、与树干夹角、弯曲、下扎强度、分段。
@@ -254,7 +257,7 @@ src/
    ├─ appApi.js        浏览器侧命令执行器 + 本地桥客户端
    └─ sceneManager.js  渲染器/相机/灯光/天空/地面/动画循环/选中框/聚焦/相机基
 scripts/
-├─ selftest.mjs        257 项无浏览器自检 (含导出格式/节点拆分、管状几何首尾闭合、贴图命名、AO、LOD、模型旋转、环境预设、扭曲曲线、站点图标、面数统计、双面叶片、模板卫生)
+├─ selftest.mjs        260 项无浏览器自检 (含导出格式/节点拆分、管状几何首尾闭合、一体建模、贴图命名、AO、LOD、模型旋转、环境预设、扭曲曲线、站点图标、面数统计、双面叶片、模板卫生)
 ├─ paramAudit.mjs      参数有效性审计核心 (几何/材质/风场三路签名比对)
 ├─ audit-params.mjs    npm run audit 入口
 ├─ app-bridge-server.mjs  本地应用桥 / MCP 服务器 / 大模型代理 (Key 只在服务端)
@@ -300,7 +303,7 @@ Wind (Games)、Forces、Vertex Colors/AO、Level of Detail 与导出等章节，
 | **Wind (Games)** | 已有: 风向/强度/阵风/湍流/顺风偏置/相位空间尺度/树干摆幅/叶片扇动/铰链俯仰；顶点着色器实时计算，参数实时生效 |
 | **Growth / Seasons** | 已有: 生长进度/自动播放；树种 × 5 阶段 × 4 季节，物候只改颜色/密度不改形态 |
 | **Billboard / 伪装卡** | 已有: 多视角图集 + 交叉卡 + 俯仰层，可预览/导出 |
-| **导出结构** | GLB/OBJ 默认按节点拆分：`Bark_Trunk`、`Bark_Branch_L1..L5`、`Bark_Roots`、`Bark_Fruit`、`Leaves`、`Flowers` 各自独立 mesh/node（视口用视锥分块渲染，导出仍用完整源几何）；导出面板「合并树干与树枝 mesh」开关可切回单棵 `Bark` mesh |
+| **导出结构** | GLB/OBJ 默认按节点拆分：`Bark_Trunk`、`Bark_Branch_L1..L5`、`Bark_Roots`、`Bark_Fruit`、`Leaves`、`Flowers` 各自独立 mesh/node（视口用视锥分块渲染，导出仍用完整源几何）；导出面板「合并树干与树枝 mesh」开关可切回单棵 `Bark` mesh；树干面板「树干树枝树根一体建模」开启后树干+树枝+树根合并为单个 `Bark` mesh |
 | 尚未实现（后续可做） | Rules 程序化规则、Forces/Zones 物体、Frond/Cap 生成器、Collision 导出、Lightmap UV(UV2)、.spm/Unity 原生格式 |
 
 **已知取舍**：LOD 只影响视口渲染，GLB/OBJ 导出的是 LOD0 全模（游戏引擎通常按 LOD 分文件导出）；
@@ -422,7 +425,7 @@ npm run chat:check   # 对话链路自检 (需要 Key + 网络)
 ## 自检与诊断
 
 ```bash
-npm run selftest     # 257 项断言
+npm run selftest     # 260 项断言
 npm run audit        # 参数有效性审计 (改了就一定变)
 ```
 
@@ -435,7 +438,7 @@ npm run audit        # 参数有效性审计 (改了就一定变)
 并以"旧版整片自转"公式作对照，证明指标能抓到绕圈），
 **模型节点表**（`aNodeId` 齐全、id 在范围内、节点/组面数合计等于几何面数、包围盒有限、
 组 id 区间连续且互不重叠、选区压缩 ≤8 段、节点表与种子一致），
-**参数有效性审计**（Node 侧 203 项通过，0 失效、0 异常；86 项需浏览器、10 项条件豁免），
+**参数有效性审计**（Node 侧 204 项通过，0 失效、0 异常；86 项需浏览器、10 项条件豁免），
 以及 **hover 说明覆盖率**（164 个面板标签 100% 有说明），
 以及 **树种 × 阶段 × 季节**（140 个组合全部可生成且在面数预算内、阶段高度严格递增、
 季节只改物候不改形态、冬/春/秋的物候特例、橡树低分叉与开张树冠、同组合不同种子必然不同）。
@@ -482,6 +485,7 @@ node scripts/shot-receiver.mjs        # 监听 127.0.0.1:5274, 把页面回传�
 - `dev/leaf-move-check.html` —— 面板迁移自检: 内置叶片卡片、树叶材质、落叶堆积、落叶、叶片粒子发射全部从材质面板移到树叶面板；批次/叶形/应用叶子仍可用，材质面板不再出现这些分组且保留树皮材质/自定义 GLSL
 - `dev/environments-check.html` —— 环境预设自检: 9 种环境的背景/太阳/环境光/地面/曝光/雾/星空逐项校验 + 真实点击「场景 → 环境预设」按钮；群星星空跟随相机、切环境不重建树几何
 - `dev/export-material-check.html` —— 导出材质检查: 花朵 normal 有真实轮廓（非平坦）、果实节点/独立 Fruit 材质、fruit_diff/alpha/nor_gl/rough 全套资源、果实 normal/alpha 有果皮细节、alpha 为黑白灰度、所有 rough 图保持灰白（非金属粗糙度合并彩图）、roughness 来自贴图亮度而非随机噪声
+- `dev/one-piece-check.html` —— 树干/树枝/树根一体建模开关自检: 开关默认关闭、开启后几何变化、GLB 合并为单个 Bark + 果实独立、关闭后恢复 Bark_Trunk/Branch/Roots 节点
 - `dev/export-preview-check.html` —— 导出预览面板自检: 先弹面板不下载、产物列表、节点列表、GLB 内嵌贴图缩略图、PNG 预览、取消不下载、确定后才下载
 - `dev/texture-export-check.html` —— 导出贴图命名自检: 真实导出 GLB 并检查 `_diff/_alpha/_nor_gl/_rough` 与 `_1k/_2k/_4k` 后缀、image 名称同步、非 1/2/4K 不加 `_xk`；GLB 用 2K 叶片贴图 + 1K 法线验证，并检查材质实际引用 normal/roughness 贴图、alphaMode=MASK
 - `dev/export-split-check.html` —— 导出节点拆分自检: 视口场景与真实导出的 GLB/OBJ 中，树干、树枝各层、根、果实、树叶是否都是独立节点/mesh，且面数守恒；「合并树干与树枝 mesh」开关打开后是否只剩单棵 `Bark` 节点、关闭后恢复拆分
