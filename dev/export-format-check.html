@@ -185,8 +185,9 @@ async function validatePng(u8, label, wantSize, opts = {}) {
       if (Math.abs(r - bg[0]) + Math.abs(g - bg[1]) + Math.abs(b - bg[2]) > 8) diff++
     }
     const mean = sum / n, std = Math.sqrt(Math.max(0, sum2 / n - mean * mean))
-    if (std < 2) errs.push('画面近似纯色 (std=' + std.toFixed(2) + ')，截图可能是空帧')
-    if (diff / n < 0.005) errs.push('画面几乎无变化内容 (diff=' + (diff / n * 100).toFixed(2) + '%)')
+    // normal/roughness 的中性回退贴图允许是纯色 (它们本来就该是均匀的)
+    if (!opts.allowFlat && std < 2) errs.push('画面近似纯色 (std=' + std.toFixed(2) + ')，截图可能是空帧')
+    if (!opts.allowFlat && diff / n < 0.005) errs.push('画面几乎无变化内容 (diff=' + (diff / n * 100).toFixed(2) + '%)')
     inf(label + ' 像素', 'mean=' + mean.toFixed(1) + ' std=' + std.toFixed(1) + ' 与左上角不同=' + (diff / n * 100).toFixed(1) + '%' + (pixels.bpp === 4 ? ' 全透明像素=' + opaque0 : ''))
   }
   return { errs, hdr, chunks: types, pixels }
@@ -362,6 +363,11 @@ function validateGLTF(json, bin, label) {
   })
   const pngErrs = []
   const images = json.images || []
+  // 贴图资源名 -> 哪些 image 属于 nor_gl/rough (允许纯色中性回退)
+  const flatAllowed = new Map()
+  for (const t of (json.textures || [])) {
+    if (t && t.source !== undefined && /_(nor_gl|rough)(_\d+k)?$/.test(t.name || '')) flatAllowed.set(t.source, true)
+  }
   images.forEach((img, i) => {
     const tag = 'image[' + i + ']'
     req(['image/png', 'image/jpeg', 'image/webp'].includes(img.mimeType), tag + ' mimeType=' + img.mimeType + ' 非法')
@@ -373,7 +379,7 @@ function validateGLTF(json, bin, label) {
         if (img.mimeType === 'image/png') {
           const good = sub[0] === 0x89 && sub[1] === 0x50 && sub[2] === 0x4e && sub[3] === 0x47
           req(good, tag + ' 声明 image/png 但字节不是 PNG')
-          if (good) pngErrs.push(validatePng(sub, tag, null, { pad: true }).then((r) => r.errs.map((e) => tag + ': ' + e)))
+          if (good) pngErrs.push(validatePng(sub, tag, null, { pad: true, allowFlat: flatAllowed.get(i) === true }).then((r) => r.errs.map((e) => tag + ': ' + e)))
         } else if (img.mimeType === 'image/jpeg') {
           req(sub[0] === 0xFF && sub[1] === 0xD8 && sub[2] === 0xFF, tag + ' 声明 image/jpeg 但字节不是 JPEG')
         }

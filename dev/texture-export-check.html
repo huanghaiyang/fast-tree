@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>texture-export: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+import * as THREE from 'three'
+import { textureAssetName } from '/src/core/textureNaming.js'
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+let fail = 0
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+const check = (name, cond, detail = '') => {
+  if (!cond) fail++
+  line((cond ? '✔ ' : '✘ ') + name + (detail ? ' — ' + detail : ''))
+}
+async function waitFor(fn, timeout = 30000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { if (fn()) return true } catch { /* ignore */ }
+    await sleep(100)
+  }
+  return false
+}
+function parseGLB(buf) {
+  const dv = new DataView(buf)
+  if (dv.getUint32(0, true) !== 0x46546c67) throw new Error('不是 GLB')
+  let off = 12
+  while (off < buf.byteLength) {
+    const len = dv.getUint32(off, true)
+    const type = dv.getUint32(off + 4, true)
+    const data = new Uint8Array(buf, off + 8, len)
+    if (type === 0x4e4f534a) return JSON.parse(new TextDecoder().decode(data))
+    off += 8 + len
+  }
+  throw new Error('缺少 JSON chunk')
+}
+function canvasTex(w, h, paint) {
+  // 必须用 iframe 内的 document: GLTFExporter 在 iframe 运行, 跨 realm 的 canvas 会判为非法 image
+  const c = (doc || document).createElement('canvas')
+  c.width = w; c.height = h
+  const g = c.getContext('2d')
+  g.fillStyle = '#888'; g.fillRect(0, 0, w, h)
+  g.fillStyle = '#ddd'; g.fillRect(0, 0, w / 2, h / 2)
+  if (paint) paint(g, w, h)
+  const t = new THREE.CanvasTexture(c)
+  t.colorSpace = THREE.SRGBColorSpace
+  return t
+}
+let win, doc
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    for (let i = 0; i < 150 && !win; i++) await sleep(100)
+    await waitFor(() => win.__fastTree && win.__fastTree.ready && win.__fastTreeScene && win.__fastTreeSceneApi, 30000)
+    const scene = win.__fastTreeScene
+    const api = win.__fastTreeSceneApi
+    await sleep(600)
+
+    line('===== 贴图资源命名 =====')
+    const fake = (w, h) => ({ image: { width: w, height: h } })
+    check('4K -> _diff_4k', textureAssetName('leaf', 'diff', fake(4096, 4096)) === 'leaf_diff_4k')
+    check('2K -> _diff_2k', textureAssetName('leaf', 'diff', fake(2048, 1024)) === 'leaf_diff_2k')
+    check('1K -> _diff_1k', textureAssetName('leaf', 'diff', fake(1024, 1024)) === 'leaf_diff_1k')
+    check('非 1/2/4K 不加 _xk', textureAssetName('leaf', 'diff', fake(216, 215)) === 'leaf_diff')
+    check('角色后缀完整', textureAssetName('bark', 'normal', fake(2048, 2048)) === 'bark_nor_gl_2k' &&
+      textureAssetName('bark', 'rough', fake(4096, 4096)) === 'bark_rough_4k' &&
+      textureAssetName('leaf', 'alpha', fake(1024, 1024)) === 'leaf_alpha_1k')
+
+    // 注入真实 2K 叶片贴图 + 1K 法线, 导出 GLB 检查贴图资源名
+    const map = canvasTex(2048, 2048)
+    const normal = canvasTex(1024, 1024)
+    normal.colorSpace = THREE.NoColorSpace
+    scene.materials.leaf.map = map
+    scene.materials.leaf.normalMap = normal
+    scene.materials.leaf.needsUpdate = true
+    const blob = await scene.exportGLB('texture-name-test.glb')
+    const json = parseGLB(await blob.arrayBuffer())
+    const texNames = (json.textures || []).map((t) => t.name || '')
+    const imgNames = (json.images || []).map((i) => i.name || '')
+    check('GLB textures 含 leaf_diff_2k', texNames.includes('leaf_diff_2k'), texNames.join(','))
+    check('GLB textures 含 leaf_nor_gl_1k', texNames.includes('leaf_nor_gl_1k'), texNames.join(','))
+    check('GLB textures 含 leaf_alpha_2k', texNames.includes('leaf_alpha_2k'), texNames.join(','))
+    check('GLB textures 含补全的 leaf_rough', texNames.includes('leaf_rough'), texNames.join(','))
+    check('GLB images 同步资源名', imgNames.includes('leaf_diff_2k') && imgNames.includes('leaf_alpha_2k') && imgNames.includes('leaf_nor_gl_1k'),
+      imgNames.join(','))
+    const leavesNode = (json.nodes || []).find((n) => n.name === 'Leaves')
+    const leavesMesh = leavesNode && json.meshes ? json.meshes[leavesNode.mesh] : null
+    const leafMatIdx = leavesMesh && leavesMesh.primitives && leavesMesh.primitives[0] && leavesMesh.primitives[0].material
+    const leafMat = leafMatIdx !== undefined && json.materials ? json.materials[leafMatIdx] : null
+    check('GLB 叶片材质实际引用 normal 贴图', !!leafMat && !!leafMat.normalTexture, leafMat ? JSON.stringify(leafMat.normalTexture) : 'no leaf material')
+    check('GLB 叶片材质实际引用 roughness 贴图', !!leafMat && !!leafMat.pbrMetallicRoughness && !!leafMat.pbrMetallicRoughness.metallicRoughnessTexture,
+      leafMat && leafMat.pbrMetallicRoughness ? JSON.stringify(leafMat.pbrMetallicRoughness.metallicRoughnessTexture) : 'no pbr')
+    check('GLB 叶片材质 alphaMode = MASK', !!leafMat && leafMat.alphaMode === 'MASK' && leafMat.alphaCutoff > 0,
+      leafMat ? `${leafMat.alphaMode}/${leafMat.alphaCutoff}` : 'no leaf material')
+    check('GLB 树皮默认非 4K 贴图不加 _xk', texNames.some((n) => n === 'bark_diff' || n === 'bark_nor_gl' || n === 'bark_rough'), texNames.join(','))
+    check('所有贴图后缀都属于规范角色', texNames.every((n) => /^(bark|leaf|flower)_(diff|alpha|nor_gl|rough)(_\d+k)?$/.test(n)),
+      texNames.filter((n) => !/^(bark|leaf|flower)_(diff|alpha|nor_gl|rough)(_\d+k)?$/.test(n)).join(','))
+
+    line('\n结果: ' + (fail ? 'TEXTURE-EXPORT-FAIL ' + fail : 'TEXTURE-EXPORT-OK'))
+    document.title = (fail ? 'TEXTURE-EXPORT-FAIL(' + fail + ')' : 'TEXTURE-EXPORT-OK') + ' :: ' +
+      R.filter((s) => s.startsWith('✘')).slice(0, 5).join(' | ')
+  } catch (e) {
+    document.title = 'TEXTURE-EXPORT-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 900)
+    line('EX: ' + (e && e.stack ? e.stack : e))
+  }
+}, 2200)
+</script></body></html>

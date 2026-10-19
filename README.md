@@ -167,6 +167,8 @@ LOD：树皮细节倍率、叶片保留比例、叶片数上限。
 ### 8. 场景 / 导出
 渐变天空与颜色、背景、曝光、太阳强度/方位角/高度角、环境光、阴影、地面、网格、雾、相机自动旋转；
 导出 **GLB (glTF 二进制，含程序化贴图)**、**OBJ**、**参数 JSON**（载入即可复现同一棵树）、**PNG 截图**。
+GLB 内贴图资源按 `_diff` / `_alpha` / `_nor_gl` / `_rough` 命名；贴图尺寸恰为 1K/2K/4K 时追加 `_1k`/`_2k`/`_4k`，其它尺寸不加 `_xk` 后缀。
+导出时会自动补全缺失的 normal/roughness 贴图；叶片/花朵 alpha 用 baseColor 的 alpha 通道 + `alphaMode: MASK` 导出，并附带 `_alpha` 资源别名。
 
 ---
 
@@ -234,13 +236,14 @@ src/
    ├─ modelStats.js    全模三角面/顶点统计 (树皮+叶+花, 视口与导出共用)
    ├─ environments.js  环境预设 (白昼/黄昏/森林/雨林/沙漠/雪地/高原/黑夜/群星)
    ├─ textures.js      程序化树皮/叶片贴图 (颜色+法线+粗糙度)
+   ├─ textureNaming.js 导出贴图资源命名/补全 (diff/alpha/nor_gl/rough + 1K/2K/4K 后缀, 缺失槽自动补中性贴图)
    ├─ materials.js     PBR + 风场/生长/自定义 GLSL + 节点选中高亮
    ├─ exporter.js      GLB / OBJ / JSON / PNG
    ├─ apiRegistry.js   应用命令注册表 (MCP / 大模型 tool-calling 共用同一份定义)
    ├─ appApi.js        浏览器侧命令执行器 + 本地桥客户端
    └─ sceneManager.js  渲染器/相机/灯光/天空/地面/动画循环/选中框/聚焦/相机基
 scripts/
-├─ selftest.mjs        252 项无浏览器自检 (含导出格式/节点拆分、AO、LOD、模型旋转、环境预设、扭曲曲线、站点图标、面数统计、双面叶片、模板卫生)
+├─ selftest.mjs        256 项无浏览器自检 (含导出格式/节点拆分、贴图命名、AO、LOD、模型旋转、环境预设、扭曲曲线、站点图标、面数统计、双面叶片、模板卫生)
 ├─ paramAudit.mjs      参数有效性审计核心 (几何/材质/风场三路签名比对)
 ├─ audit-params.mjs    npm run audit 入口
 ├─ app-bridge-server.mjs  本地应用桥 / MCP 服务器 / 大模型代理 (Key 只在服务端)
@@ -408,7 +411,7 @@ npm run chat:check   # 对话链路自检 (需要 Key + 网络)
 ## 自检与诊断
 
 ```bash
-npm run selftest     # 252 项断言
+npm run selftest     # 256 项断言
 npm run audit        # 参数有效性审计 (改了就一定变)
 ```
 
@@ -467,6 +470,7 @@ node scripts/shot-receiver.mjs        # 监听 127.0.0.1:5274, 把页面回传�
 - `dev/double-sided-ui-check.html` —— 双面叶片 UI 自检: 真实点击「树叶 → 树叶材质 → 双面独立颜色/贴图」开关，验证参数、`uBackEnabled`、DoubleSide、背面贴图库自动过滤 404 空图标、选择/跟随正面、背面贴图绑定、背面颜色 uniform、shader 编译无错误
 - `dev/leaf-move-check.html` —— 面板迁移自检: 内置叶片卡片、树叶材质、落叶堆积、落叶、叶片粒子发射全部从材质面板移到树叶面板；批次/叶形/应用叶子仍可用，材质面板不再出现这些分组且保留树皮材质/自定义 GLSL
 - `dev/environments-check.html` —— 环境预设自检: 9 种环境的背景/太阳/环境光/地面/曝光/雾/星空逐项校验 + 真实点击「场景 → 环境预设」按钮；群星星空跟随相机、切环境不重建树几何
+- `dev/texture-export-check.html` —— 导出贴图命名自检: 真实导出 GLB 并检查 `_diff/_alpha/_nor_gl/_rough` 与 `_1k/_2k/_4k` 后缀、image 名称同步、非 1/2/4K 不加 `_xk`；GLB 用 2K 叶片贴图 + 1K 法线验证，并检查材质实际引用 normal/roughness 贴图、alphaMode=MASK
 - `dev/export-split-check.html` —— 导出节点拆分自检: 视口场景与真实导出的 GLB/OBJ 中，树干、树枝各层、根、果实、树叶是否都是独立节点/mesh，且面数守恒；「合并树干与树枝 mesh」开关打开后是否只剩单棵 `Bark` 节点、关闭后恢复拆分
 - `dev/export-format-check.html` —— 导出数据格式自检: GLB 按 glTF 2.0 规范校验容器/accessor/min-max/贴图/节点并用官方 GLTFLoader 回读, OBJ 按 Wavefront 文法校验并用 OBJLoader 回读, PNG 校验签名/IHDR/CRC/IDAT/行滤波并确认非空帧, 参数 JSON 校验结构完整性与导入回环, 以及"特效全开时的富场景导出"
 - `dev/chat-check.html` —— 对话界面自检 (mock 流式接口): 历史记录/新对话隔离/图片多模态请求/思考过程/重新生成/引用/删除/收藏/置顶/归档/联网来源渲染, 不消耗真实模型调用

@@ -20,6 +20,7 @@ import { sampleEmitPositions, buildParticleSeeds, createParticleMaterial, PARTIC
 import { buildFallingLeaves, fallRebuildKey, FALL_FRAG } from '../src/core/fallingLeaves.js'
 import { buildLeafLitter, litterRebuildKey } from '../src/core/litter.js'
 import { normalFromLuminance } from '../src/core/normalFromAlbedo.js'
+import { textureAssetName, applyExportTextureNames } from '../src/core/textureNaming.js'
 import { buildOcclusionGrid, occlusionAt, bakeOcclusion, bakeOcclusionByRanges } from '../src/core/ambientOcclusion.js'
 import { viewAngles, atlasLayout, crossCardQuads, alphaCoverage, elevationAngles } from '../src/core/impostor.js'
 import { ellipseLeafTexture, resolveEffectTexture, resolveEffectAspect } from '../src/core/leafTexture.js'
@@ -1297,8 +1298,7 @@ console.log('\n[24b] 动态 LOD 叶片抽样')
     .every((k) => Object.prototype.hasOwnProperty.call(defaultParams().lod, k)))
 }
 
-/* 24c. 叶/花模型旋转 (贴图偏移导致叶梗/花梗反向时的模型校正) */
-console.log('\n[24c] 叶/花模型旋转')
+/* 24c. 叶/花模型旋转 (贴图偏移导致叶梗/花梗反向时的模型校正) */console.log('\n[24c] 叶/花模型旋转')
 {
   const baseP = normalizeParams(applyPreset(defaultParams(), 'oak', 'mature', 'summer'))
   const base = buildTree(baseP)
@@ -1535,6 +1535,28 @@ console.log('\n[30] 双面叶片材质')
   check('map 注入片段使用 gl_FrontFacing 切换正/背面贴图', src.snippets.LEAF_BACK_MAP_FRAGMENT.includes('gl_FrontFacing') &&
     src.snippets.LEAF_BACK_MAP_FRAGMENT.includes('uBackMap') &&
     src.snippets.LEAF_BACK_MAP_FRAGMENT.includes('texture2D( map, vMapUv )'))
+}
+
+/* 31. 导出贴图资源命名 (1K/2K/4K -> _xk, 其它尺寸不加) */
+console.log('\n[31] 导出贴图资源命名')
+{
+  const fakeTex = (w, h) => ({ name: '', image: { width: w, height: h } })
+  check('4K 贴图后缀 _4k', textureAssetName('leaf', 'diff', fakeTex(4096, 2048)) === 'leaf_diff_4k')
+  check('2K/1K 贴图后缀 _2k/_1k',
+    textureAssetName('bark', 'normal', fakeTex(2048, 2048)) === 'bark_nor_gl_2k' &&
+    textureAssetName('leaf', 'rough', fakeTex(1024, 1024)) === 'leaf_rough_1k')
+  check('非 1K/2K/4K 尺寸不加 _xk',
+    textureAssetName('leaf', 'diff', fakeTex(216, 215)) === 'leaf_diff' &&
+    textureAssetName('flower', 'alpha', fakeTex(3000, 3000)) === 'flower_alpha')
+  const map = fakeTex(2048, 2048)
+  const normal = fakeTex(1024, 1024)
+  const mat = { userData: { kind: 'leaf' }, map, alphaMap: null, normalMap: normal, roughnessMap: null }
+  const root = { traverse(fn) { fn({ isMesh: true, material: mat }) } }
+  const naming = applyExportTextureNames(root)
+  check('材质贴图按角色命名 (diff/normal/alpha alias)',
+    map.name === 'leaf_diff_2k' && normal.name === 'leaf_nor_gl_1k' &&
+    naming.alphaAliases.some((a) => a.name === 'leaf_alpha_2k' && a.from === 'leaf_diff_2k'),
+    `${map.name},${normal.name},${naming.alphaAliases.map((a) => a.name).join(',')}`)
 }
 
 /* 汇总 */

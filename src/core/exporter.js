@@ -3,6 +3,7 @@
  */
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
 import { OBJExporter } from 'three/addons/exporters/OBJExporter.js'
+import { applyExportTextureNames, patchGlbTextureNames, ensureExportMaterialMaps } from './textureNaming.js'
 
 export function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob)
@@ -21,19 +22,33 @@ export function downloadText(text, filename, mime = 'text/plain') {
 
 export function exportGLB(root, filename = 'fasttree.glb') {
   return new Promise((resolve, reject) => {
+    // 先补全每材质的 normal/roughness 槽 (仅导出期间生效), 再按规范命名
+    const restoreMaps = ensureExportMaterialMaps(root)
+    const naming = applyExportTextureNames(root)
     const exporter = new GLTFExporter()
-    exporter.parse(
-      root,
-      (result) => {
-        const blob = result instanceof ArrayBuffer
-          ? new Blob([result], { type: 'model/gltf-binary' })
-          : new Blob([JSON.stringify(result)], { type: 'model/gltf+json' })
-        downloadBlob(blob, filename)
-        resolve(blob)
-      },
-      (err) => reject(err),
-      { binary: true, onlyVisible: true, truncateDrawRange: false },
-    )
+    try {
+      exporter.parse(
+        root,
+        (result) => {
+          let data = result
+          if (result instanceof ArrayBuffer) data = patchGlbTextureNames(result, naming.alphaAliases)
+          const blob = data instanceof ArrayBuffer
+            ? new Blob([data], { type: 'model/gltf-binary' })
+            : new Blob([JSON.stringify(data)], { type: 'model/gltf+json' })
+          restoreMaps()
+          downloadBlob(blob, filename)
+          resolve(blob)
+        },
+        (err) => {
+          restoreMaps()
+          reject(err)
+        },
+        { binary: true, onlyVisible: true, truncateDrawRange: false },
+      )
+    } catch (err) {
+      restoreMaps()
+      reject(err)
+    }
   })
 }
 
