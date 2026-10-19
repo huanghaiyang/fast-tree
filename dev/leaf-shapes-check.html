@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>leaf-shapes: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+/* 叶形白模预览自检:
+ * 1) 9 种叶形共用 1 个 WebGL canvas (不再每卡一个 context)
+ * 2) 每格都有真实渲染像素 (白模不是空的)
+ * 3) 拖拽单格可多视角旋转, 且不误切换叶形
+ * 4) 点击格子切换叶片形状并高亮 */
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+let fail = 0
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+const check = (name, cond, detail = '') => {
+  if (!cond) fail++
+  line((cond ? '✔ ' : '✘ ') + name + (detail ? ' — ' + detail : ''))
+}
+async function waitFor(fn, timeout = 20000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { if (fn()) return true } catch (e) { /* ignore */ }
+    await sleep(100)
+  }
+  return false
+}
+const pointer = (win, type, x, y) => new win.PointerEvent(type, {
+  bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse',
+})
+async function cellAlphaCounts(win, canvas, cells) {
+  const data = canvas.toDataURL('image/png')
+  const img = new win.Image()
+  const loaded = new Promise((res, rej) => { img.onload = res; img.onerror = rej })
+  img.src = data
+  await loaded
+  const c = win.document.createElement('canvas')
+  c.width = img.naturalWidth
+  c.height = img.naturalHeight
+  const ctx = c.getContext('2d')
+  ctx.drawImage(img, 0, 0)
+  const px = ctx.getImageData(0, 0, c.width, c.height).data
+  const cr = canvas.getBoundingClientRect()
+  const sx = c.width / cr.width
+  const sy = c.height / cr.height
+  return cells.map((cell) => {
+    const r = cell.getBoundingClientRect()
+    const x0 = Math.max(0, Math.floor((r.left - cr.left) * sx))
+    const y0 = Math.max(0, Math.floor((r.top - cr.top) * sy))
+    const w = Math.max(1, Math.floor(r.width * sx))
+    const h = Math.max(1, Math.floor(r.height * sy))
+    let n = 0
+    for (let y = y0; y < Math.min(c.height, y0 + h); y += 2) {
+      for (let x = x0; x < Math.min(c.width, x0 + w); x += 2) {
+        if (px[(y * c.width + x) * 4 + 3] > 12) n++
+      }
+    }
+    return n
+  })
+}
+let win, doc
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    for (let i = 0; i < 120 && !win; i++) await sleep(100)
+    await waitFor(() => win.__fastTree && win.__fastTree.ready, 30000)
+    const state = win.__fastTree
+    const leafTab = [...doc.querySelectorAll('.tab')].find((t) => (t.textContent || '').includes('树叶'))
+    check('存在「树叶」标签页', !!leafTab)
+    leafTab.click()
+    await sleep(500)
+    const bladeHead = [...doc.querySelectorAll('.section-head')].find((h) => (h.textContent || '').includes('叶片形态'))
+    check('存在「叶片形态」分组', !!bladeHead)
+    const bladeBody = bladeHead && bladeHead.parentElement.querySelector('.section-body')
+    if (bladeBody && win.getComputedStyle(bladeBody).display === 'none') bladeHead.click()
+    await waitFor(() => doc.querySelectorAll('.leaf-cell').length === 9, 15000)
+    const cells = [...doc.querySelectorAll('.leaf-cell')]
+    check('9 种叶形各有一个白模格子', cells.length === 9, 'cells=' + cells.length)
+    const canvases = [...doc.querySelectorAll('.leaf-gallery-canvas')]
+    check('整个画廊只使用 1 个 WebGL canvas', canvases.length === 1, 'canvases=' + canvases.length)
+    const canvas = canvases[0]
+    await waitFor(() => canvas && canvas.width > 100 && canvas.height > 180, 10000)
+    await sleep(400)
+    check('canvas 已分配绘图缓冲', !!canvas && canvas.width > 100 && canvas.height > 180,
+      canvas ? canvas.width + 'x' + canvas.height : 'none')
+    const labels = cells.map((c) => (c.querySelector('.leaf-cell-label') || {}).textContent || '')
+    check('9 个叶形标签齐全', ['椭圆', '圆叶', '桦叶', '枫叶', '披针', '针叶', '橡叶', '掌状', '心形']
+      .every((n) => labels.some((l) => l.includes(n))), labels.join(', '))
+    const counts = await cellAlphaCounts(win, canvas, cells)
+    check('每个格子里都有真实白模像素', counts.every((n) => n > 20), counts.join(','))
+    const active = [...doc.querySelectorAll('.leaf-cell.active')]
+    check('当前叶形格子唯一高亮', active.length === 1, 'shape=' + state.params.leaves.shape)
+
+    // 拖拽桦叶格子 -> canvas 像素变化, 不切换叶形
+    const shapeBefore = state.params.leaves.shape
+    const idx = labels.findIndex((l) => l.includes('桦叶'))
+    const cell = cells[idx]
+    const before = canvas.toDataURL()
+    const rect = cell.getBoundingClientRect()
+    cell.dispatchEvent(pointer(win, 'pointerdown', rect.left + 20, rect.top + 20))
+    win.dispatchEvent(pointer(win, 'pointermove', rect.left + 70, rect.top + 44))
+    await sleep(250)
+    win.dispatchEvent(pointer(win, 'pointerup', rect.left + 70, rect.top + 44))
+    await sleep(250)
+    check('拖拽格子可旋转该白模 (像素变化)', canvas.toDataURL() !== before)
+    check('拖拽不会误切换当前叶形', state.params.leaves.shape === shapeBefore, state.params.leaves.shape)
+
+    // 点击枫叶格子 -> 切换形状
+    const mi = labels.findIndex((l) => l.includes('枫叶'))
+    const mcard = cells[mi]
+    const mr = mcard.getBoundingClientRect()
+    mcard.dispatchEvent(pointer(win, 'pointerdown', mr.left + 20, mr.top + 20))
+    win.dispatchEvent(pointer(win, 'pointerup', mr.left + 20, mr.top + 20))
+    await sleep(500)
+    check('点击格子切换叶片形状 = maple', state.params.leaves.shape === 'maple', state.params.leaves.shape)
+    check('点击后高亮切到枫叶', (doc.querySelector('.leaf-cell.active') || {}).textContent.includes('枫叶'))
+
+    line('\n结果: ' + (fail ? 'LEAFSHAPES-FAIL ' + fail : 'LEAFSHAPES-OK'))
+    document.title = (fail ? 'LEAFSHAPES-FAIL(' + fail + ')' : 'LEAFSHAPES-OK') + ' :: ' +
+      R.filter((s) => s.startsWith('✘')).slice(0, 5).join(' | ')
+  } catch (e) {
+    document.title = 'LEAFSHAPES-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 900)
+    line('EX: ' + (e && e.stack ? e.stack : e))
+  }
+}, 2200)
+</script></body></html>

@@ -22,6 +22,15 @@
     <SliderRow label="大小随机" v-model="L.sizeVariance" :min="0" :max="0.8" :step="0.01" />
     <SliderRow label="宽/长比" v-model="L.width" :min="0.05" :max="1.6" :step="0.01" />
     <SelectRow label="叶片形状" v-model="L.shape" :options="shapes" />
+    <LeafShapeGallery
+      v-model="L.shape"
+      :shapes="shapes"
+      :segments="L.segments"
+      :curl="L.curl"
+      :fold="L.fold"
+      :petiole="L.petiole"
+      :width="L.width"
+    />
     <SliderRow label="叶片分段" v-model="L.segments" :min="2" :max="12" :step="1" />
     <SliderRow label="纵向弯曲 (curl)" v-model="L.curl" :min="-0.6" :max="0.6" :step="0.01" />
     <SliderRow label="横向折叠 (fold)" v-model="L.fold" :min="-0.4" :max="0.8" :step="0.01" />
@@ -87,6 +96,7 @@ import SliderRow from '../ui/SliderRow.vue'
 import ToggleRow from '../ui/ToggleRow.vue'
 import ColorRow from '../ui/ColorRow.vue'
 import SelectRow from '../ui/SelectRow.vue'
+import LeafShapeGallery from '../LeafShapeGallery.vue'
 import { state } from '../../store/treeStore.js'
 
 const L = state.params.leaves
@@ -99,6 +109,9 @@ const shapes = [
   { value: 'maple', label: '枫叶 maple' },
   { value: 'lance', label: '披针 lance' },
   { value: 'needle', label: '针叶 needle' },
+  { value: 'oak', label: '橡叶 oak' },
+  { value: 'palmate', label: '掌状 palmate' },
+  { value: 'cordate', label: '心形 cordate' },
 ]
 const lodForceOptions = [
   { value: 'auto', label: '自动 (按距离)' },
