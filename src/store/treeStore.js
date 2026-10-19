@@ -8,6 +8,7 @@ import { SPECIES, GROWTH_STAGES, SEASONS } from '../core/species.js'
 import { LEAF_CARDS, LEAF_CARD_BY_ID, leafCardsFor, leafCardRows, LEAF_CARD_BATCHES, randomLeafAsset, randomFlowerAsset, pickExistingCard } from '../core/leafCards.generated.js'
 import { selectionRanges } from '../core/treeBuilder.js'
 import { makeRng } from '../core/rng.js'
+import { modelTriangleCount } from '../core/modelStats.js'
 
 export const state = reactive({
   // 初始参数 = 默认树种 (oak) 的成熟/夏季预设 -> 一进页面就是带果实的橡树
@@ -603,8 +604,7 @@ export const archetypeLabel = computed(() => {
   return presetById(state.archetype) ? archetypeName(state.archetype) : '随机'
 })
 
-export const totalTriangles = computed(() =>
-  Math.round(state.stats.barkTriangles + state.stats.leafTriangles))
+export const totalTriangles = computed(() => modelTriangleCount(state.stats))
 
 // 开发期把 store 挂到 window, 方便在浏览器控制台里调试 / 脚本化验证
 if (typeof window !== 'undefined' && import.meta.env && import.meta.env.DEV) {

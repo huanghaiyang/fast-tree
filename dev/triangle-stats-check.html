@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>triangle-stats: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+/* 右下角面数准确性自检:
+ * 1) 全模三角面 = 树皮(含果实) + 树叶 + 花朵, 开满花时不能漏算
+ * 2) 当前面数 = 当前 LOD 实际可见模型几何的面数
+ * 3) LOD 切换时 全模面数保持不变, 当前面数跟着变 */
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+let fail = 0
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+const check = (name, cond, detail = '') => {
+  if (!cond) fail++
+  line((cond ? '✔ ' : '✘ ') + name + (detail ? ' — ' + detail : ''))
+}
+async function waitFor(fn, timeout = 20000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { if (fn()) return true } catch (e) { /* ignore */ }
+    await sleep(100)
+  }
+  return false
+}
+const toNum = (s) => Number(String(s || '').replace(/[^\d]/g, ''))
+function statLine(doc, label) {
+  return [...doc.querySelectorAll('.overlay.stats > div')].find((d) => (d.textContent || '').includes(label)) || null
+}
+function statNum(doc, label) {
+  const el = statLine(doc, label)
+  if (!el) return null
+  const nums = (el.textContent || '').match(/[\d,]+/g) || []
+  return nums.length ? toNum(nums[nums.length - 1]) : null
+}
+function visibleModelTriangles(scene) {
+  let n = 0
+  scene.treeGroup.traverse((o) => {
+    if (!o.isMesh || !o.visible || !o.geometry) return
+    if (!/^(Bark|Leaves|Flowers)/.test(o.name || '')) return
+    const g = o.geometry
+    n += g.index ? g.index.count / 3 : (g.attributes.position ? g.attributes.position.count / 3 : 0)
+  })
+  return Math.round(n)
+}
+let win, doc
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    for (let i = 0; i < 120 && !win; i++) await sleep(100)
+    await waitFor(() => win.__fastTree && win.__fastTreeScene && win.__fastTree.ready, 30000)
+    const state = win.__fastTree
+    const scene = win.__fastTreeScene
+    await sleep(800)
+
+    line('===== 面数统计 =====')
+    // 开满花, 验证全模三角面包含花朵
+    state.params.flower.enabled = true
+    state.params.flower.count = 24
+    await waitFor(() => state.stats.flowerTriangles > 0 && !state.busy, 15000)
+    await sleep(400)
+    const st = state.stats
+    const fullExpected = Math.round(st.barkTriangles + st.leafTriangles + st.flowerTriangles)
+    const fullShown = statNum(doc, '全模三角面')
+    check('花朵已生成 (测试前提)', (st.flowerTriangles || 0) > 0, 'flowerTris=' + st.flowerTriangles)
+    check('全模三角面包含花朵', fullShown === fullExpected,
+      `显示=${fullShown} 期望=${fullExpected} (bark ${st.barkTriangles}+leaf ${st.leafTriangles}+flower ${st.flowerTriangles})`)
+
+    // 确保动态 LOD 开启
+    if (!state.params.lod.dynamic) {
+      state.params.lod.dynamic = true
+      await win.__fastTreeSceneApi.rebuildNow(true)
+      await sleep(400)
+    }
+    await waitFor(() => statLine(doc, '当前面数') !== null, 5000)
+    const lod0Info = state.lodInfo.find((e) => e.level === state.lodLevel)
+    const lod0Shown = statNum(doc, '当前面数')
+    check('LOD0 当前面数与 lodInfo 一致', !!lod0Info && lod0Shown === lod0Info.triangles,
+      `显示=${lod0Shown} lodInfo=${lod0Info && lod0Info.triangles}`)
+    check('LOD0 当前面数 = 实际可见模型面数', lod0Shown === visibleModelTriangles(scene),
+      `显示=${lod0Shown} 实际=${visibleModelTriangles(scene)}`)
+
+    // 通过 UI 的强制 LOD 档位切换 (直接 applyLod 会被每帧 updateLod 按相机距离覆盖)
+    state.params.lod.force = '1'
+    await waitFor(() => state.lodLevel === 1, 15000)
+    await sleep(400)
+    const lod1Info = state.lodInfo.find((e) => e.level === 1)
+    const lod1Shown = statNum(doc, '当前面数')
+    const lod1Actual = visibleModelTriangles(scene)
+    check('LOD1 已生效', state.lodLevel === 1 && !!lod1Info, 'level=' + state.lodLevel)
+    check('LOD1 当前面数 = 实际可见模型面数', lod1Shown === lod1Actual && lod1Shown === (lod1Info && lod1Info.triangles),
+      `显示=${lod1Shown} lodInfo=${lod1Info && lod1Info.triangles} 实际=${lod1Actual}`)
+    check('LOD1 面数确实下降', lod1Actual < fullExpected, `LOD1=${lod1Actual} 全模=${fullExpected}`)
+    check('切换 LOD 后 全模三角面不变', statNum(doc, '全模三角面') === fullExpected,
+      `显示=${statNum(doc, '全模三角面')} 期望=${fullExpected}`)
+
+    // 切 LOD2 再回来
+    state.params.lod.force = '2'
+    await waitFor(() => state.lodLevel === 2, 15000)
+    await sleep(400)
+    const lod2Info = state.lodInfo.find((e) => e.level === 2)
+    check('LOD2 当前面数 = 实际可见模型面数', statNum(doc, '当前面数') === visibleModelTriangles(scene) &&
+      statNum(doc, '当前面数') === (lod2Info && lod2Info.triangles),
+      `显示=${statNum(doc, '当前面数')} lodInfo=${lod2Info && lod2Info.triangles} 实际=${visibleModelTriangles(scene)}`)
+    state.params.lod.force = 'auto'
+    await waitFor(() => state.lodLevel === 0, 10000)
+    await sleep(300)
+
+    line('\n结果: ' + (fail ? 'TRISTATS-FAIL ' + fail : 'TRISTATS-OK'))
+    document.title = (fail ? 'TRISTATS-FAIL(' + fail + ')' : 'TRISTATS-OK') + ' :: ' +
+      R.filter((s) => s.startsWith('✘')).slice(0, 5).join(' | ')
+  } catch (e) {
+    document.title = 'TRISTATS-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 900)
+    line('EX: ' + (e && e.stack ? e.stack : e))
+  }
+}, 2200)
+</script></body></html>

@@ -12,7 +12,7 @@
 
     <div class="overlay stats">
       <div><span class="k">树枝</span> <b>{{ state.stats.branches }}</b> · <span class="k">叶片</span> <b>{{ state.stats.leaves }}</b></div>
-      <div><span class="k">三角面</span> <b>{{ totalTriangles.toLocaleString() }}</b></div>
+      <div><span class="k">全模三角面</span> <b>{{ totalTriangles.toLocaleString() }}</b></div>
       <div><span class="k">构建</span> <b>{{ state.stats.buildMs.toFixed(1) }} ms</b> · <span class="k">FPS</span> <b>{{ fps }}</b></div>
       <div><span class="k">树高</span> <b>{{ state.stats.height.toFixed(2) }} m</b> · <span class="k">冠幅</span> <b>{{ state.stats.spread.toFixed(2) }} m</b></div>
       <div><span class="k">绘制调用</span> <b>{{ state.renderInfo.calls }}</b></div>

@@ -218,6 +218,7 @@ src/
    ├─ ambientOcclusion.js  程序化 AO: 叶片点云空间哈希 + 顶点色烘焙 (Node 可复现)
    ├─ twist.js         树干/树枝 5 点扭曲曲线 (采样/钳制/默认值)
    ├─ exportSplit.js   导出按节点拆分树干/树枝各层/根/果实 (渲染仍合并)
+   ├─ modelStats.js    全模三角面/顶点统计 (树皮+叶+花, 视口与导出共用)
    ├─ environments.js  环境预设 (白昼/黄昏/森林/雨林/沙漠/雪地/高原/黑夜/群星)
    ├─ textures.js      程序化树皮/叶片贴图 (颜色+法线+粗糙度)
    ├─ materials.js     PBR + 风场/生长/自定义 GLSL + 节点选中高亮
@@ -226,7 +227,7 @@ src/
    ├─ appApi.js        浏览器侧命令执行器 + 本地桥客户端
    └─ sceneManager.js  渲染器/相机/灯光/天空/地面/动画循环/选中框/聚焦/相机基
 scripts/
-├─ selftest.mjs        239 项无浏览器自检 (含导出格式/节点拆分、AO、LOD、环境预设、扭曲曲线、站点图标、模板卫生)
+├─ selftest.mjs        244 项无浏览器自检 (含导出格式/节点拆分、AO、LOD、环境预设、扭曲曲线、站点图标、面数统计、模板卫生)
 ├─ paramAudit.mjs      参数有效性审计核心 (几何/材质/风场三路签名比对)
 ├─ audit-params.mjs    npm run audit 入口
 ├─ app-bridge-server.mjs  本地应用桥 / MCP 服务器 / 大模型代理 (Key 只在服务端)
@@ -250,6 +251,8 @@ public/
 整棵树只合并成 **2 个几何体 = 2 个 draw call**（树皮 1 + 树叶 1）。
 默认橡树约 190 根枝条 / 11.5k 叶片 / ~191k 三角面（含果实/花朵），构建耗时 20–80ms（AO 开启约 +30ms）；
 动态 LOD 远景 LOD1 ≈ 73k、LOD2 ≈ 24k 三角面。
+视口右下角「**全模三角面**」= 树皮(含果实) + 树叶 + 花朵（统一由 `modelStats.js` 计算，不会漏掉花朵）；
+「**当前面数**」取当前 LOD 档位实际可见模型几何的面数，切换 LOD 时同步变化，可用 `dev/triangle-stats-check.html` 复核。
 松树预设约 370 枝条 / 15k 针叶 / 165k 三角面。
 默认参数下 FPS 统计与绘制调用数显示在视口右下角。
 
@@ -388,7 +391,7 @@ npm run chat:check   # 对话链路自检 (需要 Key + 网络)
 ## 自检与诊断
 
 ```bash
-npm run selftest     # 239 项断言
+npm run selftest     # 244 项断言
 npm run audit        # 参数有效性审计 (改了就一定变)
 ```
 
@@ -440,6 +443,7 @@ node scripts/shot-receiver.mjs        # 监听 127.0.0.1:5274, 把页面回传�
 - `dev/twist-check.html` —— 扭曲句柄自检: 视口出现 5 个可拖拽句柄，模拟拖拽后验证树干/树枝曲线参数、几何重建、树枝层级/无枝层级提示、关闭句柄
 - `dev/leaf-panel-check.html` —— 叶片面板 UI 回归: 展开「叶片形态」，确认没有孤立属性/源码片段被当成正文显示（修复过 `hint="..." />` 漏进页面的问题）
 - `dev/leaf-shapes-check.html` —— 叶形白模预览自检: 9 种叶形共用 1 个 WebGL canvas，每格都有实际像素白模，拖拽格子可多视角旋转且不误切换叶形，点击格子可切换当前叶形并正确高亮
+- `dev/triangle-stats-check.html` —— 面数显示准确性自检: 开满花时「全模三角面」包含花朵，LOD0/1/2 的「当前面数」与实际可见模型几何、lodInfo 逐项一致，切换 LOD 时全模面数保持不变
 - `dev/environments-check.html` —— 环境预设自检: 9 种环境的背景/太阳/环境光/地面/曝光/雾/星空逐项校验 + 真实点击「场景 → 环境预设」按钮；群星星空跟随相机、切环境不重建树几何
 - `dev/export-split-check.html` —— 导出节点拆分自检: 视口场景与真实导出的 GLB/OBJ 中，树干、树枝各层、根、果实、树叶是否都是独立节点/mesh，且面数守恒；「合并树干与树枝 mesh」开关打开后是否只剩单棵 `Bark` 节点、关闭后恢复拆分
 - `dev/export-format-check.html` —— 导出数据格式自检: GLB 按 glTF 2.0 规范校验容器/accessor/min-max/贴图/节点并用官方 GLTFLoader 回读, OBJ 按 Wavefront 文法校验并用 OBJLoader 回读, PNG 校验签名/IHDR/CRC/IDAT/行滤波并确认非空帧, 参数 JSON 校验结构完整性与导入回环, 以及"特效全开时的富场景导出"

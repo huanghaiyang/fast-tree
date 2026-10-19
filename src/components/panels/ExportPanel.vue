@@ -56,7 +56,7 @@
     <div class="kv"><span class="k">树枝数量</span><b>{{ stats.branches }}</b></div>
     <div class="kv"><span class="k">叶片数量</span><b>{{ stats.leaves }}</b></div>
     <div class="kv"><span class="k">三角面</span><b>{{ totalTriangles.toLocaleString() }}</b></div>
-    <div class="kv"><span class="k">顶点</span><b>{{ (stats.barkVertices + stats.leafVertices).toLocaleString() }}</b></div>
+    <div class="kv"><span class="k">顶点</span><b>{{ modelVertices.toLocaleString() }}</b></div>
     <div class="kv"><span class="k">构建耗时</span><b>{{ stats.buildMs.toFixed(1) }} ms</b></div>
     <div class="kv"><span class="k">树高</span><b>{{ stats.height.toFixed(2) }} m</b></div>
     <div class="kv"><span class="k">冠幅</span><b>{{ stats.spread.toFixed(2) }} m</b></div>
@@ -80,11 +80,13 @@ import SliderRow from '../ui/SliderRow.vue'
 import SelectRow from '../ui/SelectRow.vue'
 import ToggleRow from '../ui/ToggleRow.vue'
 import { state, sceneApi, totalTriangles, doGenerateImpostor, downloadImpostor, setImpostorPreview } from '../../store/treeStore.js'
+import { modelVertexCount } from '../../core/modelStats.js'
 import { exportParamsJSON, readTextFile } from '../../core/exporter.js'
 import { importParamsJSON } from '../../store/treeStore.js'
 
 const stats = computed(() => state.stats)
 const renderInfo = computed(() => state.renderInfo)
+const modelVertices = computed(() => modelVertexCount(state.stats))
 const eo = state.params.exportOptions
 const busy = ref(false)
 /* 伪装卡生成器 */

@@ -7,6 +7,7 @@ import { defaultParams, cloneParams, normalizeParams, MAX_LEVELS, GROUP_KEYS } f
 import { ENVIRONMENTS, ENV_IDS, envById, applyEnvironment } from '../src/core/environments.js'
 import { TWIST_POINTS, normalizeTwistProfile, sampleTwistProfile, twistProfileRad } from '../src/core/twist.js'
 import { splitBarkGeometryByNodeGroups, barkGroupName, barkExportParts } from '../src/core/exportSplit.js'
+import { modelTriangleCount, modelVertexCount } from '../src/core/modelStats.js'
 import { autoGenerate, autoWind, applyPreset, PRESETS } from '../src/core/presets.js'
 import {
   SPECIES, GROWTH_STAGES, SEASONS, composeTree, classificationName, allCombinations,
@@ -1463,6 +1464,23 @@ console.log('\n[28] 站点图标')
   const html = readFileSync('index.html', 'utf8')
   check('index.html 已引用 SVG/ICO/苹果图标', /rel="icon"[^>]*favicon\.svg/.test(html) &&
     /rel="icon"[^>]*favicon\.ico|href="\/favicon.ico"/.test(html) && /apple-touch-icon/.test(html) && /theme-color/.test(html))
+}
+
+/* 29. 面数统计 (视口右下角) */
+console.log('\n[29] 面数统计')
+{
+  const sample = { barkTriangles: 122242, leafTriangles: 69120, flowerTriangles: 30720, barkVertices: 80000, leafVertices: 30000, flowerVertices: 9000 }
+  check('全模三角面包含花朵', modelTriangleCount(sample) === 122242 + 69120 + 30720, String(modelTriangleCount(sample)))
+  check('全模顶点包含花朵', modelVertexCount(sample) === 80000 + 30000 + 9000, String(modelVertexCount(sample)))
+  check('无花朵时统计正确', modelTriangleCount({ barkTriangles: 10, leafTriangles: 5 }) === 15)
+  check('统计字段缺失/空值不报错', modelTriangleCount({}) === 0 && modelVertexCount(null) === 0)
+  const p = normalizeParams(applyPreset(defaultParams(), 'oak', 'mature', 'summer'))
+  p.flower.enabled = true
+  p.flower.count = 12
+  const r = buildTree(p)
+  check('建筑统计: 开花的树全模面数 = 树皮+叶+花', modelTriangleCount(r.stats) ===
+    Math.round(r.stats.barkTriangles + r.stats.leafTriangles + r.stats.flowerTriangles) &&
+    r.stats.flowerTriangles > 0)
 }
 
 /* 汇总 */
