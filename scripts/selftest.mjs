@@ -6,6 +6,7 @@ import { buildTree, selectionRanges } from '../src/core/treeBuilder.js'
 import { defaultParams, cloneParams, normalizeParams, MAX_LEVELS, GROUP_KEYS } from '../src/core/params.js'
 import { ENVIRONMENTS, ENV_IDS, envById, applyEnvironment } from '../src/core/environments.js'
 import { TWIST_POINTS, normalizeTwistProfile, sampleTwistProfile, twistProfileRad } from '../src/core/twist.js'
+import { splitBarkGeometryByNodeGroups, barkGroupName, barkExportParts } from '../src/core/exportSplit.js'
 import { autoGenerate, autoWind, applyPreset, PRESETS } from '../src/core/presets.js'
 import {
   SPECIES, GROWTH_STAGES, SEASONS, composeTree, classificationName, allCombinations,
@@ -1374,6 +1375,49 @@ console.log('\n[26] 扭曲曲线与句柄')
   delete legacy.branches.twistProfile
   const l = buildTree(legacy)
   check('旧参数 (无 twistProfile) 兼容: 几何与默认一致', l.barkGeometry.attributes.position.array.every((v, i) => v === a.barkGeometry.attributes.position.array[i]))
+}
+
+/* 27. 导出拆分: 树干 / 树枝 / 根 / 果实 独立节点 */
+console.log('\n[27] 导出节点拆分')
+{
+  const p = normalizeParams(applyPreset(defaultParams(), 'oak', 'mature', 'summer'))
+  const r = buildTree(p)
+  const parts = splitBarkGeometryByNodeGroups(r.barkGeometry, r.nodes)
+  const names = parts.map((x) => x.name)
+  check('树皮被拆成多个节点', parts.length >= 6, names.join(', '))
+  check('树干是独立节点', names.includes('Bark_Trunk'))
+  check('树枝按层级拆分', names.includes('Bark_Branch_L1') && names.includes('Bark_Branch_L2') && names.includes('Bark_Branch_L3'))
+  check('树根/果实也拆分', names.includes('Bark_Roots') && names.includes('Bark_Fruit'))
+  const triSum = parts.reduce((s, x) => s + x.triangles, 0)
+  const vSum = parts.reduce((s, x) => s + x.vertices, 0)
+  check('拆分后面数守恒', triSum === r.stats.barkTriangles, `${triSum} vs ${r.stats.barkTriangles}`)
+  check('拆分后顶点数守恒', vSum === r.stats.barkVertices, `${vSum} vs ${r.stats.barkVertices}`)
+  check('每个拆分节点都有几何且属性齐全', parts.every((x) =>
+    x.triangles > 0 && x.geometry.attributes.position && x.geometry.attributes.normal &&
+    x.geometry.attributes.uv && x.geometry.attributes.color && x.geometry.attributes.aNodeId && x.geometry.index))
+  const byId = new Map(r.nodes.map((n) => [n.id, n]))
+  let mixed = ''
+  for (const part of parts) {
+    const ids = part.geometry.attributes.aNodeId.array
+    const labels = new Set()
+    for (let i = 0; i < ids.length; i++) labels.add(barkGroupName(byId.get(ids[i])))
+    if (labels.size !== 1 || [...labels][0] !== part.name) mixed += part.name + ':' + [...labels].join('|') + ';'
+  }
+  check('拆分节点内不混入其它节点组', mixed === '', mixed)
+  check('拆分不修改原树皮几何', r.barkGeometry.attributes.position.count === r.stats.barkVertices &&
+    r.barkGeometry.attributes.aNodeId.count === r.stats.barkVertices)
+
+  // 导出开关: 是否合并树干/树枝
+  const merged = barkExportParts(r.barkGeometry, r.nodes, true)
+  check('mergeBark=true: 树干+树枝合成一棵 Bark mesh', merged.filter((x) => x.name === 'Bark').length === 1 &&
+    !merged.some((x) => x.name === 'Bark_Trunk' || x.name.startsWith('Bark_Branch_')), merged.map((x) => x.name).join(','))
+  check('mergeBark=true: 树根/果实保持独立', merged.some((x) => x.name === 'Bark_Roots') &&
+    merged.some((x) => x.name === 'Bark_Fruit'), merged.map((x) => x.name).join(','))
+  const split2 = barkExportParts(r.barkGeometry, r.nodes, false)
+  check('mergeBark=false: 默认按节点拆分', split2.length >= 6 && split2.some((x) => x.name === 'Bark_Trunk') &&
+    split2.some((x) => x.name === 'Bark_Branch_L1'))
+  check('导出开关不改变几何与面数', merged.reduce((s, x) => s + x.triangles, 0) === r.stats.barkTriangles &&
+    split2.reduce((s, x) => s + x.triangles, 0) === r.stats.barkTriangles)
 }
 
 /* 汇总 */

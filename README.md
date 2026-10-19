@@ -214,6 +214,7 @@ src/
    ├─ treeBuilder.js   递归生长 + finalizeNodes (节点表/id 重排/统计/包围盒) + selectionRanges
    ├─ ambientOcclusion.js  程序化 AO: 叶片点云空间哈希 + 顶点色烘焙 (Node 可复现)
    ├─ twist.js         树干/树枝 5 点扭曲曲线 (采样/钳制/默认值)
+   ├─ exportSplit.js   导出按节点拆分树干/树枝各层/根/果实 (渲染仍合并)
    ├─ environments.js  环境预设 (白昼/黄昏/森林/雨林/沙漠/雪地/高原/黑夜/群星)
    ├─ textures.js      程序化树皮/叶片贴图 (颜色+法线+粗糙度)
    ├─ materials.js     PBR + 风场/生长/自定义 GLSL + 节点选中高亮
@@ -222,7 +223,7 @@ src/
    ├─ appApi.js        浏览器侧命令执行器 + 本地桥客户端
    └─ sceneManager.js  渲染器/相机/灯光/天空/地面/动画循环/选中框/聚焦/相机基
 scripts/
-├─ selftest.mjs        219 项无浏览器自检 (含导出格式、AO、LOD、环境预设、扭曲曲线、模板卫生)
+├─ selftest.mjs        232 项无浏览器自检 (含导出格式/节点拆分、AO、LOD、环境预设、扭曲曲线、模板卫生)
 ├─ paramAudit.mjs      参数有效性审计核心 (几何/材质/风场三路签名比对)
 ├─ audit-params.mjs    npm run audit 入口
 ├─ app-bridge-server.mjs  本地应用桥 / MCP 服务器 / 大模型代理 (Key 只在服务端)
@@ -254,6 +255,7 @@ Wind (Games)、Forces、Vertex Colors/AO、Level of Detail 与导出等章节，
 | **Wind (Games)** | 已有: 风向/强度/阵风/湍流/顺风偏置/相位空间尺度/树干摆幅/叶片扇动/铰链俯仰；顶点着色器实时计算，参数实时生效 |
 | **Growth / Seasons** | 已有: 生长进度/自动播放；树种 × 5 阶段 × 4 季节，物候只改颜色/密度不改形态 |
 | **Billboard / 伪装卡** | 已有: 多视角图集 + 交叉卡 + 俯仰层，可预览/导出 |
+| **导出结构** | GLB/OBJ 默认按节点拆分：`Bark_Trunk`、`Bark_Branch_L1..L5`、`Bark_Roots`、`Bark_Fruit`、`Leaves`、`Flowers` 各自独立 mesh/node（渲染内部仍合并成 2 个 draw call）；导出面板「合并树干与树枝 mesh」开关可切回单棵 `Bark` mesh |
 | 尚未实现（后续可做） | Rules 程序化规则、Forces/Zones 物体、Frond/Cap 生成器、Collision 导出、Lightmap UV(UV2)、.spm/Unity 原生格式 |
 
 **已知取舍**：LOD 只影响视口渲染，GLB/OBJ 导出的是 LOD0 全模（游戏引擎通常按 LOD 分文件导出）；
@@ -374,7 +376,7 @@ npm run chat:check   # 对话链路自检 (需要 Key + 网络)
 ## 自检与诊断
 
 ```bash
-npm run selftest     # 219 项断言
+npm run selftest     # 232 项断言
 npm run audit        # 参数有效性审计 (改了就一定变)
 ```
 
@@ -425,6 +427,7 @@ node scripts/shot-receiver.mjs        # 监听 127.0.0.1:5274, 把页面回传�
 - `dev/twist-check.html` —— 扭曲句柄自检: 视口出现 5 个可拖拽句柄，模拟拖拽后验证树干/树枝曲线参数、几何重建、树枝层级/无枝层级提示、关闭句柄
 - `dev/leaf-panel-check.html` —— 叶片面板 UI 回归: 展开「叶片形态」，确认没有孤立属性/源码片段被当成正文显示（修复过 `hint="..." />` 漏进页面的问题）
 - `dev/environments-check.html` —— 环境预设自检: 9 种环境的背景/太阳/环境光/地面/曝光/雾/星空逐项校验 + 真实点击「场景 → 环境预设」按钮；群星星空跟随相机、切环境不重建树几何
+- `dev/export-split-check.html` —— 导出节点拆分自检: 视口场景与真实导出的 GLB/OBJ 中，树干、树枝各层、根、果实、树叶是否都是独立节点/mesh，且面数守恒；「合并树干与树枝 mesh」开关打开后是否只剩单棵 `Bark` 节点、关闭后恢复拆分
 - `dev/export-format-check.html` —— 导出数据格式自检: GLB 按 glTF 2.0 规范校验容器/accessor/min-max/贴图/节点并用官方 GLTFLoader 回读, OBJ 按 Wavefront 文法校验并用 OBJLoader 回读, PNG 校验签名/IHDR/CRC/IDAT/行滤波并确认非空帧, 参数 JSON 校验结构完整性与导入回环, 以及"特效全开时的富场景导出"
 - `dev/chat-check.html` —— 对话界面自检 (mock 流式接口): 历史记录/新对话隔离/图片多模态请求/思考过程/重新生成/引用/删除/收藏/置顶/归档/联网来源渲染, 不消耗真实模型调用
 - `dev/chat-live-check.html` —— 对话真实链路冒烟 (真实桥 + 真实模型): 文本对话/图片识别/联网搜索来源。先 `node scripts/app-bridge-server.mjs --port=5289` 再打开

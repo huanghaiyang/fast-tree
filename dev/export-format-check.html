@@ -303,7 +303,9 @@ function validateGLTF(json, bin, label) {
       }
       req(prim.mode === undefined || prim.mode === 4, tag + ' mode=' + prim.mode + ' (本导出预期只有三角形)')
       if (prim.material !== undefined) req(prim.material < (json.materials || []).length, tag + ' material 非法')
-      const name = (mesh.name || '') + ''
+      // 节点名在导出时会保留 (three 的 GLTFExporter 不写 mesh.name); 两者结合分类
+      const meshNodeName = (json.nodes || []).find((n) => n.mesh === mi)?.name || ''
+      const name = ((mesh.name || '') + ' ' + meshNodeName).trim()
       if (/Bark/i.test(name)) triangleTotal.bark += tris
       else if (/Leaves/i.test(name)) triangleTotal.leaf += tris
       else if (/Flowers/i.test(name)) triangleTotal.flower += tris

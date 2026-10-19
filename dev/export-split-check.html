@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>export-split: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+/* 导出节点拆分自检: 树干与树枝必须是不同 mesh / node, 不能合并 */
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+let fail = 0
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+const check = (name, cond, detail = '') => {
+  if (!cond) fail++
+  line((cond ? '✔ ' : '✘ ') + name + (detail ? ' — ' + detail : ''))
+}
+async function waitFor(fn, timeout = 20000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { if (fn()) return true } catch (e) { /* ignore */ }
+    await sleep(100)
+  }
+  return false
+}
+function parseGLB(buf) {
+  const dv = new DataView(buf)
+  if (dv.getUint32(0, true) !== 0x46546c67) throw new Error('不是 GLB')
+  let off = 12
+  while (off < buf.byteLength) {
+    const len = dv.getUint32(off, true)
+    const type = dv.getUint32(off + 4, true)
+    const data = new Uint8Array(buf, off + 8, len)
+    if (type === 0x4e4f534a) return JSON.parse(new TextDecoder().decode(data))
+    off += 8 + len
+  }
+  throw new Error('缺少 JSON chunk')
+}
+let win, doc
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    for (let i = 0; i < 120 && !win; i++) await sleep(100)
+    await waitFor(() => win.__fastTree && win.__fastTreeScene && win.__fastTree.ready, 30000)
+    const scene = win.__fastTreeScene
+    const state = win.__fastTree
+    await sleep(600)
+
+    line('===== 导出节点拆分 =====')
+    const group = scene.buildExportGroup()
+    const meshes = group.children.filter((o) => o.isMesh)
+    const names = meshes.map((m) => m.name)
+    check('导出组是 FastTree 根节点', group.name === 'FastTree')
+    check('树干与树枝是不同 mesh 节点', names.includes('Bark_Trunk') && names.includes('Bark_Branch_L1') &&
+      names.indexOf('Bark_Trunk') !== names.indexOf('Bark_Branch_L1'), names.join(', '))
+    check('树枝按层级拆分 (L1/L2/L3...)', names.filter((n) => /^Bark_Branch_L\d$/.test(n)).length >= 3,
+      names.filter((n) => /^Bark_Branch_L\d$/.test(n)).join(','))
+    check('叶片/花朵仍是独立节点', names.includes('Leaves'))
+    const trunkMesh = meshes.find((m) => m.name === 'Bark_Trunk')
+    const branchMesh = meshes.find((m) => m.name === 'Bark_Branch_L1')
+    check('树干节点有几何且与树枝材质相同', !!trunkMesh && trunkMesh.geometry.index.count > 0 &&
+      !!branchMesh && trunkMesh.material === branchMesh.material)
+    const sumTris = meshes.filter((m) => /^Bark_/.test(m.name))
+      .reduce((s, m) => s + (m.geometry.index ? m.geometry.index.count / 3 : 0), 0)
+    check('拆分后面数守恒', Math.abs(sumTris - state.stats.barkTriangles) < 1, `${sumTris} vs ${state.stats.barkTriangles}`)
+    check('原场景网格未被修改', scene.barkMesh.name === 'Bark' && !!scene.barkMesh.geometry.index)
+
+    // 真实导出的 GLB: 节点名 / mesh 名 / 层级
+    const blob = await scene.exportGLB('split-test.glb')
+    const json = parseGLB(await blob.arrayBuffer())
+    const glbNodes = json.nodes || []
+    const glbMeshes = json.meshes || []
+    const nodeNames = glbNodes.map((n) => n.name || '')
+    const meshNames = glbMeshes.map((m) => m.name || '')
+    check('GLB 中树干 node 存在', nodeNames.includes('Bark_Trunk'), nodeNames.slice(0, 12).join(','))
+    check('GLB 中树枝 node 存在', nodeNames.includes('Bark_Branch_L1'))
+    check('GLB 树干/树枝对应不同 mesh', (() => {
+      const t = glbNodes.find((n) => n.name === 'Bark_Trunk')
+      const b = glbNodes.find((n) => n.name === 'Bark_Branch_L1')
+      return !!t && !!b && t.mesh !== undefined && b.mesh !== undefined && t.mesh !== b.mesh
+    })(), 'trunkMesh=' + (glbNodes.find((n) => n.name === 'Bark_Trunk') || {}).mesh +
+      ' branchMesh=' + (glbNodes.find((n) => n.name === 'Bark_Branch_L1') || {}).mesh +
+      ' meshNames=' + meshNames.slice(0, 10).join('|'))
+    check('GLB 保留叶片节点', nodeNames.includes('Leaves'))
+    check('GLB mesh 数量随拆分增加 (>=4)', glbMeshes.length >= 4, 'meshes=' + glbMeshes.length)
+    check('GLB 节点名唯一', new Set(nodeNames.filter(Boolean)).size === nodeNames.filter(Boolean).length)
+
+    // OBJ 也保留对象名
+    const objText = scene.exportOBJ('split-test.obj')
+    check('OBJ 含 o Bark_Trunk', /^o Bark_Trunk$/m.test(objText))
+    check('OBJ 含 o Bark_Branch_L1', /^o Bark_Branch_L1$/m.test(objText))
+    check('OBJ 含 o Leaves', /^o Leaves$/m.test(objText))
+
+    // 开关: 是否合并树干/树枝 mesh
+    line('\n===== 导出开关: 合并树干与树枝 mesh =====')
+    check('默认不合并 (按节点拆分)', state.params.exportOptions.mergeBark === false)
+    const exportTab = [...doc.querySelectorAll('.tab')].find((t) => (t.textContent || '').includes('导出'))
+    check('存在"导出"标签页', !!exportTab)
+    exportTab.click()
+    await sleep(300)
+    const mergeLabel = [...doc.querySelectorAll('.section .inline label')].find((l) => (l.textContent || '').includes('合并树干与树枝 mesh'))
+    check('导出面板存在「合并树干与树枝 mesh」开关', !!mergeLabel)
+    mergeLabel.click()
+    await sleep(300)
+    check('打开开关后参数 = true', state.params.exportOptions.mergeBark === true)
+    const mergedGroup = scene.buildExportGroup()
+    const mergedNames = mergedGroup.children.filter((o) => o.isMesh).map((m) => m.name)
+    check('合并后树干+树枝只有一个 Bark mesh', mergedNames.filter((n) => n === 'Bark').length === 1 &&
+      !mergedNames.some((n) => n === 'Bark_Trunk' || n.startsWith('Bark_Branch_')))
+    check('合并后树根/果实仍独立', mergedNames.includes('Bark_Roots') && mergedNames.includes('Bark_Fruit'),
+      mergedNames.join(','))
+    check('合并后仍未把树叶并进树皮', mergedNames.includes('Bark') && mergedNames.includes('Leaves'))
+    const mergedObj = scene.exportOBJ('merge-test.obj')
+    check('OBJ 合并模式含 o Bark', /^o Bark$/m.test(mergedObj))
+    check('OBJ 合并模式不再含 o Bark_Trunk', !/^o Bark_Trunk$/m.test(mergedObj))
+    check('OBJ 合并模式仍含 o Bark_Roots / o Bark_Fruit', /^o Bark_Roots$/m.test(mergedObj) && /^o Bark_Fruit$/m.test(mergedObj))
+    const mergedBlob = await scene.exportGLB('merge-test.glb')
+    const mergedJson = parseGLB(await mergedBlob.arrayBuffer())
+    const mergedNodeNames = (mergedJson.nodes || []).map((n) => n.name || '')
+    check('GLB 合并模式节点含 Bark / Leaves', mergedNodeNames.includes('Bark') && mergedNodeNames.includes('Leaves'),
+      mergedNodeNames.join(','))
+    check('GLB 合并模式仍含树根/果实节点', mergedNodeNames.includes('Bark_Roots') && mergedNodeNames.includes('Bark_Fruit'))
+    check('GLB 合并模式不再拆树干/树枝节点', !mergedNodeNames.some((n) => n === 'Bark_Trunk' || n.startsWith('Bark_Branch_')))
+
+    // 关掉开关恢复拆分
+    mergeLabel.click()
+    await sleep(300)
+    check('关闭开关后参数 = false', state.params.exportOptions.mergeBark === false)
+    const backGroup = scene.buildExportGroup()
+    const backNames = backGroup.children.filter((o) => o.isMesh).map((m) => m.name)
+    check('关闭后恢复树干/树枝拆分节点', backNames.includes('Bark_Trunk') && backNames.includes('Bark_Branch_L1'))
+
+    line('\n结果: ' + (fail ? 'EXPORTSPLIT-FAIL ' + fail : 'EXPORTSPLIT-OK'))
+    document.title = (fail ? 'EXPORTSPLIT-FAIL(' + fail + ')' : 'EXPORTSPLIT-OK') + ' :: ' +
+      R.filter((s) => s.startsWith('✘')).slice(0, 5).join(' | ')
+  } catch (e) {
+    document.title = 'EXPORTSPLIT-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 900)
+    line('EX: ' + (e && e.stack ? e.stack : e))
+  }
+}, 2400)
+</script></body></html>

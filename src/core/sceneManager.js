@@ -17,6 +17,7 @@ import { boxInfo } from './mathUtils.js'
 import { cloneParams } from './params.js'
 import { makeRng } from './rng.js'
 import { TWIST_TIMES } from './twist.js'
+import { barkExportParts } from './exportSplit.js'
 
 const SKY_VERT = /* glsl */`
 varying vec3 vSkyPos;
@@ -1150,15 +1151,27 @@ export class TreeScene {
   buildExportGroup() {
     const g = new THREE.Group()
     g.name = this.treeGroup.name || 'FastTree'
-    for (const mesh of [this.barkMesh, this.leafMesh, this.flowerMesh]) {
-      if (!mesh) continue
-      const c = mesh.clone()
+    const add = (mesh, geometry, name) => {
+      const c = new THREE.Mesh(geometry, mesh.material)
+      c.name = name
       // 网格自身一般无变换, 但仍按世界矩阵归一化, 保证导出坐标正确
       c.matrix.copy(mesh.matrixWorld)
       c.matrix.decompose(c.position, c.quaternion, c.scale)
       c.visible = true
       g.add(c)
     }
+    // 树皮导出: 默认按节点组拆开; 用户可在导出面板选择合并树干与树枝
+    if (this.barkMesh) {
+      const opts = (this.lastParams && this.lastParams.exportOptions) || {}
+      const parts = barkExportParts(this.barkMesh.geometry, this.nodes || [], !!opts.mergeBark)
+      if (parts.length) {
+        for (const p of parts) add(this.barkMesh, p.geometry, p.name)
+      } else {
+        add(this.barkMesh, this.barkMesh.geometry, 'Bark')
+      }
+    }
+    if (this.leafMesh) add(this.leafMesh, this.leafMesh.geometry, 'Leaves')
+    if (this.flowerMesh) add(this.flowerMesh, this.flowerMesh.geometry, 'Flowers')
     g.updateMatrixWorld(true)
     return g
   }

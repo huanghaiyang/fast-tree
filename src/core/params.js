@@ -400,6 +400,13 @@ export function defaultParams() {
     // ---------------- 生长动画 ----------------
     growth: { enabled: true, value: 1.0, auto: true, speed: 0.35 },
 
+    // ---------------- 导出选项 ----------------
+    exportOptions: {
+      // false = 按节点拆分 (树干/树枝各层/根/果实/树叶/花)
+      // true  = 树干与树枝合并为一个 Bark mesh (旧行为)
+      mergeBark: false,
+    },
+
     // ---------------- 场景 ----------------
     scene: {
       env: 'custom',       // 最近一次应用的环境预设 (daylight/forest/...), 手动微调后保留名字
