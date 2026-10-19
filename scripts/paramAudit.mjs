@@ -185,6 +185,7 @@ export const DOM_DEPENDENT = new Set([
   'bark.procedural.enabled', 'bark.procedural.style', 'bark.procedural.scale', 'bark.procedural.contrast',
   'bark.texture', 'bark.normalTexture', 'bark.normalFromAlbedo', 'bark.uvWarp', 'bark.uvWarpScale',
   'leafMat.texture', 'leafMat.normalTexture', 'leafMat.normalFromAlbedo',
+  'leafMat.backTexture',
   'flower.texture', 'flower.normalFromAlbedo', 'flower.alphaTest',
   'flower.textureRepeatU', 'flower.textureRepeatV',
   // 粒子是场景级效果 (Points + 顶点着色器动画, 需要渲染器), Node 侧无法比较
@@ -388,6 +389,10 @@ function materialSignature(params) {
     un(m, 'uSway'),
     un(m, 'uLeafFlutter'),
     un(m, 'uLeafTwist'),
+    un(m, 'uBackEnabled'),
+    un(m, 'uBackColor'),
+    un(m, 'uHasBackMap'),
+    texSig(m.userData.backMap),
     typeof m.onBeforeCompile === 'function' ? 'obc' : 'none',
     typeof m.customProgramCacheKey === 'function' ? m.customProgramCacheKey() : '',
   ].join(':')

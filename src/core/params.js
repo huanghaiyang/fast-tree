@@ -352,6 +352,10 @@ export function defaultParams() {
       metalness: 0.0,
       alphaTest: 0.4,
       doubleSided: true,
+      // ---- 双面叶片: 正面/背面独立颜色与贴图 ----
+      backEnabled: false,       // true = 背面使用下面的颜色/贴图 (自动启用双面渲染)
+      backColor: '#b9d49a',     // 背面基础颜色 (与背面贴图相乘)
+      backTexture: '',          // 背面贴图 (含 alpha); 留空则沿用正面贴图, 只换颜色
       translucency: 0.45,
       // ---- 反光 (叶面高光: 湿叶/蜡质叶面) ----
       specular: 0.25,          // 高光强度

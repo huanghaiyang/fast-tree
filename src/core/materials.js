@@ -15,6 +15,17 @@ import * as THREE from 'three'
 import { albedoNormalTexture } from './normalFromAlbedo.js'
 import { makeBarkTextures, makeLeafTexture, loadTexture, setTextureRepeat, disposeTexture } from './textures.js'
 
+/** 背面贴图的兜底采样: 1×1 白色纹理 (始终绑定 sampler, 避免 uniform 为空) */
+let _whitePixelTexture = null
+function whitePixelTexture() {
+  if (!_whitePixelTexture) {
+    _whitePixelTexture = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, THREE.RGBAFormat)
+    _whitePixelTexture.colorSpace = THREE.NoColorSpace
+    _whitePixelTexture.needsUpdate = true
+  }
+  return _whitePixelTexture
+}
+
 const VERTEX_HEADER = /* glsl */`
 attribute float aWind;
 attribute float aPhase;
@@ -136,6 +147,11 @@ uniform float uScatter;
 uniform float uScatterPower;
 uniform vec3 uSunDir;
 uniform vec3 uSunColor;
+// --- 双面叶片: 背面独立颜色/贴图 ---
+uniform float uBackEnabled;
+uniform vec3 uBackColor;
+uniform float uHasBackMap;
+uniform sampler2D uBackMap;
 // --- 模型节点选中 ---
 uniform float uSelectMode;
 uniform vec3 uSelColor;
@@ -148,11 +164,17 @@ varying float vTreeSelected;
 
 function fragmentBody(customFragment) {
   return /* glsl */`
-  #if defined( USE_COLOR ) || defined( USE_COLOR_ALPHA )
-    // three r186: vColor 永远是 vec4 (USE_COLOR 时 vColor.rgb 承载颜色)
-    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vColor.rgb, uVertexColorMix);
-  #endif
-  diffuseColor.rgb *= uTint;
+  // 双面叶片: 背面使用独立颜色/贴图, 不参与正面的季节顶点色染色
+  bool treeBackFace = (uBackEnabled > 0.5) && !gl_FrontFacing;
+  if (treeBackFace) {
+    diffuseColor.rgb *= uBackColor;
+  } else {
+    #if defined( USE_COLOR ) || defined( USE_COLOR_ALPHA )
+      // three r186: vColor 永远是 vec4 (USE_COLOR 时 vColor.rgb 承载颜色)
+      diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vColor.rgb, uVertexColorMix);
+    #endif
+    diffuseColor.rgb *= uTint;
+  }
   // --- 模型节点: 隔离 / 变暗 / 选中着色 ---
   if (uSelectMode > 1.5 && vTreeSelected < 0.5) {
     if (uSelectMode < 2.5) discard;                 // 仅显示选中
@@ -203,12 +225,25 @@ const LEAF_REFLECTION = /* glsl */`
   #endif
 `
 
+/** 双面叶片: 用 gl_FrontFacing 在正面贴图 / 背面贴图之间切换 (alpha 一起切换) */
+const LEAF_BACK_MAP_FRAGMENT = /* glsl */`
+#ifdef USE_MAP
+  vec4 treeFrontTexel = texture2D( map, vMapUv );
+  if (uBackEnabled > 0.5 && !gl_FrontFacing) {
+    vec4 treeBackTexel = (uHasBackMap > 0.5) ? texture2D( uBackMap, vMapUv ) : treeFrontTexel;
+    diffuseColor *= treeBackTexel;
+  } else {
+    diffuseColor *= treeFrontTexel;
+  }
+#endif
+`
+
 /** 供自检使用: 返回注入用的 GLSL 片段与声明头 (静态检查"用了但没声明"的 uniform) */
 export function internalShaderSources() {
   return {
     fragmentHeader: FRAGMENT_HEADER,
     vertexHeader: VERTEX_HEADER,
-    snippets: { TRANSLUCENCY, LEAF_REFLECTION, SELECTION_GLOW },
+    snippets: { TRANSLUCENCY, LEAF_REFLECTION, SELECTION_GLOW, LEAF_BACK_MAP_FRAGMENT },
   }
 }
 
@@ -330,6 +365,11 @@ export function perMaterialUniforms(params, isLeaf) {
     uScatterPower: { value: (m.scatterPower === undefined ? 2 : m.scatterPower) },
     uLeafFlutter: { value: w.leafFlutter },
     uLeafTwist: { value: w.leafTwist },
+    // 双面叶片
+    uBackEnabled: { value: 0 },
+    uBackColor: { value: new THREE.Color(m.backColor || '#b9d49a') },
+    uHasBackMap: { value: 0 },
+    uBackMap: { value: whitePixelTexture() },
   }
 }
 
@@ -364,6 +404,13 @@ function applyTreeShader(material, shaderUniforms, opts) {
       )
     }
     shader.fragmentShader = FRAGMENT_HEADER + shader.fragmentShader
+    // 双面叶片: 背面采样背面贴图 (没有背面贴图则沿用正面贴图), 正面保持原逻辑
+    if (isLeaf) {
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <map_fragment>',
+        LEAF_BACK_MAP_FRAGMENT,
+      )
+    }
     // 注意: 不能保留 three 的 <color_fragment> —— 在 vertexColors:true 时它**无条件**乘一次
     // vColor, 那样即使 uVertexColorMix=0 (贴图原色模式) 贴图仍会被季节叶色染色。
     // 用我们自己的 body 替换它: 顶点色只经过 mix(diffuse, diffuse*vColor, uVertexColorMix) 这一条路。
@@ -433,6 +480,9 @@ function flowerLeafParams(params) {
       textureRepeatV: f.textureRepeatV === undefined ? (f.textureRepeat === undefined ? 1 : f.textureRepeat) : f.textureRepeatV,
       textureRotation: f.textureRotation || 0,
       translucency: f.translucency === undefined ? params.leafMat.translucency : f.translucency,
+      // 背面独立材质只给树叶用, 花朵保持单面材质
+      backEnabled: false,
+      backTexture: '',
     },
   }
 }
@@ -566,7 +616,8 @@ export function updateLeafMaterial(mat, params, sharedUniforms) {
   // 花朵现在只有平面花卡: 两种材质都必须按贴图 alpha 裁形
   // (alphaTest = 0 会把贴图透明区绘制成黑边)
   mat.alphaTest = p.alphaTest || 0
-  mat.side = p.doubleSided ? THREE.DoubleSide : THREE.FrontSide
+  // 开启背面独立材质时自动启用双面渲染, 否则永远看不到背面
+  mat.side = (p.doubleSided || p.backEnabled) ? THREE.DoubleSide : THREE.FrontSide
   mat.color.set(0xffffff)
   // 叶片自发光: 用叶色做底, 强度由滑杆控制 (让背光/阴影里的叶子不至于死黑)
   // 自发光用独立颜色: 不再隐式拿季节叶色当底色 (否则选了贴图也会被染色)
@@ -584,6 +635,26 @@ export function updateLeafMaterial(mat, params, sharedUniforms) {
   u.uScatterPower.value = p.scatterPower === undefined ? 2 : p.scatterPower
   u.uLeafFlutter.value = params.wind.leafFlutter
   u.uLeafTwist.value = params.wind.leafTwist
+  // 双面叶片: 背面开关 / 颜色 / 独立贴图
+  u.uBackEnabled.value = p.backEnabled ? 1 : 0
+  u.uBackColor.value.set(p.backColor || '#b9d49a')
+  const backKey = p.backTexture || ''
+  if (backKey !== mat.userData.__backTexKey) {
+    mat.userData.__backTexKey = backKey
+    if (mat.userData.backMap) {
+      disposeTexture(mat.userData.backMap)
+      mat.userData.backMap = null
+    }
+    if (backKey) {
+      const tex = loadTexture(backKey, { clamp: true, repairAlpha: p.alphaRepair === true })
+      mat.userData.backMap = tex
+      u.uBackMap.value = tex
+      u.uHasBackMap.value = 1
+    } else {
+      u.uBackMap.value = whitePixelTexture()
+      u.uHasBackMap.value = 0
+    }
+  }
 
   const key = p.texture ? 'user:' + p.texture.slice(-48) : 'auto:' + params.leaves.shape
   if (key !== mat.userData.__texKey) {
@@ -626,6 +697,15 @@ export function updateLeafMaterial(mat, params, sharedUniforms) {
     mat.map.repeat.set(rru, rrv)
     mat.map.rotation = rot
     if (changed) mat.map.needsUpdate = true
+    // 背面贴图共用同一套 UV 位置/缩放/旋转
+    if (mat.userData.backMap) {
+      const bt = mat.userData.backMap
+      bt.center.set(0.5, 0.5)
+      bt.offset.set(ru, rv)
+      bt.repeat.set(rru, rrv)
+      bt.rotation = rot
+      bt.needsUpdate = true
+    }
   }
 
   // ---- 法线贴图: 显式贴图优先, 否则从 albedo 自动生成 ----

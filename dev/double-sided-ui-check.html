@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>double-sided-ui: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+/* 双面叶片 UI 自检: 材质面板开关 -> 真实 leaf 材质 uniform / 双面 side / shader 编译 */
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+let fail = 0
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+const check = (name, cond, detail = '') => {
+  if (!cond) fail++
+  line((cond ? '✔ ' : '✘ ') + name + (detail ? ' — ' + detail : ''))
+}
+async function waitFor(fn, timeout = 20000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { if (fn()) return true } catch (e) { /* ignore */ }
+    await sleep(100)
+  }
+  return false
+}
+function solidDataURL(color) {
+  const c = document.createElement('canvas')
+  c.width = c.height = 8
+  const ctx = c.getContext('2d')
+  ctx.fillStyle = color
+  ctx.fillRect(0, 0, 8, 8)
+  return c.toDataURL('image/png')
+}
+let win, doc
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    for (let i = 0; i < 120 && !win; i++) await sleep(100)
+    await waitFor(() => win.__fastTree && win.__fastTree.ready && win.__fastTreeScene, 30000)
+    const state = win.__fastTree
+    const scene = win.__fastTreeScene
+    await sleep(600)
+
+    line('===== 双面叶片 UI =====')
+    const matTab = [...doc.querySelectorAll('.tab')].find((t) => (t.textContent || '').includes('材质'))
+    check('存在「材质」标签页', !!matTab)
+    matTab.click()
+    await sleep(400)
+    const leafHead = [...doc.querySelectorAll('.section-head')].find((h) => (h.textContent || '').includes('树叶材质'))
+    check('存在「树叶材质」分组', !!leafHead)
+    const body = leafHead && leafHead.parentElement.querySelector('.section-body')
+    if (body && win.getComputedStyle(body).display === 'none') leafHead.click()
+    await sleep(400)
+    const toggleLabel = [...doc.querySelectorAll('.section .inline label')]
+      .find((l) => (l.textContent || '').includes('双面独立颜色/贴图'))
+    check('存在「双面独立颜色/贴图」开关', !!toggleLabel)
+    check('默认关闭', state.params.leafMat.backEnabled === false)
+    toggleLabel.click()
+    await waitFor(() => state.params.leafMat.backEnabled === true, 5000)
+    await sleep(500)
+    const lm = scene.materials.leaf
+    const uniforms = lm.userData.uniforms
+    check('打开后参数 = true', state.params.leafMat.backEnabled === true)
+    check('材质 uniform 生效 (uBackEnabled=1)', uniforms.uBackEnabled.value === 1)
+    check('自动启用双面渲染 (side=DoubleSide)', lm.side === 2, 'side=' + lm.side)
+    check('材质 shader 编译成功并注入 gl_FrontFacing', !!lm.userData.shader &&
+      lm.userData.shader.fragmentShader.includes('gl_FrontFacing') && !state.shaderError,
+      state.shaderError || '')
+    check('UI 出现背面颜色/贴图控件', [...doc.querySelectorAll('.section label')].some((l) => (l.textContent || '').includes('背面颜色')) &&
+      [...doc.querySelectorAll('.section label')].some((l) => (l.textContent || '').includes('背面贴图')))
+
+    // 设置背面贴图 + 光照无关的验证: uniform 绑定 & 图片加载
+    const url = solidDataURL('#33aaff')
+    state.params.leafMat.backTexture = url
+    await waitFor(() => uniforms.uHasBackMap.value === 1, 5000)
+    await waitFor(() => lm.userData.backMap && lm.userData.backMap.image && lm.userData.backMap.image.width > 0, 8000)
+    check('背面独立贴图绑定成功', uniforms.uHasBackMap.value === 1 && !!lm.userData.backMap &&
+      lm.userData.backMap.image.width === 8)
+    check('背面 uniform 指向同一张贴图', uniforms.uBackMap.value === lm.userData.backMap)
+
+    state.params.leafMat.backColor = '#ff6644'
+    await sleep(300)
+    const c = uniforms.uBackColor.value
+    check('背面颜色 uniform 更新', Math.round(c.r * 255) > 200 && Math.round(c.g * 255) < 180, c.getHexString())
+
+    // 关闭 -> 恢复
+    toggleLabel.click()
+    await waitFor(() => state.params.leafMat.backEnabled === false, 5000)
+    await sleep(300)
+    check('关闭后 uBackEnabled=0', uniforms.uBackEnabled.value === 0)
+    check('关闭后无 shader 错误', !state.shaderError, state.shaderError || '')
+
+    line('\n结果: ' + (fail ? 'DSLEAFUI-FAIL ' + fail : 'DSLEAFUI-OK'))
+    document.title = (fail ? 'DSLEAFUI-FAIL(' + fail + ')' : 'DSLEAFUI-OK') + ' :: ' +
+      R.filter((s) => s.startsWith('✘')).slice(0, 5).join(' | ')
+  } catch (e) {
+    document.title = 'DSLEAFUI-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 900)
+    line('EX: ' + (e && e.stack ? e.stack : e))
+  }
+}, 2200)
+</script></body></html>

@@ -1483,6 +1483,20 @@ console.log('\n[29] 面数统计')
     r.stats.flowerTriangles > 0)
 }
 
+/* 30. 双面叶片材质 (正面/背面独立颜色与贴图) */
+console.log('\n[30] 双面叶片材质')
+{
+  const lm = defaultParams().leafMat
+  check('双面叶片默认参数齐全', lm.backEnabled === false && typeof lm.backColor === 'string' &&
+    lm.backColor.startsWith('#') && lm.backTexture === '')
+  const src = internalShaderSources()
+  const need = ['uBackEnabled', 'uBackColor', 'uHasBackMap', 'uBackMap']
+  check('片元声明包含背面独立颜色/贴图 uniform', need.every((k) => src.fragmentHeader.includes(k)), need.join(','))
+  check('map 注入片段使用 gl_FrontFacing 切换正/背面贴图', src.snippets.LEAF_BACK_MAP_FRAGMENT.includes('gl_FrontFacing') &&
+    src.snippets.LEAF_BACK_MAP_FRAGMENT.includes('uBackMap') &&
+    src.snippets.LEAF_BACK_MAP_FRAGMENT.includes('texture2D( map, vMapUv )'))
+}
+
 /* 汇总 */
 console.log(`\n=== 结果: ${pass} 通过 / ${fail} 失败 ===`)
 if (fail) {

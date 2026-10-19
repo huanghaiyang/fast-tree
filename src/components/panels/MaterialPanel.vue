@@ -74,6 +74,16 @@
     <SliderRow label="散光边缘锐度" v-model="lm.scatterPower" :min="0.5" :max="8" :step="0.1"
       hint="越大散射越集中在叶缘" />
     <ToggleRow label="双面渲染" v-model="lm.doubleSided" />
+    <ToggleRow label="双面独立颜色/贴图" v-model="lm.backEnabled"
+      hint="开启后自动双面渲染: 正面用现有叶色/贴图, 背面用下面的独立颜色和贴图" />
+    <template v-if="lm.backEnabled">
+      <ColorRow label="背面颜色" v-model="lm.backColor" />
+      <TextureRow label="背面贴图 (含 alpha)" v-model="lm.backTexture"
+        hint="留空 = 沿用正面贴图, 只应用背面颜色; 上传后可给背面完全不同的图案" />
+      <p class="muted" style="margin: 0">
+        背面颜色会与背面贴图相乘；背面不参与正面的季节顶点色染色。
+      </p>
+    </template>
     <TextureRow label="自定义叶片贴图 (含 alpha)" v-model="lm.texture" />
     <TextureRow label="自定义法线贴图" v-model="lm.normalTexture" />
   </Section>

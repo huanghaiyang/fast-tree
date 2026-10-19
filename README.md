@@ -120,7 +120,9 @@ LOD：树皮细节倍率、叶片保留比例、叶片数上限。
 ### 6. 材质 (Materials) —— 支持自定义
 - **树皮**：4 种程序化花纹（粗糙 / 白桦 / 松鳞 / 光滑）、花纹缩放与对比、双色渐变、色调 tint、粗糙度、金属度、法线强度、凹凸强度、顶点色混合、UV 横/纵向重复，**可上传自己的颜色贴图与法线贴图**
 - **树叶**：色调、顶点色混合、粗糙度、金属度、**自发光强度**、Alpha 裁剪、**透光度(背光)**、双面渲染，
-  **可上传带 alpha 的叶片贴图与法线贴图**
+  **可上传带 alpha 的叶片贴图与法线贴图**；
+  **双面叶片**：正面/背面可分别设置颜色与贴图（背面贴图支持 alpha，留空则沿用正面贴图仅换颜色），
+  片元用 `gl_FrontFacing` 切换正/背面贴图与颜色，开启后自动双面渲染；背面不参与正面季节顶点色染色
 - **自定义 GLSL**：面板里直接写顶点/片元片段，注入到标准 PBR 材质中：
   - 顶点：`transformed / position / normal / uv / uTime / uSeed / aWind / aPhase / aOrigin / aGrow`
   - 片元：`diffuseColor / vTreeUv / vColor(需 .rgb) / uTime / uSeed / uTint`
@@ -227,7 +229,7 @@ src/
    ├─ appApi.js        浏览器侧命令执行器 + 本地桥客户端
    └─ sceneManager.js  渲染器/相机/灯光/天空/地面/动画循环/选中框/聚焦/相机基
 scripts/
-├─ selftest.mjs        244 项无浏览器自检 (含导出格式/节点拆分、AO、LOD、环境预设、扭曲曲线、站点图标、面数统计、模板卫生)
+├─ selftest.mjs        247 项无浏览器自检 (含导出格式/节点拆分、AO、LOD、环境预设、扭曲曲线、站点图标、面数统计、双面叶片、模板卫生)
 ├─ paramAudit.mjs      参数有效性审计核心 (几何/材质/风场三路签名比对)
 ├─ audit-params.mjs    npm run audit 入口
 ├─ app-bridge-server.mjs  本地应用桥 / MCP 服务器 / 大模型代理 (Key 只在服务端)
@@ -391,7 +393,7 @@ npm run chat:check   # 对话链路自检 (需要 Key + 网络)
 ## 自检与诊断
 
 ```bash
-npm run selftest     # 244 项断言
+npm run selftest     # 247 项断言
 npm run audit        # 参数有效性审计 (改了就一定变)
 ```
 
@@ -444,6 +446,8 @@ node scripts/shot-receiver.mjs        # 监听 127.0.0.1:5274, 把页面回传�
 - `dev/leaf-panel-check.html` —— 叶片面板 UI 回归: 展开「叶片形态」，确认没有孤立属性/源码片段被当成正文显示（修复过 `hint="..." />` 漏进页面的问题）
 - `dev/leaf-shapes-check.html` —— 叶形白模预览自检: 9 种叶形共用 1 个 WebGL canvas，每格都有实际像素白模，拖拽格子可多视角旋转且不误切换叶形，点击格子可切换当前叶形并正确高亮
 - `dev/triangle-stats-check.html` —— 面数显示准确性自检: 开满花时「全模三角面」包含花朵，LOD0/1/2 的「当前面数」与实际可见模型几何、lodInfo 逐项一致，切换 LOD 时全模面数保持不变
+- `dev/double-sided-leaf-check.html` —— 双面叶片材质自检: 用真实 `createLeafMaterial` 渲染平面，正面白贴图/背面蓝贴图、只换背面颜色、关闭恢复等场景逐像素验证，并确认 shader 注入 `gl_FrontFacing`
+- `dev/double-sided-ui-check.html` —— 双面叶片 UI 自检: 真实点击「材质 → 树叶材质 → 双面独立颜色/贴图」开关，验证参数、`uBackEnabled`、DoubleSide、背面贴图绑定、背面颜色 uniform、shader 编译无错误
 - `dev/environments-check.html` —— 环境预设自检: 9 种环境的背景/太阳/环境光/地面/曝光/雾/星空逐项校验 + 真实点击「场景 → 环境预设」按钮；群星星空跟随相机、切环境不重建树几何
 - `dev/export-split-check.html` —— 导出节点拆分自检: 视口场景与真实导出的 GLB/OBJ 中，树干、树枝各层、根、果实、树叶是否都是独立节点/mesh，且面数守恒；「合并树干与树枝 mesh」开关打开后是否只剩单棵 `Bark` 节点、关闭后恢复拆分
 - `dev/export-format-check.html` —— 导出数据格式自检: GLB 按 glTF 2.0 规范校验容器/accessor/min-max/贴图/节点并用官方 GLTFLoader 回读, OBJ 按 Wavefront 文法校验并用 OBJLoader 回读, PNG 校验签名/IHDR/CRC/IDAT/行滤波并确认非空帧, 参数 JSON 校验结构完整性与导入回环, 以及"特效全开时的富场景导出"
