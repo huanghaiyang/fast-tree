@@ -627,6 +627,12 @@ export function buildTree(params, options = {}) {
   if (R && R.enabled && R.count > 0) {
     const rootRng = makeRng(P.seed, 'roots')
     const rc = Math.max(1, Math.round(R.count))
+    // 根系窗口错位: 两个粗根如果方位很接近, 又在同一高度开窗, 两个洞会挤在一起。
+    // 按方位做贪心分层, 同一层里只放"角向不重叠"的根, 重叠的根分到更高的层。
+    const rootTiers = [[], [], [], []]
+    const rootStaggerGap = 0.075
+    const rootHeightOffset = R.heightOffset === undefined ? 0 : Number(R.heightOffset) || 0
+    const rootAutoStagger = R.autoStagger !== false
     for (let k = 0; k < rc; k++) {
       const u = (k + 0.5) / rc
       const az = u * Math.PI * 2 * (R.spread === undefined ? 1 : R.spread) + rootRng.range(-0.25, 0.25)
@@ -652,7 +658,25 @@ export function buildTree(params, options = {}) {
       if (rootDirH.lengthSq() < 1e-8) rootDirH.set(1, 0, 0)
       rootDirH.normalize()
       const rootEpsT = Math.min(0.12, Math.max(0.01, (radius0 * 1.15) / Math.max(1, t.height)))
-      const rootT = Math.min(0.2, Math.max(0.05, rootEpsT * 2.4))
+      const rootBaseT = Math.min(0.2, Math.max(0.05, rootEpsT * 2.4))
+      // 自动错位: 至少让相邻序号的根分到不同高度 (k%2), 再按角向冲突继续加层。
+      let rootTier = rootAutoStagger && rc > 1 ? (k % 2) : 0
+      if (rootAutoStagger) {
+        // 根窗口的角向宽度 (粗根接近半圆, 用 asin 估算)
+        const rootWidth = 2 * Math.asin(Math.min(0.95, radius0 / Math.max(0.05, t.baseRadius)))
+        for (; rootTier < 3; rootTier++) {
+          const conflict = rootTiers[rootTier].some((q) => {
+            let da = Math.abs(q.az - az)
+            da = Math.min(da, Math.PI * 2 - da)
+            return da < (q.width + rootWidth) * 0.55 + 0.06
+          })
+          if (!conflict) break
+        }
+        rootTier = Math.min(rootTier, 3)
+        rootTiers[rootTier].push({ az, width: rootWidth })
+      }
+      const rootT = Math.min(0.35, Math.max(0.02,
+        rootBaseT + rootTier * rootStaggerGap + rootHeightOffset + rootRng.range(-0.008, 0.008)))
       const rootFrame = sampleFrame(trunkFrames, rootT)
       // 树根也跟随主干的扭转
       rootDirH.applyAxisAngle(rootFrame.dir, rootFrame.roll || 0)

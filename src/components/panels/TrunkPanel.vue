@@ -71,6 +71,10 @@
     <ToggleRow label="启用树根" v-model="r.enabled" />
     <template v-if="r.enabled">
       <SliderRow label="数量" v-model="r.count" :min="1" :max="16" :step="1" />
+      <SliderRow label="上下偏移" v-model="r.heightOffset" :min="-0.15" :max="0.15" :step="0.005"
+        hint="整组树根沿树干上下移动（相对树高）；正 = 上移，负 = 下移" />
+      <ToggleRow label="自动错位开窗" v-model="r.autoStagger"
+        hint="按根系方位把相互重叠的根分到不同高度，尽量避免两个根窗口挤在同一处" />
       <SliderRow label="长度 (相对树高)" v-model="r.length" :min="0.02" :max="0.6" :step="0.01" />
       <SliderRow label="长度随机" v-model="r.lengthVariance" :min="0" :max="0.8" :step="0.02" />
       <SliderRow label="半径比" v-model="r.radiusRatio" :min="0.1" :max="0.9" :step="0.02" />

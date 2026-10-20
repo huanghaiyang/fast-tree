@@ -129,6 +129,8 @@ export function defaultParams() {
       radialSegments: 5,
       curve: 0.5,
       sink: 0.35,          // 向下垂的强度
+      heightOffset: 0,     // 树根整体上下偏移 (相对树高; 正=上移)
+      autoStagger: true,   // 自动把方位重叠的根错开到不同高度, 避免窗口挤在一起
     },
 
     // ---------------- 树枝 ----------------
