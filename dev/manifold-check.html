@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>manifold: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+let fail = 0
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+const check = (name, cond, detail = '') => {
+  if (!cond) fail++
+  line((cond ? '✔ ' : '✘ ') + name + (detail ? ' — ' + detail : ''))
+}
+async function waitFor(fn, timeout = 30000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { if (fn()) return true } catch { /* ignore */ }
+    await sleep(100)
+  }
+  return false
+}
+function edgeStats(geo) {
+  const m = new Map()
+  const idx = geo.index
+  const key = (a, b) => (a < b ? a + ':' + b : b + ':' + a)
+  for (let i = 0; i < idx.count; i += 3) {
+    const t = [idx.getX(i), idx.getX(i + 1), idx.getX(i + 2)]
+    for (let e = 0; e < 3; e++) {
+      const k = key(t[e], t[(e + 1) % 3])
+      m.set(k, (m.get(k) || 0) + 1)
+    }
+  }
+  let boundary = 0, nonManifold = 0
+  for (const c of m.values()) {
+    if (c === 1) boundary++
+    else if (c > 2) nonManifold++
+  }
+  return { boundary, nonManifold }
+}
+function componentCount(geo) {
+  const idx = geo.index
+  const n = geo.attributes.position.count
+  const adj = Array.from({ length: n }, () => [])
+  for (let i = 0; i < idx.count; i += 3) {
+    const a = idx.getX(i), b = idx.getX(i + 1), c = idx.getX(i + 2)
+    adj[a].push(b, c); adj[b].push(a, c); adj[c].push(a, b)
+  }
+  const seen = new Uint8Array(n)
+  let comps = 0
+  for (let i = 0; i < n; i++) {
+    if (seen[i] || !adj[i].length) continue
+    comps++
+    const stack = [i]
+    seen[i] = 1
+    while (stack.length) {
+      const v = stack.pop()
+      for (const w of adj[v]) if (!seen[w]) { seen[w] = 1; stack.push(w) }
+    }
+  }
+  return comps
+}
+function parseGLB(buf) {
+  const dv = new DataView(buf)
+  if (dv.getUint32(0, true) !== 0x46546c67) throw new Error('不是 GLB')
+  let off = 12
+  while (off < buf.byteLength) {
+    const len = dv.getUint32(off, true)
+    const type = dv.getUint32(off + 4, true)
+    const data = new Uint8Array(buf, off + 8, len)
+    if (type === 0x4e4f534a) return JSON.parse(new TextDecoder().decode(data))
+    off += 8 + len
+  }
+  throw new Error('缺少 JSON chunk')
+}
+let win, doc
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    for (let i = 0; i < 150 && !win; i++) await sleep(100)
+    await waitFor(() => win.__fastTree && win.__fastTree.ready && win.__fastTreeScene, 30000)
+    const scene = win.__fastTreeScene
+    const state = win.__fastTree
+    state.params.fruit.enabled = false
+    state.params.leaves.enabled = false
+    await sleep(500)
+    const trunkTab = [...doc.querySelectorAll('.tab')].find((t) => (t.textContent || '').includes('树干'))
+    trunkTab && trunkTab.click(); await sleep(300)
+    const label = [...doc.querySelectorAll('label')].find((l) => (l.textContent || '').includes('枝干穿插处理'))
+    const sel = label ? label.parentElement.querySelector('select') : null
+    check('存在「枝干穿插处理」下拉', !!sel)
+    check('下拉包含严格一体流形选项', !!sel && [...sel.options].some((o) => o.value === 'manifold'),
+      sel ? [...sel.options].map((o) => o.value).join(',') : '')
+    const baseTris = state.stats.barkTriangles
+    sel.value = 'manifold'; sel.dispatchEvent(new Event('change', { bubbles: true }))
+    // 先等 WASM 加载完成后的第二次重建: 三角面变化 + 无边界/非流形边
+    const ok = await waitFor(() => {
+      const geo = scene.barkMesh.geometry
+      const es = edgeStats(geo)
+      return state.params.trunk.junctionMode === 'manifold' &&
+        state.stats.barkTriangles !== baseTris && es.boundary === 0 && es.nonManifold === 0
+    }, 60000)
+    const geo = scene.barkMesh.geometry
+    const es = edgeStats(geo)
+    check('严格流形模式生成新几何', state.stats.barkTriangles !== baseTris,
+      `${baseTris} -> ${state.stats.barkTriangles}`)
+    check('严格流形: 无边界边', es.boundary === 0, 'boundary=' + es.boundary)
+    check('严格流形: 无非流形边', es.nonManifold === 0, 'nonManifold=' + es.nonManifold)
+    check('严格流形: 单连通体 (1 个组件)', componentCount(geo) === 1, 'components=' + componentCount(geo))
+    check('严格流形模式等待 WASM 完成', ok)
+    check('严格流形自动打开一体建模', state.params.trunk.onePiece === true)
+    const preview = await scene.prepareExport('glb', 'manifold.glb')
+    const json = parseGLB(await preview.payload.blob.arrayBuffer())
+    const names = (json.nodes || []).map((n) => n.name || '')
+    check('严格流形导出为单个 Bark', names.includes('Bark') &&
+      !names.some((n) => n === 'Bark_Trunk' || n === 'Bark_Roots' || n.startsWith('Bark_Branch_')), names.join(','))
+
+    line('\n结果: ' + (fail ? 'MANIFOLD-FAIL ' + fail : 'MANIFOLD-OK'))
+    document.title = (fail ? 'MANIFOLD-FAIL(' + fail + ')' : 'MANIFOLD-OK') + ' :: ' +
+      R.filter((s) => s.startsWith('✘')).slice(0, 6).join(' | ')
+  } catch (e) {
+    document.title = 'MANIFOLD-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 900)
+    line('EX: ' + (e && e.stack ? e.stack : e))
+  }
+}, 2500)
+</script></body></html>

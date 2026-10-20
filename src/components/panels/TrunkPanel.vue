@@ -34,7 +34,7 @@
     <ToggleRow label="树干树枝树根一体建模" v-model="t.onePiece"
       hint="开启 = 树干/树枝/树根作为同一棵树体建模，分支基部领口更融合，导出合并为单个 Bark mesh；关闭 = 分开建模并保留 Bark_Trunk/Branch/Roots 节点。注意：这是对象/节点级合并，不是实体布尔并集。端盖始终保留，几何保持封闭。" />
     <SelectRow label="枝干穿插处理" v-model="t.junctionMode" :options="junctionModes"
-      hint="不处理 = 基础管状相交；视觉遮挡 = 加大分支领口遮住接缝（非并集）；布尔并集 = 用 CSG 真正裁掉内部重叠面；隐式重建 = CSG 并集后平滑重建（实验性，面数与细节会变化）" />
+      hint="不处理 = 基础管状相交；挤出 = 表面贴合；视觉遮挡 = 加大领口；布尔并集 = CSG（实验性）；隐式重建 = CSG + 平滑；严格一体流形 = manifold-3d 布尔并集，保证无边界边/非流形边（首次加载 WASM 稍慢）" />
   </Section>
 
   <Section title="主干分叉 (多主枝)" hint="Fork / Leaders" :default-collapsed="true">
@@ -89,6 +89,7 @@ import ToggleRow from '../ui/ToggleRow.vue'
 import SelectRow from '../ui/SelectRow.vue'
 import { state } from '../../store/treeStore.js'
 import { normalizeTwistProfile } from '../../core/twist.js'
+import { ensureManifold } from '../../core/manifoldRuntime.js'
 import { watch } from 'vue'
 
 const t = state.params.trunk
@@ -100,10 +101,17 @@ const junctionModes = [
   { value: 'collar', label: '视觉遮挡（加大领口，非并集）' },
   { value: 'csg', label: '布尔并集（CSG，消除内部重叠）' },
   { value: 'implicit', label: '隐式平滑重建（CSG + 平滑，实验性）' },
+  { value: 'manifold', label: '严格一体流形（manifold-3d，保证 2-manifold）' },
 ]
 watch(() => t.junctionMode, (v) => {
-  // 挤出/布尔/隐式模式本身就是一个连续模型, 自动打开一体建模导出
-  if (v === 'extrude' || v === 'csg' || v === 'implicit') t.onePiece = true
+  // 挤出/布尔/隐式/流形模式本身就是一个连续模型, 自动打开一体建模导出
+  if (v === 'extrude' || v === 'csg' || v === 'implicit' || v === 'manifold') t.onePiece = true
+  if (v === 'manifold') {
+    // WASM 是异步的: 加载完成后再重建一次, 保证视口里是真正的流形
+    ensureManifold().then(() => {
+      if (t.junctionMode === 'manifold') state.rebuildVersion++
+    }).catch((err) => console.warn('[FastTree] manifold WASM 加载失败:', err))
+  }
 })
 const twistTargets = [
   { value: 'trunk', label: '树干' },

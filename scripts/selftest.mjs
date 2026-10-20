@@ -30,6 +30,10 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { runAudit, AUDIT_EXEMPT, STORE_LEVEL } from './paramAudit.mjs'
 import { docFor, DOC_KEYS } from '../src/core/paramDocs.js'
+import { ensureManifold } from '../src/core/manifoldRuntime.js'
+
+// 严格流形模式依赖 WASM, 自检里先初始化
+await ensureManifold()
 
 let pass = 0
 let fail = 0
@@ -628,6 +632,15 @@ const impP = { ...oakP, trunk: { ...oakP.trunk, junctionMode: 'implicit', onePie
 const impR = buildTree(impP)
 check('隐式重建几何不同于 CSG 并集', geomHash(impR.barkGeometry) !== geomHash(csgR.barkGeometry),
   `${geomHash(csgR.barkGeometry)} vs ${geomHash(impR.barkGeometry)}`)
+const manP = { ...oakP, trunk: { ...oakP.trunk, junctionMode: 'manifold', onePiece: true } }
+const manR = buildTree(manP)
+const manBE = boundaryEdges(manR.barkGeometry)
+check('严格流形模式生成新几何', manR.stats.barkTriangles > 0 &&
+  geomHash(manR.barkGeometry) !== geomHash(oakR.barkGeometry) &&
+  manR.barkGeometry.attributes.aWind && manR.barkGeometry.attributes.color,
+  `tris=${manR.stats.barkTriangles}`)
+check('严格流形输出无边界边且无非流形边', manBE.boundary === 0 && manBE.nonManifold === 0,
+  JSON.stringify(manBE))
 // 分叉后主干仍然长到接近全高 (不是被截断的树桩)
 check('分叉时主干不被截断 (整树高度 >= 0.9 × 主干高度)',
   oakR.stats.height >= oakP.trunk.height * 0.9,

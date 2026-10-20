@@ -12,6 +12,7 @@ import { buildTube } from './bark.js'
 import { buildLeafTemplate, buildLeafCardTemplate, pushLeafInstance } from './leaf.js'
 import { buildFruitTemplate, pushFruitInstance } from './fruit.js'
 import { applyBarkJunction } from './barkJunction.js'
+import { applyManifoldJunction } from './manifoldUnion.js'
 import { buildOcclusionGrid, bakeOcclusion, bakeOcclusionByRanges } from './ambientOcclusion.js'
 import {
   GeoAcc, growFrames, sampleFrame, anyPerp, azimuthPerp, rotateTowardUp,
@@ -750,10 +751,14 @@ export function buildTree(params) {
   const barkGeometry = (() => {
     if (fruitAcc.vertexCount > 0) barkParts.push(fruitAcc.build())
     let geo = barkParts.length ? mergeGeometries(barkParts, false) : new GeoAcc().build()
-    // 真布尔并集 / 隐式重建: 在 AO/节点表之前替换树皮几何
+    // 真布尔并集 / 隐式重建 / 严格流形: 在 AO/节点表之前替换树皮几何
     if (junctionMode === 'csg' || junctionMode === 'implicit') {
       const nodeList = slots.map((s, id) => ({ id, ...s }))
       const unified = applyBarkJunction(geo, nodeList, junctionMode)
+      if (unified) geo = unified
+    } else if (junctionMode === 'manifold') {
+      const nodeList = slots.map((s, id) => ({ id, ...s }))
+      const unified = applyManifoldJunction(geo, nodeList)
       if (unified) geo = unified
     }
     return geo

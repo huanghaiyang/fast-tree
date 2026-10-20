@@ -68,7 +68,8 @@ npm run selftest     # 无浏览器自检 (确定性/参数隔离/几何合法�
 高度、底部半径、锥度、锥度曲线、纵向/周向分段、弯曲、弯曲随机、倾斜与倾斜方向、扭转、不规则生长 (gnarl)、椭圆截面；
 根部外扩 (flare) 与外扩高度、**节瘤 (knots)** 数量/大小；
 **树干树枝树根一体建模**开关：开启 = 分支基部领口更融合、导出合并为单个 `Bark` mesh；关闭 = 分开建模并保留节点拆分。
-**枝干穿插处理**下拉：`不处理` = 保留基础管状相交；`挤出式一体建模` = 分支/树根基部贴近父枝表面、轻微收口且**不加大领口**，避免鼓包/更明显的接缝；`视觉遮挡` = 加大领口遮住接缝（非并集）；`布尔并集` = 用 three-bvh-csg 真正裁掉内部重叠面；`隐式重建` = CSG 后平滑重建（实验性）。挤出/布尔/隐式模式会自动打开一体建模并强制导出单个 `Bark`。
+**枝干穿插处理**下拉：`不处理` = 保留基础管状相交；`挤出式一体建模` = 分支/树根基部贴近父枝表面、轻微收口且**不加大领口**；`视觉遮挡` = 加大领口遮住接缝（非并集）；`布尔并集` = 用 three-bvh-csg 裁掉内部重叠面（实验性）；`隐式重建` = CSG 后平滑重建（实验性）；`严格一体流形` = 用 manifold-3d 做布尔并集，输出保证 2-manifold（无边界/非流形边、单连通体，首次加载 WASM 稍慢）。挤出/布尔/隐式/流形模式会自动打开一体建模并强制导出单个 `Bark`。
+> `严格一体流形` 是当前唯一保证拓扑流形的档位；它会重新采样颜色/风场/生长属性，面数会变化。`挤出式` 仍是表面贴合近似，真正切孔缝合的挤出拓扑尚未重写。
 > `挤出式` 目前是表面贴合式挤出：分支基部贴近父枝表面且不鼓领口；它仍保留独立管状拓扑，不是切孔后缝合的严格单流形。真正切孔缝合需要父表面重拓扑，属于后续大改。
 
 ### 2. 树根 (Roots)
@@ -253,13 +254,15 @@ src/
    ├─ fruitMaterial.js 果实导出材质 (独立 Fruit 材质 + fruit_diff/alpha/nor_gl/rough 贴图)
    ├─ exportPreview.js 导出预览数据 (GLB 产物/内嵌贴图/节点列表, OBJ 节点列表, PNG dataURL)
    ├─ barkJunction.js 枝干布尔并集 (three-bvh-csg) / 隐式平滑重建 / 属性转移
+   ├─ manifoldRuntime.js manifold-3d WASM 预加载与运行时
+   ├─ manifoldUnion.js 严格 2-manifold 并集 (树干/树枝/树根)
    ├─ materials.js     PBR + 风场/生长/自定义 GLSL + 节点选中高亮
    ├─ exporter.js      GLB / OBJ / JSON / PNG
    ├─ apiRegistry.js   应用命令注册表 (MCP / 大模型 tool-calling 共用同一份定义)
    ├─ appApi.js        浏览器侧命令执行器 + 本地桥客户端
    └─ sceneManager.js  渲染器/相机/灯光/天空/地面/动画循环/选中框/聚焦/相机基
 scripts/
-├─ selftest.mjs        262 项无浏览器自检 (含导出格式/节点拆分、管状几何首尾闭合、一体建模、布尔并集/隐式重建、贴图命名、AO、LOD、模型旋转、环境预设、扭曲曲线、站点图标、面数统计、双面叶片、模板卫生)
+├─ selftest.mjs        264 项无浏览器自检 (含导出格式/节点拆分、管状几何首尾闭合、一体建模、布尔并集/隐式重建/严格流形、贴图命名、AO、LOD、模型旋转、环境预设、扭曲曲线、站点图标、面数统计、双面叶片、模板卫生)
 ├─ paramAudit.mjs      参数有效性审计核心 (几何/材质/风场三路签名比对)
 ├─ audit-params.mjs    npm run audit 入口
 ├─ app-bridge-server.mjs  本地应用桥 / MCP 服务器 / 大模型代理 (Key 只在服务端)
@@ -427,7 +430,7 @@ npm run chat:check   # 对话链路自检 (需要 Key + 网络)
 ## 自检与诊断
 
 ```bash
-npm run selftest     # 262 项断言
+npm run selftest     # 264 项断言
 npm run audit        # 参数有效性审计 (改了就一定变)
 ```
 
@@ -488,7 +491,8 @@ node scripts/shot-receiver.mjs        # 监听 127.0.0.1:5274, 把页面回传�
 - `dev/environments-check.html` —— 环境预设自检: 9 种环境的背景/太阳/环境光/地面/曝光/雾/星空逐项校验 + 真实点击「场景 → 环境预设」按钮；群星星空跟随相机、切环境不重建树几何
 - `dev/export-material-check.html` —— 导出材质检查: 花朵 normal 有真实轮廓（非平坦）、果实节点/独立 Fruit 材质、fruit_diff/alpha/nor_gl/rough 全套资源、果实 normal/alpha 有果皮细节、alpha 为黑白灰度、所有 rough 图保持灰白（非金属粗糙度合并彩图）、roughness 来自贴图亮度而非随机噪声
 - `dev/growth-ui-check.html` —— 生长动画自检: 风/生长标签页存在、生长区块默认展开且在首屏、视口快捷按钮、进度同步 shader uniform、画面变化、自动生长推进
-- `dev/junction-mode-check.html` —— 枝干穿插处理下拉自检: 五档选项（含挤出式）、视觉遮挡、CSG 布尔并集（三角面变化/自动一体建模/导出单个 Bark）、隐式重建（几何不同于 CSG）、恢复不处理
+- `dev/manifold-check.html` —— 严格一体流形自检: 下拉含 manifold、WASM 异步加载后重建、边界边=0、非流形边=0、单连通体、导出单个 Bark
+- `dev/junction-mode-check.html` —— 枝干穿插处理下拉自检: 六档选项（含挤出式/严格流形）、视觉遮挡、CSG 布尔并集（三角面变化/自动一体建模/导出单个 Bark）、隐式重建（几何不同于 CSG）、恢复不处理
 - `dev/one-piece-check.html` —— 树干/树枝/树根一体建模开关自检: 开关默认关闭、开启后几何变化、GLB 合并为单个 Bark + 果实独立、关闭后恢复 Bark_Trunk/Branch/Roots 节点
 - `dev/export-preview-check.html` —— 导出预览面板自检: 先弹面板不下载、产物列表、节点列表、GLB 内嵌贴图缩略图、PNG 预览、取消不下载、确定后才下载
 - `dev/texture-export-check.html` —— 导出贴图命名自检: 真实导出 GLB 并检查 `_diff/_alpha/_nor_gl/_rough` 与 `_1k/_2k/_4k` 后缀、image 名称同步、非 1/2/4K 不加 `_xk`；GLB 用 2K 叶片贴图 + 1K 法线验证，并检查材质实际引用 normal/roughness 贴图、alphaMode=MASK

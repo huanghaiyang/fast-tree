@@ -58,7 +58,7 @@ function closestSourceData(bvh, source, point) {
  * 把自定义顶点属性从原始树皮表面转移到 CSG 结果上。
  * CSG 结果只保留 position/uv/normal，颜色、风场、节点 id 需要重新采样。
  */
-function transferAttributes(target, source) {
+export function transferGeometryAttributes(target, source) {
   const count = target.attributes.position.count
   const originalPosition = target.attributes.position.array.slice()
   const targetArrays = {}
@@ -256,7 +256,7 @@ export function applyBarkJunction(barkGeometry, nodes, mode) {
   // 从原始表面补回自定义属性
   try {
     const source = makeTransferSource(body)
-    transferAttributes(unionGeometry, source)
+    transferGeometryAttributes(unionGeometry, source)
     source.dispose()
   } catch (err) {
     console.warn('[FastTree] 并集属性转移失败，回退原始几何:', err)
