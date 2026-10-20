@@ -96,6 +96,9 @@ export function defaultParams() {
       flareHeight: 0.18,    // 外扩影响的高度比例
       knots: 2,             // 节瘤数量
       knotSize: 0.35,       // 节瘤凸起强度
+      knotStrength: 0.75,   // 节瘤整体倍率 (1 = 原始强度, 0 = 关闭凸起)
+      knotSpread: 0.05,     // 节瘤纵向跨度 (t 方向半宽)
+      knotAngle: 0.7,       // 节瘤角向跨度 (弧度半宽)
       squash: 1.0,          // 椭圆化 (1 = 圆)
       onePiece: false,      // 树干/树枝/树根一体建模: 导出合并为单个 Bark, 分支基部更融合
       fork: {

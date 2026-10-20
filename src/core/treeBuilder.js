@@ -371,9 +371,10 @@ export function buildTree(params, options = {}) {
         fr.radius * cfg.radiusRatio * rng.vary(cfg.radiusVariance) * (branchParams.radiusScale || 1))
       const radius1 = Math.max(0.0005, radius0 * cfg.taper)
       const dir = childDirection(rng, fr.dir, cfg, k, P)
-      // 扭曲: 子枝绕父枝轴旋转 (句柄曲线控制), 让扭转在树冠上可见
-      const profileRoll = fr.profileRoll || 0
-      if (profileRoll) dir.applyAxisAngle(fr.dir, profileRoll)
+      // 扭转跟随: 用完整 roll (基础 twist + 扭曲曲线句柄), 不只是 profileRoll。
+      // 这样主干一起扭时, 子枝的贴附点/生长方向会跟着转; 树枝的 twist 也会带动它的子枝。
+      const roll = fr.roll || 0
+      if (roll) dir.applyAxisAngle(fr.dir, roll)
       // 贴附方位必须跟随枝条真实的生长方位: 取 dir 垂直于父枝轴的分量。
       // 否则"贴在父枝一侧、却朝另一侧/父枝内部生长", 蒙皮时子枝基部环与父枝洞口平面
       // 会相差 ~90°, 肩部桥接被迫在很短距离内扭转 90°, 看起来就像树枝基部被翻转。
@@ -499,13 +500,18 @@ export function buildTree(params, options = {}) {
 
   // 节瘤: 固定位置的高斯凸起
   const knots = []
+  // 节瘤形态参数: 强度/纵向跨度/角向跨度。默认比以前更收束, 避免节瘤在树干上
+  // 形成一圈“箍” (原来的角向半宽 0.5~1.6 rad 太宽, 看起来像环而不是局部凸起)。
+  const knotStrength = t.knotStrength === undefined ? 0.75 : Math.max(0, Number(t.knotStrength) || 0)
+  const knotSpread = t.knotSpread === undefined ? 0.05 : Math.max(0.002, Number(t.knotSpread) || 0.05)
+  const knotAngle = t.knotAngle === undefined ? 0.7 : Math.max(0.05, Number(t.knotAngle) || 0.7)
   for (let i = 0; i < (t.knots || 0); i++) {
     knots.push({
       t: trunkRng.range(0.05, 0.85),
       angle: trunkRng.range(0, Math.PI * 2),
-      size: (t.knotSize || 0.3) * trunkRng.range(0.5, 1.5),
-      spread: trunkRng.range(0.025, 0.09),
-      aspread: trunkRng.range(0.5, 1.6),
+      size: (t.knotSize || 0.3) * knotStrength * trunkRng.range(0.5, 1.5),
+      spread: knotSpread * trunkRng.range(0.6, 1.4),
+      aspread: knotAngle * trunkRng.range(0.6, 1.4),
     })
   }
   // 根部"板根/表层根"的方位分布: 真实树木基部不是圆锥, 而是 4~6 条放射状凸起
@@ -648,6 +654,8 @@ export function buildTree(params, options = {}) {
       const rootEpsT = Math.min(0.12, Math.max(0.01, (radius0 * 1.15) / Math.max(1, t.height)))
       const rootT = Math.min(0.2, Math.max(0.05, rootEpsT * 2.4))
       const rootFrame = sampleFrame(trunkFrames, rootT)
+      // 树根也跟随主干的扭转
+      rootDirH.applyAxisAngle(rootFrame.dir, rootFrame.roll || 0)
       const rootBasis = frameBasisAt(trunkFrames, rootT)
       const rootAz = Math.atan2(rootDirH.dot(rootBasis.up), rootDirH.dot(rootBasis.side))
       const rootMod = trunkModifier(rootT, rootAz, rootFrame.radius)
@@ -811,6 +819,8 @@ export function buildTree(params, options = {}) {
         const side = azimuthPerp(fr.dir, az, new THREE.Vector3())
         const dir = fr.dir.clone().applyAxisAngle(side, angle * rng.range(0.8, 1.25))
         rotateTowardUp(dir, 0.06)
+        // 分叉主枝也要跟随主干的扭转 (基础 twist + 扭曲曲线)
+        if (fr.roll) dir.applyAxisAngle(fr.dir, fr.roll)
         const r0 = Math.max(0.002, fr.radius * radiusScale * rng.vary(0.1))
         // 分叉主枝: 基部也要落在主干"真实表面"上 (含 forkShrink/squash/flare)。
         // 旧实现沿 dir 偏移 0.45R, 主枝环会深埋在主干内部, 桥接后洞口露出空腔,

@@ -466,7 +466,16 @@ function buildSkinFrames(branch, branchList) {
   }
   if (!cuts.length) return frames
   const ts = []
-  for (let i = 0; i < n; i++) ts.push(frames[i].t)
+  for (let i = 0; i < n; i++) {
+    const t = frames[i].t
+    // 分叉局部加密带内不要再被原有骨架帧切断: 否则 attach t 会落在带的一侧,
+    // 窗口整体偏向树枝根部的上方/下方, 桥接就会拉出一大片斜三角。
+    let insideCut = false
+    for (let c = 0; c < cuts.length; c += 2) {
+      if (t > cuts[c] + 1e-5 && t < cuts[c + 1] - 1e-5) { insideCut = true; break }
+    }
+    if (!insideCut) ts.push(t)
+  }
   for (const t of cuts) {
     if (t <= 1e-5 || t >= 1 - 1e-5) continue
     let dup = false
@@ -494,6 +503,10 @@ function buildSkinFrames(branch, branchList) {
  */
 export function buildBarkSkin(skeleton, opts = {}) {
   const barkDetail = opts.barkDetail === undefined ? 1 : opts.barkDetail
+  // 肩部权重: 0 = 完全贴父枝表面法线, 1 = 完全回到子枝自身方向。
+  // 第 0 圈太大时树枝根部会被压扁, 所以默认保留一部分"自身方向"。
+  const shoulder0 = opts.shoulder0 === undefined ? 0.7 : clamp01(opts.shoulder0)
+  const shoulder1 = opts.shoulder1 === undefined ? 1.0 : clamp01(opts.shoulder1)
   const branchList = skeleton.branches
   // 蒙皮帧 = 骨架帧 + 子分支贴合处的局部加密环 (让分叉切口高度≈子枝直径)
   const skinFrames = branchList.map((b) => buildSkinFrames(b, branchList))
@@ -599,8 +612,9 @@ export function buildBarkSkin(skeleton, opts = {}) {
       let side = basis.side
       let up = basis.up
       if (attach && i <= 1) {
-        // 第 0 圈: 法线 = 父枝表面法线 (截面贴平洞口); 第 1 圈: 50% 混回自身生长方向
-        const w = i === 0 ? 0 : 0.5
+        // 第 0 圈: 在父枝表面法线与子枝方向之间混合 (默认 70% 自身方向 + 30% 表面),
+        // 保留根部圆度; 第 1 圈: 继续过渡回自身生长方向。
+        const w = i === 0 ? shoulder0 : shoulder1
         const n = attach.surfaceNormal.clone().lerp(f.dir, w)
         if (n.lengthSq() < 0.04) n.copy(f.dir)
         n.normalize()

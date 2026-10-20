@@ -17,6 +17,9 @@ export default defineConfig({
     host: '127.0.0.1',
     port: 5273,
     strictPort: false,
+    // `npm run check` 会在 dev server 运行时执行生产构建并写 dist/。
+    // 不忽略 dist 会触发 HMR 整页刷新, 让刚连接的 MCP 浏览器桥断开。
+    watch: { ignored: ['**/dist/**', '**/.tmp-*'] },
   },
   build: {
     target: 'es2020',

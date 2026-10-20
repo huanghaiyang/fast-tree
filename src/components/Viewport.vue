@@ -111,6 +111,7 @@ onMounted(() => {
   sceneApi.prepareExport = (kind, name) => scene.prepareExport(kind, name)
   sceneApi.frameCamera = () => scene.frameCamera()
   sceneApi.focusBox = (min, max) => scene.focusBox(min, max)
+  sceneApi.setSkeletonVisible = (v) => { if (scene) scene.setSkeletonVisible(!!v) }
   sceneApi.getWindScreenBasis = () => scene.getWindScreenBasis()
   sceneApi.getTwistScreen = (target, level) => (scene ? scene.projectTwistGuide(target, level) : null)
   sceneApi.setControlsEnabled = (v) => { if (scene) scene.controls.enabled = !!v }

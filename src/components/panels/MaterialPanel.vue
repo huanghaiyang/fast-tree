@@ -120,7 +120,7 @@ function useBark(bt) {
   // -> 给一组"接近真实树皮尺度"的平铺默认值 (之后可用 UV 重复滑杆微调)
   if (b.uvScaleU === 1 && b.uvScaleV === 1) {
     b.uvScaleU = 3
-    b.uvScaleV = 12
+    b.uvScaleV = 1.5
   }
 }
 const barkChoices = computed(() => alive(barkTexturesFor(barkBatch.value, barkRow.value)))

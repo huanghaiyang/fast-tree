@@ -165,6 +165,8 @@ export class TreeScene {
     this.lodLevel = 0
     this.lodInfo = []
     this.twistGuides = null
+    this.skeletonGroup = null
+    this.showSkeleton = false
     // three r186 起 THREE.Clock 已废弃, 这里自己计时
     this.lastTime = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000
     this.playing = true
@@ -361,6 +363,7 @@ export class TreeScene {
     // 模型节点表 (节点树面板 + 选中高亮)
     this.nodes = result.nodes || []
     this.groups = result.groups || []
+    this._updateSkeletonOverlay(result.skeleton)
 
     if (opts.frameCamera !== false) this.frameCamera()
     this.lodInfo = [{ level: 0, triangles: this._meshTriangles(this.barkMesh, this.leafMesh, this.flowerMesh), leaves: this.stats.leaves || 0 }]
@@ -369,6 +372,92 @@ export class TreeScene {
     if (this.callbacks.onStats) this.callbacks.onStats(this.stats)
     if (this.callbacks.onModel) this.callbacks.onModel({ nodes: this.nodes, groups: this.groups })
     return this.stats
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 骨架显示 (顶栏「骨架」按钮)                                          */
+  /* ------------------------------------------------------------------ */
+  setSkeletonVisible(v) {
+    this.showSkeleton = !!v
+    if (this.skeletonGroup) this.skeletonGroup.visible = this.showSkeleton
+  }
+
+  _updateSkeletonOverlay(skeleton) {
+    if (this.skeletonGroup) {
+      this.treeGroup.remove(this.skeletonGroup)
+      this.skeletonGroup.traverse((o) => {
+        if (o.geometry) o.geometry.dispose()
+        if (o.material) o.material.dispose()
+      })
+      this.skeletonGroup = null
+    }
+    if (!skeleton || !skeleton.nodes || !skeleton.edges) return
+    const nodes = skeleton.nodes
+    const branches = skeleton.branches
+    const colorOf = (branch) => {
+      if (!branch) return [0.35, 0.95, 1.0]
+      if (branch.type === 'trunk') return [1.0, 0.82, 0.25]
+      if (branch.type === 'root') return [1.0, 0.55, 0.2]
+      const lv = Math.min(5, Math.max(1, branch.level || 1))
+      const t = (lv - 1) / 4
+      return [0.25 + 0.15 * t, 0.9 - 0.15 * t, 1.0]
+    }
+    const linePos = [], lineCol = [], pointPos = [], pointCol = []
+    for (const e of skeleton.edges) {
+      const a = nodes[e.from], b = nodes[e.to]
+      if (!a || !b) continue
+      const c = colorOf(branches[e.branch])
+      linePos.push(a.pos.x, a.pos.y, a.pos.z, b.pos.x, b.pos.y, b.pos.z)
+      lineCol.push(c[0], c[1], c[2], c[0], c[1], c[2])
+    }
+    for (const n of nodes) {
+      const c = colorOf(branches[n.branch])
+      pointPos.push(n.pos.x, n.pos.y, n.pos.z)
+      pointCol.push(c[0], c[1], c[2])
+    }
+    const group = new THREE.Group()
+    group.name = 'SkeletonOverlay'
+    group.visible = this.showSkeleton
+    if (linePos.length) {
+      const g = new THREE.BufferGeometry()
+      g.setAttribute('position', new THREE.Float32BufferAttribute(linePos, 3))
+      g.setAttribute('color', new THREE.Float32BufferAttribute(lineCol, 3))
+      const m = new THREE.LineBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.95,
+        depthTest: false,
+        depthWrite: false,
+        fog: false,
+      })
+      const lines = new THREE.LineSegments(g, m)
+      lines.name = 'SkeletonEdges'
+      lines.frustumCulled = false
+      lines.renderOrder = 1000
+      group.add(lines)
+    }
+    if (pointPos.length) {
+      const g = new THREE.BufferGeometry()
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pointPos, 3))
+      g.setAttribute('color', new THREE.Float32BufferAttribute(pointCol, 3))
+      const m = new THREE.PointsMaterial({
+        size: 2.4,
+        sizeAttenuation: false,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.95,
+        depthTest: false,
+        depthWrite: false,
+        fog: false,
+      })
+      const pts = new THREE.Points(g, m)
+      pts.name = 'SkeletonNodes'
+      pts.frustumCulled = false
+      pts.renderOrder = 1001
+      group.add(pts)
+    }
+    this.skeletonGroup = group
+    this.treeGroup.add(group)
   }
 
   /* ------------------------------------------------------------------ */

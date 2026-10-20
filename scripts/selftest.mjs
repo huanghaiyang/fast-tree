@@ -3,6 +3,7 @@
  * 运行: npm run selftest
  */
 import { buildTree, selectionRanges } from '../src/core/treeBuilder.js'
+import { buildBarkSkin } from '../src/core/barkSkin.js'
 import { defaultParams, cloneParams, normalizeParams, MAX_LEVELS, GROUP_KEYS } from '../src/core/params.js'
 import { ENVIRONMENTS, ENV_IDS, envById, applyEnvironment } from '../src/core/environments.js'
 import { TWIST_POINTS, normalizeTwistProfile, sampleTwistProfile, twistProfileRad } from '../src/core/twist.js'
@@ -1472,6 +1473,18 @@ console.log('\n[26] 扭曲曲线与句柄')
   const leafDiff = a.leafGeometry.attributes.position.array.some((v, i) => v !== b.leafGeometry.attributes.position.array[i])
   check('树干扭曲曲线改变树皮几何 (截面扭转)', barkDiff)
   check('树干扭曲曲线也带动叶片/子枝螺旋 (可见)', leafDiff)
+  // 回归: 主干扭曲必须带动所有枝干 (含树根/分叉主枝/深层枝), 不能只转截面。
+  // 历史 bug: 子枝只用 profileRoll, 基础 twist 不会带动它们, 看起来"部分枝干不动"。
+  const still = []
+  for (let i = 0; i < Math.min(a.skeleton.branches.length, b.skeleton.branches.length); i++) {
+    const A = a.skeleton.branches[i]
+    const B = b.skeleton.branches[i]
+    if (!A || !B || A.type === 'trunk') continue
+    const moved = A.frames[0].pos.distanceTo(B.frames[0].pos) > 1e-6 ||
+      A.frames[0].dir.angleTo(B.frames[0].dir) > 1e-6
+    if (!moved) still.push(`${A.type}L${A.level}#${i}`)
+  }
+  check('主干扭曲带动所有枝干/树根 (无静止子枝)', still.length === 0, still.slice(0, 6).join(','))
   const pBr = cloneParams(base)
   pBr.branches.twistProfile = [0, 90, 180, 270, 360]
   const c = buildTree(pBr)
@@ -1650,6 +1663,61 @@ console.log('\n[31] 导出贴图资源命名')
     map.name === 'leaf_diff_2k' && normal.name === 'leaf_nor_gl_1k' &&
     naming.alphaAliases.some((a) => a.name === 'leaf_alpha_2k' && a.from === 'leaf_diff_2k'),
     `${map.name},${normal.name},${naming.alphaAliases.map((a) => a.name).join(',')}`)
+}
+
+/* 32. 分叉开口对中 + 粗树枝根部圆度 */
+console.log('\n[32] 分叉开口对中与根部圆度')
+{
+  const p = normalizeParams(applyPreset(defaultParams(), 'oak', 'mature', 'summer'))
+  p.leaves.enabled = false
+  p.fruit.enabled = false
+  const r = buildTree(p, { validate: false })
+  const skin = buildBarkSkin(r.skeleton, { validate: false, debug: true })
+  const { plan, skinFrames } = skin.debug
+  const branches = r.skeleton.branches
+  const pos = skin.geometry.attributes.position.array
+  let maxAxial = 0
+  let minAspect = 1
+  for (const [bi, pl] of plan) {
+    const pf = skinFrames[bi]
+    const M = skin.ringM[bi]
+    for (const w of pl.windows) {
+      const child = branches[w.child]
+      const A = skin.rings[bi][w.band]
+      const B = skin.rings[bi][w.band + 1]
+      let cx = 0, cy = 0, cz = 0, n = 0
+      for (const ring of [A, B]) {
+        for (let k = 0; k <= w.K; k++) {
+          const vi = ring + ((w.start + k) % M)
+          cx += pos[vi * 3]; cy += pos[vi * 3 + 1]; cz += pos[vi * 3 + 2]; n++
+        }
+      }
+      cx /= n; cy /= n; cz /= n
+      const c0 = child.frames[0].pos
+      const f = pf[w.band]
+      const dx = cx - c0.x, dy = cy - c0.y, dz = cz - c0.z
+      const axial = Math.abs(dx * f.dir.x + dy * f.dir.y + dz * f.dir.z)
+      if (child.type !== 'root') maxAxial = Math.max(maxAxial, axial)
+      // 粗树枝 ring0 在"垂直于自身轴线"的平面上的短/长轴比 = 根部被压扁程度
+      if (child.type === 'branch' && child.frames[0].radius > 0.03) {
+        const cr = skin.rings[child.index][0]
+        const cM = skin.ringM[child.index]
+        const dir = child.frames[0].dir
+        let lo = Infinity, hi = 0
+        for (let k = 0; k < cM; k++) {
+          const vx = pos[(cr + k) * 3] - c0.x
+          const vy = pos[(cr + k) * 3 + 1] - c0.y
+          const vz = pos[(cr + k) * 3 + 2] - c0.z
+          const a = vx * dir.x + vy * dir.y + vz * dir.z
+          const rad = Math.hypot(vx - a * dir.x, vy - a * dir.y, vz - a * dir.z)
+          lo = Math.min(lo, rad); hi = Math.max(hi, rad)
+        }
+        minAspect = Math.min(minAspect, lo / Math.max(1e-9, hi))
+      }
+    }
+  }
+  check('分叉窗口轴向对中 (树枝 |轴向偏差| < 0.05m)', maxAxial < 0.05, maxAxial.toFixed(3))
+  check('粗树枝根部圆度 (ring0 短/长轴 > 0.85)', minAspect > 0.85, minAspect.toFixed(3))
 }
 
 /* 汇总 */

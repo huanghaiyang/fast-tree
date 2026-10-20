@@ -59,6 +59,12 @@
     <SliderRow label="外扩高度比例" v-model="t.flareHeight" :min="0.02" :max="0.6" :step="0.01" />
     <SliderRow label="节瘤数量" v-model="t.knots" :min="0" :max="12" :step="1" />
     <SliderRow label="节瘤大小" v-model="t.knotSize" :min="0" :max="1.2" :step="0.02" />
+    <SliderRow label="节瘤强度" v-model="t.knotStrength" :min="0" :max="1.5" :step="0.05"
+      hint="整体凸起倍率；0 = 关闭节瘤凸起，1 = 原始强度" />
+    <SliderRow label="节瘤纵向跨度" v-model="t.knotSpread" :min="0.005" :max="0.15" :step="0.005"
+      hint="沿树干高度的跨度；越小越像局部鼓包" />
+    <SliderRow label="节瘤角向跨度" v-model="t.knotAngle" :min="0.1" :max="2" :step="0.05"
+      hint="绕树干的角向半宽（弧度）；越小越不会形成一圈箍" />
   </Section>
 
   <Section title="树根" hint="Roots" :default-collapsed="true">

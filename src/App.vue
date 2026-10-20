@@ -19,6 +19,9 @@
       <button class="btn" :class="{ active: wireMode !== 'off' }"
         :title="`线框展示 (展示三角面): 当前 ${wireLabel} — 点击依次切换 关闭 / 实体+线框 / 仅线框 (快捷键 W)`"
         @click="cycleWire">🕸 线框{{ wireMode === 'off' ? '' : wireMode === 'overlay' ? '·叠加' : '·仅' }}</button>
+      <button class="btn" :class="{ active: showSkeleton }"
+        title="显示/隐藏骨架图 (骨架节点 + 边; 快捷键 K)"
+        @click="toggleSkeleton">🦴 骨架</button>
       <button class="btn" :class="{ active: state.nodePanelOpen }" title="模型节点面板 (N)"
         @click="toggleNodePanel()">🧩 节点</button>
       <span class="tag" :class="{ on: state.playing }" style="cursor: pointer" @click="state.playing = !state.playing">
@@ -41,7 +44,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import ControlPanel from './components/ControlPanel.vue'
 import PropertySearch from './components/PropertySearch.vue'
 import ChatPanel from './components/ChatPanel.vue'
@@ -63,6 +66,13 @@ const wireLabel = computed(() => WIRE_LABELS[wireMode.value] || '关闭')
 function cycleWire() {
   const cur = WIRE_MODES.indexOf(wireMode.value)
   state.params.scene.wireframe = WIRE_MODES[(cur + 1) % WIRE_MODES.length]
+}
+
+/* 骨架显示: 只控制视口叠加层，不进入参数/审计/重建 */
+const showSkeleton = ref(false)
+function toggleSkeleton() {
+  showSkeleton.value = !showSkeleton.value
+  sceneApi.setSkeletonVisible?.(showSkeleton.value)
 }
 
 function onSeed(v) {
@@ -105,6 +115,10 @@ function onKeydown(e) {
   if (e.key === 'w' || e.key === 'W') {
     e.preventDefault()
     cycleWire()
+  }
+  if (e.key === 'k' || e.key === 'K') {
+    e.preventDefault()
+    toggleSkeleton()
   }
 }
 
