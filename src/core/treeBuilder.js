@@ -8,11 +8,10 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { makeRng } from './rng.js'
-import { buildTube } from './bark.js'
+import { createBarkSkeleton, addBarkBranch, finalizeBarkSkeleton } from './barkSkeleton.js'
+import { buildBarkSkin } from './barkSkin.js'
 import { buildLeafTemplate, buildLeafCardTemplate, pushLeafInstance } from './leaf.js'
 import { buildFruitTemplate, pushFruitInstance } from './fruit.js'
-import { applyBarkJunction } from './barkJunction.js'
-import { applyManifoldJunction } from './manifoldUnion.js'
 import { buildOcclusionGrid, bakeOcclusion, bakeOcclusionByRanges } from './ambientOcclusion.js'
 import {
   GeoAcc, growFrames, sampleFrame, anyPerp, azimuthPerp, rotateTowardUp,
@@ -48,14 +47,40 @@ function childDirection(rng, parentDir, cfg, k, params) {
   return dir.normalize()
 }
 
-export function buildTree(params) {
+/**
+ * 取父枝骨架在 t 处的环坐标系 (与 barkSkin 的平行移动一致)。
+ * 用于把子枝基部放到"父枝实际表面"上 —— 树干有 flare/knots 时,
+ * 未调制的 skeleton 半径会明显小于真实表面, 子枝就会埋进外扩里,
+ * 桥接时看起来像从洞口反着长回去 (约 180° 反向)。
+ */
+function frameBasisAt(frames, t) {
+  const n = frames.length
+  const idx = Math.max(0, Math.min(n - 1, Math.round(clamp01(t) * (n - 1))))
+  const side = anyPerp(frames[0].dir.clone()).normalize()
+  for (let i = 0; i <= idx; i++) {
+    const f = frames[i]
+    if (i > 0) {
+      side.addScaledVector(f.dir, -side.dot(f.dir))
+      if (side.lengthSq() < 1e-10) anyPerp(f.dir, side)
+      side.normalize()
+      const rollDelta = (f.roll || 0) - (frames[i - 1].roll || 0)
+      if (rollDelta) side.applyAxisAngle(f.dir, rollDelta)
+      side.addScaledVector(f.dir, -side.dot(f.dir)).normalize()
+    } else if (f.roll) {
+      side.applyAxisAngle(f.dir, f.roll)
+      side.addScaledVector(f.dir, -side.dot(f.dir)).normalize()
+    }
+  }
+  const f = frames[idx]
+  const up = new THREE.Vector3().crossVectors(f.dir, side).normalize()
+  return { side, up, frame: f }
+}
+
+export function buildTree(params, options = {}) {
   const t0 = now()
   const P = params
   const branchParams = P.branches
   const onePiece = !!(P.trunk && P.trunk.onePiece)
-  const junctionMode = (P.trunk && P.trunk.junctionMode) || 'none'
-  const collarMode = junctionMode === 'collar'
-  const extrudeMode = junctionMode === 'extrude'
   const L = P.leaves
   const F = P.fruit || { enabled: false, levels: [] }
   // 挂果层级回退: 如果设置里勾选的层级在这棵树上一级都没有 (比如默认树只有 3 层枝,
@@ -70,7 +95,9 @@ export function buildTree(params) {
     return out
   })()
 
-  const barkParts = []
+  // 骨架先行: 这里只收集骨架 (节点/边/半径/父子关系), 不生成任何树皮几何。
+  // 全部生长结束后由 barkSkin 一次性蒙皮 (分叉切孔桥接 / 端盖), 保证单张 2-manifold。
+  const barkSkeleton = createBarkSkeleton()
   const leafAcc = new GeoAcc()
   // 花朵: 独立累加器 + 复用树叶的"记录附件点 -> 后置生成"策略
   const FL = P.flower || {}
@@ -317,7 +344,7 @@ export function buildTree(params) {
   /* ------------------------------------------------------------------ */
   /* 递归生长                                                            */
   /* ------------------------------------------------------------------ */
-  const spawnChildren = (parentFrames, parentLevel, parentLength, parentRng, parentWind0, parentWind1, parentSlot, clampEndT) => {
+  const spawnChildren = (parentFrames, parentLevel, parentLength, parentRng, parentWind0, parentWind1, parentSlot, parentBranch, clampEndT, parentSurface) => {
     const level = parentLevel + 1
     if (level > branchParams.levels) return
     const cfg = branchParams.level[level - 1]
@@ -347,21 +374,41 @@ export function buildTree(params) {
       // 扭曲: 子枝绕父枝轴旋转 (句柄曲线控制), 让扭转在树冠上可见
       const profileRoll = fr.profileRoll || 0
       if (profileRoll) dir.applyAxisAngle(fr.dir, profileRoll)
-      const outDir = azimuthPerp(fr.dir, k * (cfg.phyllotaxis || 137.5) * DEG + profileRoll, new THREE.Vector3())
-      // 挤出式: 分支基部贴近父枝表面, 不再从父枝深处穿出
-      const startPos = fr.pos.clone().addScaledVector(outDir, fr.radius * (extrudeMode ? 0.98 : 0.3))
+      // 贴附方位必须跟随枝条真实的生长方位: 取 dir 垂直于父枝轴的分量。
+      // 否则"贴在父枝一侧、却朝另一侧/父枝内部生长", 蒙皮时子枝基部环与父枝洞口平面
+      // 会相差 ~90°, 肩部桥接被迫在很短距离内扭转 90°, 看起来就像树枝基部被翻转。
+      // 只有枝条几乎平行于父枝 (径向分量≈0) 时, 才退回叶序角。
+      const radialDir = dir.clone().addScaledVector(fr.dir, -dir.dot(fr.dir))
+      const outDir = radialDir.lengthSq() > 1e-8
+        ? radialDir.normalize()
+        : azimuthPerp(fr.dir, k * (cfg.phyllotaxis || 137.5) * DEG + profileRoll, new THREE.Vector3())
+      // 分支基部贴到父枝"实际表面"上 (骨架先定位置, 蒙皮阶段再在父枝上切孔桥接)。
+      // 父枝有 flare/knots 时必须用调制后的半径, 否则子枝基部会埋在外扩内部,
+      // 桥接后视觉上像树枝从洞口反着长回去。
+      let attachRadius = fr.radius * 0.95
+      if (parentSurface) {
+        const basis = frameBasisAt(parentSurface.frames, tt)
+        const az = Math.atan2(outDir.dot(basis.up), outDir.dot(basis.side))
+        const mod = parentSurface.modifier ? parentSurface.modifier(basis.frame.t, az, basis.frame.radius) : 1
+        const sx = parentSurface.squashX === undefined ? 1 : parentSurface.squashX
+        const sz = parentSurface.squashZ === undefined ? 1 : parentSurface.squashZ
+        const proj = Math.hypot(Math.cos(az) * sx, Math.sin(az) * sz)
+        attachRadius = Math.max(fr.radius, basis.frame.radius * mod * proj) * 0.92
+      }
+      const startPos = fr.pos.clone().addScaledVector(outDir, attachRadius)
 
       const wind0 = lerp(parentWind0, parentWind1, tt)
       const wind1 = Math.min(1, wind0 + 0.3 * (cfg.windGain === undefined ? 1 : cfg.windGain))
 
       buildBranch({
-        level, startPos, startDir: dir, length, radius0, radius1, cfg, rng, wind0, wind1, parentSlot,
+        level, startPos, startDir: dir, length, radius0, radius1, cfg, rng, wind0, wind1,
+        parentSlot, parentBranch,
       })
     }
   }
 
   const buildBranch = (o) => {
-    const { level, startPos, startDir, length, radius0, radius1, cfg, rng, wind0, wind1, parentSlot } = o
+    const { level, startPos, startDir, length, radius0, radius1, cfg, rng, wind0, wind1, parentSlot, parentBranch } = o
     const frames = growFrames(rng, {
       startPos,
       startDir,
@@ -397,35 +444,42 @@ export function buildTree(params) {
       meta: { length, radius: radius0, segments: Math.max(2, Math.round(cfg.segments)) },
     })
 
-    barkParts.push(buildTube(frames, {
-      radialSegments,
-      crossSection: cfg.crossSection || 'round',
-      starDepth: cfg.starDepth || 0,
-      color: colorBase,
-      color2: new THREE.Color(1.0, 1.0, 1.0),
-      colorVariance: 0.05,
-      rng: rng.fork('bark'),
-      wind0, wind1,
-      windCurve: 1.5,
-      grow: growSpan,
-      origin: startPos.clone(),
-      phase: rng.range(0, Math.PI * 2),
-      capStart: true,
-      capEnd: true,
-      // 末梢圆钝收尖 (不是平截面) + 基部领口 (与父枝平滑融合, 避免大小半径硬拼接)
-      tipRound: o.tipRound === undefined ? 0.06 : o.tipRound,
-      // 一体建模时加大基部领口, 让枝条与树干/父枝更像连续长出来的一棵树
-      // 挤出式恰恰相反: 不加大领口, 甚至轻微收口, 让分支从表面自然长出而不是鼓一个包
-      baseFlare: (o.baseFlare === undefined ? (level === 1 ? 0.45 : 0.32) : o.baseFlare) +
-        (onePiece && !extrudeMode ? 0.14 : 0) + (collarMode ? 0.35 : 0) + (extrudeMode ? -0.1 : 0),
-      baseFlareLen: (o.baseFlareLen === undefined ? (level === 1 ? 0.16 : 0.13) : o.baseFlareLen) +
-        (onePiece && !extrudeMode ? 0.02 : 0) + (collarMode ? 0.1 : 0) + (extrudeMode ? -0.04 : 0),
-      vertexNoise: 0.05,
-      nodeId: mySlot,
-    }))
+    // 骨架先行: 这里只登记骨架分支 (节点/边/半径/父子关系)。
+    // 树皮几何在全部生长结束后由 barkSkin 一次性生成 (分叉切孔桥接 + 端盖)。
+    // 一体建模: 加大基部领口, 让枝条与树干/父枝更像连续长出来的一棵树
+    const myBranch = addBarkBranch(barkSkeleton, {
+      frames,
+      parent: parentBranch === undefined ? null : parentBranch,
+      slot: mySlot,
+      type: 'branch',
+      level,
+      render: {
+        radialSegments,
+        crossSection: cfg.crossSection || 'round',
+        starDepth: cfg.starDepth || 0,
+        color: colorBase,
+        color2: new THREE.Color(1.0, 1.0, 1.0),
+        colorVariance: 0.05,
+        rng: rng.fork('bark'),
+        wind0,
+        wind1,
+        windCurve: 1.5,
+        grow: growSpan,
+        origin: startPos.clone(),
+        phase: rng.range(0, Math.PI * 2),
+        // 末梢圆钝收尖 (不是平截面)。
+        // 基部领口不再靠"把子枝基部吹粗"来遮缝: 现在分叉是真实切孔 + 环桥接,
+        // 过大的 baseFlare 会让子枝基部接近父枝粗度, 窗口过大、桥接变成大片斜鳍,
+        // 视觉上就像树枝在基部被拉偏。保留 0 基准 (+ onePiece 极轻微领口)。
+        tipRound: o.tipRound === undefined ? 0.06 : o.tipRound,
+        baseFlare: (o.baseFlare === undefined ? 0 : o.baseFlare) + (onePiece ? 0.06 : 0),
+        baseFlareLen: (o.baseFlareLen === undefined ? (level === 1 ? 0.16 : 0.13) : o.baseFlareLen),
+        vertexNoise: 0.05,
+      },
+    })
     branchCount++
 
-    if (level < branchParams.levels) spawnChildren(frames, level, length, rng, wind0, wind1, mySlot)
+    if (level < branchParams.levels) spawnChildren(frames, level, length, rng, wind0, wind1, mySlot, myBranch)
     const leafIdx = level - 1
     // 花朵独立: 树叶关闭时仍要跑 spawnLeaves 采集开花位置 (只是不写入叶片几何)
     if ((L.enabled || FL.enabled) && L.levels[leafIdx]) spawnLeaves(frames, level, wind1, mySlot)
@@ -518,6 +572,9 @@ export function buildTree(params) {
     : baseTrunkMod
 
   const squash = Math.max(0.2, t.squash || 1)
+  // 树干实际截面 (含 flare/knots 与 squash): 子枝/树根的基部要贴在这个表面上
+  const trunkSquashX = 1 / Math.sqrt(squash)
+  const trunkSquashZ = Math.sqrt(squash)
   const trunkSlot = addSlot({
     type: 'trunk',
     level: 0,
@@ -526,28 +583,33 @@ export function buildTree(params) {
     parent: null,
     meta: { length: t.height * forkT, radius: trunkR0, segments: Math.max(3, Math.round(t.segments)), fork: forkOn ? Math.round(forkCfg.count) : 0 },
   })
-  barkParts.push(buildTube(trunkFrames, {
-    radialSegments: Math.max(4, Math.round(t.radialSegments * ((P.lod && P.lod.barkDetail) || 1))),
-    crossSection: 'round',
-    squashX: 1 / Math.sqrt(squash),
-    squashZ: Math.sqrt(squash),
-    color: new THREE.Color(0.84, 0.82, 0.8),
-    color2: new THREE.Color(1.0, 1.0, 1.0),
-    colorVariance: 0.06,
-    rng: trunkRng.fork('bark-noise'),
-    wind0: 0.012,
-    wind1: 0.2,
-    windCurve: 1.9,
-    grow: LEVEL_GROW[0],
-    origin: new THREE.Vector3(0, 0, 0),
-    phase: trunkRng.range(0, Math.PI * 2),
-    capStart: true,
-    capEnd: true,
-    radiusModifier: trunkModifier,
-    vertexNoise: 0.03,
-    nodeId: trunkSlot,
-    tipRound: 0.05,
-  }))
+  // 树干: 登记为骨架根分支 (parent = null)。基部端盖在蒙皮阶段生成。
+  const trunkBranch = addBarkBranch(barkSkeleton, {
+    frames: trunkFrames,
+    parent: null,
+    slot: trunkSlot,
+    type: 'trunk',
+    level: 0,
+    render: {
+      radialSegments: Math.max(4, Math.round(t.radialSegments * ((P.lod && P.lod.barkDetail) || 1))),
+      crossSection: 'round',
+      squashX: trunkSquashX,
+      squashZ: trunkSquashZ,
+      color: new THREE.Color(0.84, 0.82, 0.8),
+      color2: new THREE.Color(1.0, 1.0, 1.0),
+      colorVariance: 0.06,
+      rng: trunkRng.fork('bark-noise'),
+      wind0: 0.012,
+      wind1: 0.2,
+      windCurve: 1.9,
+      grow: LEVEL_GROW[0],
+      origin: new THREE.Vector3(0, 0, 0),
+      phase: trunkRng.range(0, Math.PI * 2),
+      radiusModifier: trunkModifier,
+      vertexNoise: 0.03,
+      tipRound: 0.05,
+    },
+  })
   branchCount++
 
 
@@ -578,8 +640,21 @@ export function buildTree(params) {
         parent: trunkSlot,
         meta: { length, radius: radius0 },
       })
+      // 树根基部落在"外扩后的真实树干表面"上, 且放在一个能完整容纳薄环带的
+      // 高度 (太靠近 t=0 时环带会被 0 截断, 洞口很高而根环在底缘, 桥接拉成空腔)。
+      const rootDirH = new THREE.Vector3(dir.x, 0, dir.z)
+      if (rootDirH.lengthSq() < 1e-8) rootDirH.set(1, 0, 0)
+      rootDirH.normalize()
+      const rootEpsT = Math.min(0.12, Math.max(0.01, (radius0 * 1.15) / Math.max(1, t.height)))
+      const rootT = Math.min(0.2, Math.max(0.05, rootEpsT * 2.4))
+      const rootFrame = sampleFrame(trunkFrames, rootT)
+      const rootBasis = frameBasisAt(trunkFrames, rootT)
+      const rootAz = Math.atan2(rootDirH.dot(rootBasis.up), rootDirH.dot(rootBasis.side))
+      const rootMod = trunkModifier(rootT, rootAz, rootFrame.radius)
+      const rootProj = Math.hypot(Math.cos(rootAz) * trunkSquashX, Math.sin(rootAz) * trunkSquashZ)
+      const rootSurfaceR = Math.max(rootFrame.radius, rootFrame.radius * rootMod * rootProj) * 0.99
       const frames = growFrames(rootRng, {
-        startPos: new THREE.Vector3(dir.x * t.baseRadius * (extrudeMode ? 0.98 : 0.4), t.baseRadius * 0.15, dir.z * t.baseRadius * (extrudeMode ? 0.98 : 0.4)),
+        startPos: rootFrame.pos.clone().addScaledVector(rootDirH, rootSurfaceR),
         startDir: dir,
         length,
         radius0,
@@ -593,25 +668,31 @@ export function buildTree(params) {
         gnarl: 0.5,
         taperRatio: 0.16,
       })
-      barkParts.push(buildTube(frames, {
-        radialSegments: Math.max(3, Math.round(R.radialSegments * ((P.lod && P.lod.barkDetail) || 1))),
-        color: new THREE.Color(0.78, 0.75, 0.72),
-        color2: new THREE.Color(0.92, 0.9, 0.88),
-        colorVariance: 0.08,
-        rng: rootRng.fork('bark'),
-        wind0: 0.0,
-        wind1: 0.04,
-        windCurve: 1.2,
-        grow: [0, 0.18],
-        origin: new THREE.Vector3(dir.x * t.baseRadius * 0.4, 0.02, dir.z * t.baseRadius * 0.4),
-        phase: rootRng.range(0, Math.PI * 2),
-        capStart: true,
-        capEnd: true,
-        baseFlare: (onePiece && !extrudeMode ? 0.16 : 0) + (collarMode ? 0.2 : 0) + (extrudeMode ? -0.1 : 0),
-        baseFlareLen: 0.1,
-        vertexNoise: 0.07,
-        nodeId: rootSlot,
-      }))
+      // 树根也是骨架分支 (父分支 = 树干), 基部由蒙皮阶段切孔桥接, 梢部端盖
+      addBarkBranch(barkSkeleton, {
+        frames,
+        parent: trunkBranch,
+        slot: rootSlot,
+        type: 'root',
+        level: 0,
+        render: {
+          radialSegments: Math.max(3, Math.round(R.radialSegments * ((P.lod && P.lod.barkDetail) || 1))),
+          color: new THREE.Color(0.78, 0.75, 0.72),
+          color2: new THREE.Color(0.92, 0.9, 0.88),
+          colorVariance: 0.08,
+          rng: rootRng.fork('bark'),
+          wind0: 0.0,
+          wind1: 0.04,
+          windCurve: 1.2,
+          grow: [0, 0.18],
+          origin: new THREE.Vector3(dir.x * t.baseRadius * 0.4, 0.02, dir.z * t.baseRadius * 0.4),
+          phase: rootRng.range(0, Math.PI * 2),
+          baseFlare: onePiece ? 0.06 : 0,
+          baseFlareLen: 0.1,
+          vertexNoise: 0.07,
+          tipRound: 0.06,
+        },
+      })
       branchCount++
     }
   }
@@ -697,7 +778,13 @@ export function buildTree(params) {
   /* 树枝                                                                */
   /* ------------------------------------------------------------------ */
   // 主干上的第一级枝条: 一直长到梢部 (主干不再截断)
-  spawnChildren(trunkFrames, 0, t.height, trunkRng, 0.012, 0.2, trunkSlot, null)
+  // 传入"真实树干表面"(含 flare/knots), 让贴主干生长的枝条基部不会埋在外扩内部。
+  spawnChildren(trunkFrames, 0, t.height, trunkRng, 0.012, 0.2, trunkSlot, trunkBranch, null, {
+    frames: trunkFrames,
+    modifier: trunkModifier,
+    squashX: trunkSquashX,
+    squashZ: trunkSquashZ,
+  })
 
   // 分叉主枝: 从主干内部伸出, 带领口融合; 主干自身继续向上作为主导枝
   if (forkOn) {
@@ -725,7 +812,18 @@ export function buildTree(params) {
         const dir = fr.dir.clone().applyAxisAngle(side, angle * rng.range(0.8, 1.25))
         rotateTowardUp(dir, 0.06)
         const r0 = Math.max(0.002, fr.radius * radiusScale * rng.vary(0.1))
-        const startPos = fr.pos.clone().addScaledVector(dir, -fr.radius * (extrudeMode ? 0.98 : 0.55))
+        // 分叉主枝: 基部也要落在主干"真实表面"上 (含 forkShrink/squash/flare)。
+        // 旧实现沿 dir 偏移 0.45R, 主枝环会深埋在主干内部, 桥接后洞口露出空腔,
+        // 且与生长方向不对齐 (看起来像主枝插进树干再从里面穿出来)。
+        const radialDir = dir.clone().addScaledVector(fr.dir, -dir.dot(fr.dir))
+        if (radialDir.lengthSq() < 1e-10) radialDir.copy(side)
+        radialDir.normalize()
+        const lb = frameBasisAt(trunkFramesAll, forkT)
+        const la = Math.atan2(radialDir.dot(lb.up), radialDir.dot(lb.side))
+        const lmod = trunkModifier(forkT, la, lb.frame.radius)
+        const lproj = Math.hypot(Math.cos(la) * trunkSquashX, Math.sin(la) * trunkSquashZ)
+        const lr = Math.max(fr.radius, lb.frame.radius * lmod * lproj) * 0.95
+        const startPos = fr.pos.clone().addScaledVector(radialDir, lr)
         buildBranch({
           level: 1,
           startPos,
@@ -738,7 +836,8 @@ export function buildTree(params) {
           wind0: 0.2,
           wind1: Math.min(1, 0.2 + 0.3 * (base1.windGain === undefined ? 1 : base1.windGain)),
           parentSlot: trunkSlot,
-          baseFlare: 0.62,
+          parentBranch: trunkBranch,
+          baseFlare: 0,
           baseFlareLen: 0.2,
         })
       }
@@ -746,23 +845,32 @@ export function buildTree(params) {
   }
 
   /* ------------------------------------------------------------------ */
-  /* 合并 + 节点表                                                        */
+  /* 蒙皮 + 节点表                                                        */
   /* ------------------------------------------------------------------ */
-  const barkGeometry = (() => {
-    if (fruitAcc.vertexCount > 0) barkParts.push(fruitAcc.build())
-    let geo = barkParts.length ? mergeGeometries(barkParts, false) : new GeoAcc().build()
-    // 真布尔并集 / 隐式重建 / 严格流形: 在 AO/节点表之前替换树皮几何
-    if (junctionMode === 'csg' || junctionMode === 'implicit') {
-      const nodeList = slots.map((s, id) => ({ id, ...s }))
-      const unified = applyBarkJunction(geo, nodeList, junctionMode)
-      if (unified) geo = unified
-    } else if (junctionMode === 'manifold') {
-      const nodeList = slots.map((s, id) => ({ id, ...s }))
-      const unified = applyManifoldJunction(geo, nodeList)
-      if (unified) geo = unified
+  // 骨架图已完成 (含父子关系/贴合点) -> 一次性生成整张 2-manifold 树皮蒙皮。
+  // 分叉在父环带上真实切孔并桥接, 树干基部与所有枝梢端盖封闭;
+  // 不丢弃任何骨架分支, 不做最大连通过滤, 不用 SDF, 不逐枝建管再合并。
+  finalizeBarkSkeleton(barkSkeleton)
+  const skin = buildBarkSkin(barkSkeleton, {
+    barkDetail: (P.lod && P.lod.barkDetail) || 1,
+    validate: options.validate !== false,
+  })
+  let barkGeometry = skin.geometry
+  if (fruitAcc.vertexCount > 0) {
+    const fruitGeo = fruitAcc.build()
+    const combined = mergeGeometries([barkGeometry, fruitGeo], false)
+    if (combined) {
+      // 保留 UV 接缝顶点对 (拓扑校验/导出检查要用), mergeGeometries 不会自动带过来
+      combined.userData = { ...barkGeometry.userData }
+      combined.computeBoundingBox()
+      combined.computeBoundingSphere()
+      barkGeometry.dispose()
+      fruitGeo.dispose()
+      barkGeometry = combined
+    } else {
+      fruitGeo.dispose()
     }
-    return geo
-  })()
+  }
   const leafGeometry = leafAcc.vertexCount > 0 ? leafAcc.build() : null
 
   /* ---- 花朵: 用花朵自己的设置独立采样 (层级/每枝数量/每簇数/分布起止/朝向) ---- */
@@ -884,6 +992,10 @@ export function buildTree(params) {
     nodes,
     groups,
     twistGuides,
+    // 骨架图与蒙皮统计 (自检 / dev 检查页 / 调试用):
+    // stats.skin.validation = { boundary, nonManifold, components, skinnedBranches, ... }
+    skeleton: barkSkeleton,
+    skinStats: skin.stats,
     stats: {
       branches: branchCount,
       leaves: L.enabled ? leafCount : 0,
@@ -897,6 +1009,7 @@ export function buildTree(params) {
     flowers: flowerCount,
     flowerTriangles: flowerGeometry && flowerGeometry.index ? flowerGeometry.index.count / 3 : 0,
     flowerVertices: flowerGeometry ? flowerGeometry.attributes.position.count : 0,
+      skin: skin.stats,
       buildMs: now() - t0,
       height: maxY - minY,
       spread: maxXZ,
@@ -1175,3 +1288,4 @@ export function estimateScale(params) {
   }
   return { branches, leaves }
 }
+

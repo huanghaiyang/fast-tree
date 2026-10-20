@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>skin: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+let fail = 0
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+const check = (name, cond, detail = '') => {
+  if (!cond) fail++
+  line((cond ? '✔ ' : '✘ ') + name + (detail ? ' — ' + detail : ''))
+}
+async function waitFor(fn, timeout = 60000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) {
+    try { if (fn()) return true } catch { /* ignore */ }
+    await sleep(100)
+  }
+  return false
+}
+function edgeStats(geo) {
+  const m = new Map()
+  const idx = geo.index
+  const n = geo.attributes.position.count
+  const key = (a, b) => (a < b ? a * n + b : b * n + a)
+  // UV 接缝复制顶点先焊回 (渲染用缝, 几何仍闭合)
+  const weld = new Map()
+  const seams = geo.userData && geo.userData.seamPairs
+  if (seams) for (const p of seams) weld.set(p[0], p[1])
+  const rep = (i) => (weld.has(i) ? weld.get(i) : i)
+  for (let i = 0; i < idx.count; i += 3) {
+    const t = [rep(idx.getX(i)), rep(idx.getX(i + 1)), rep(idx.getX(i + 2))]
+    for (let e = 0; e < 3; e++) {
+      const k = key(t[e], t[(e + 1) % 3])
+      m.set(k, (m.get(k) || 0) + 1)
+    }
+  }
+  let boundary = 0, nonManifold = 0
+  for (const c of m.values()) {
+    if (c === 1) boundary++
+    else if (c > 2) nonManifold++
+  }
+  return { boundary, nonManifold, edges: m.size }
+}
+function componentCount(geo) {
+  const idx = geo.index
+  const n = geo.attributes.position.count
+  const weld = new Map()
+  const seams = geo.userData && geo.userData.seamPairs
+  if (seams) for (const p of seams) weld.set(p[0], p[1])
+  const rep = (i) => (weld.has(i) ? weld.get(i) : i)
+  const parent = new Int32Array(n)
+  for (let i = 0; i < n; i++) parent[i] = i
+  const find = (x) => { let r = x; while (parent[r] !== r) r = parent[r]; while (x !== r) { const nx = parent[x]; parent[x] = r; x = nx } return r }
+  for (let i = 0; i < idx.count; i += 3) {
+    const a = find(rep(idx.getX(i))), b = find(rep(idx.getX(i + 1))), c = find(rep(idx.getX(i + 2)))
+    if (b !== a) parent[b] = a
+    if (c !== a) parent[c] = a
+  }
+  const seen = new Set()
+  for (let i = 0; i < idx.count; i += 3) seen.add(find(rep(idx.getX(i))))
+  return seen.size
+}
+function parseGLB(buf) {
+  const dv = new DataView(buf)
+  if (dv.getUint32(0, true) !== 0x46546c67) throw new Error('不是 GLB')
+  let off = 12
+  while (off < buf.byteLength) {
+    const len = dv.getUint32(off, true)
+    const type = dv.getUint32(off + 4, true)
+    const data = new Uint8Array(buf, off + 8, len)
+    if (type === 0x4e4f534a) return JSON.parse(new TextDecoder().decode(data))
+    off += 8 + len
+  }
+  throw new Error('缺少 JSON chunk')
+}
+let win, doc
+f.addEventListener('load', () => { win = f.contentWindow; doc = f.contentDocument })
+setTimeout(async () => {
+  try {
+    for (let i = 0; i < 150 && !win; i++) await sleep(100)
+    await waitFor(() => win.__fastTree && win.__fastTree.ready && win.__fastTreeScene, 60000)
+    const scene = win.__fastTreeScene
+    const state = win.__fastTree
+    // 果实是独立闭合壳, 拓扑验收先关掉; 树叶不影响树皮
+    state.params.fruit.enabled = false
+    state.params.leaves.enabled = false
+    await sleep(800)
+
+    line('===== 骨架蒙皮拓扑验收 =====')
+    const skin = state.stats.skin
+    const v = skin && skin.validation
+    check('stats 暴露骨架/蒙皮统计', !!skin && !!v)
+    check('骨架分支数 > 0', v && v.skeletonBranches > 0, v ? String(v.skeletonBranches) : '')
+    check('所有骨架分支都有对应蒙皮 (无分支被丢弃)',
+      v && v.missingBranches.length === 0 && v.skinnedBranches === v.skeletonBranches,
+      v ? `${v.skinnedBranches}/${v.skeletonBranches}` : '')
+    check('boundary = 0', v && v.boundary === 0, v ? String(v.boundary) : '')
+    check('nonManifold = 0', v && v.nonManifold === 0, v ? String(v.nonManifold) : '')
+    check('nonManifoldVertices = 0', v && v.nonManifoldVertices === 0, v ? String(v.nonManifoldVertices) : '')
+    check('components = 1', v && v.components === 1, v ? String(v.components) : '')
+    check('每个分叉都做了环桥接', v && skin.bridgeStrips === v.skeletonBranches - 1,
+      v ? `${skin.bridgeStrips} vs ${v.skeletonBranches - 1}` : '')
+    check('端盖 = 树干基部 + 每条分支末梢', v && skin.caps === v.skeletonBranches + 1,
+      v ? `${skin.caps} vs ${v.skeletonBranches + 1}` : '')
+    check('有向体积 > 0 (法线朝外)', v && v.volume > 0, v ? v.volume.toFixed(3) : '')
+
+    // 独立复核视口几何 (不经生成器报告)
+    const geo = scene.barkMesh.geometry
+    const es = edgeStats(geo)
+    check('独立复核: boundary = 0', es.boundary === 0, String(es.boundary))
+    check('独立复核: nonManifold = 0', es.nonManifold === 0, String(es.nonManifold))
+    check('独立复核: components = 1', componentCount(geo) === 1, String(componentCount(geo)))
+
+    // 极限配置: 16 根 + 6 主枝 + 5 级枝
+    state.params.branches.levels = 5
+    state.params.roots.enabled = true
+    state.params.roots.count = 16
+    state.params.trunk.fork.enabled = true
+    state.params.trunk.fork.count = 6
+    await sleep(1600)
+    const v2 = state.stats.skin && state.stats.skin.validation
+    check('极限配置 (16 根 / 6 主枝 / 5 级枝) 仍满足全部验收',
+      v2 && v2.boundary === 0 && v2.nonManifold === 0 && v2.nonManifoldVertices === 0 &&
+      v2.components === 1 && v2.missingBranches.length === 0,
+      v2 ? JSON.stringify({
+        boundary: v2.boundary, nonManifold: v2.nonManifold, nmv: v2.nonManifoldVertices,
+        components: v2.components, missing: v2.missingBranches.length, branches: v2.skeletonBranches,
+      }) : '')
+
+    // 导出: 默认按节点拆分; 树干/树枝/树根仍在同一张闭合蒙皮上
+    const preview = await scene.prepareExport('glb', 'skin.glb')
+    const json = parseGLB(await preview.payload.blob.arrayBuffer())
+    const names = (json.nodes || []).map((n) => n.name || '')
+    check('导出仍按节点拆分 (Bark_Trunk / Bark_Branch_L* / Bark_Roots)',
+      names.includes('Bark_Trunk') && names.some((n) => n.startsWith('Bark_Branch_')) && names.includes('Bark_Roots'),
+      names.join(','))
+
+    // 一体建模 = 把同一张蒙皮导出成单个 Bark 节点
+    state.params.trunk.onePiece = true
+    state.rebuildVersion++
+    await sleep(1400)
+    const onePreview = await scene.prepareExport('glb', 'skin-one.glb')
+    const oneJson = parseGLB(await onePreview.payload.blob.arrayBuffer())
+    const oneNames = (oneJson.nodes || []).map((n) => n.name || '')
+    check('一体建模导出为单个 Bark (不再有 Bark_Trunk/Branch/Roots)',
+      oneNames.includes('Bark') &&
+      !oneNames.some((n) => n === 'Bark_Trunk' || n === 'Bark_Roots' || n.startsWith('Bark_Branch_')),
+      oneNames.join(','))
+    const v3 = state.stats.skin && state.stats.skin.validation
+    check('合并导出前后仍满足全部拓扑验收',
+      v3 && v3.boundary === 0 && v3.nonManifold === 0 && v3.components === 1 && v3.missingBranches.length === 0)
+
+    // UI: 旧的"枝干穿插处理"下拉已移除, 一体建模开关仍在
+    const trunkTab = [...doc.querySelectorAll('.tab')].find((t) => (t.textContent || '').includes('树干'))
+    trunkTab && trunkTab.click(); await sleep(400)
+    const labels = [...doc.querySelectorAll('label')].map((l) => (l.textContent || '').trim())
+    check('树干面板不再有「枝干穿插处理」下拉', !labels.some((t) => t.includes('枝干穿插处理')))
+    check('树干面板仍保留「树干树枝树根一体建模」开关', labels.some((t) => t.includes('树干树枝树根一体建模')))
+
+    line('\n结果: ' + (fail ? 'SKIN-FAIL ' + fail : 'SKIN-OK'))
+    document.title = (fail ? 'SKIN-FAIL(' + fail + ')' : 'SKIN-OK') + ' :: ' +
+      R.filter((s) => s.startsWith('✘')).slice(0, 5).join(' | ')
+  } catch (err) {
+    line('✘ 异常: ' + (err && err.stack ? err.stack : err))
+    document.title = 'SKIN-ERROR'
+  }
+}, 1200)
+</script>
+</body></html>

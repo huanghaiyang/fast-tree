@@ -267,7 +267,6 @@ const SPECIAL_PERTURB = {
   'leafMat.tintMode': ['custom', 'texture'],
   'leaves.shapeMix': [[{ shape: 'oak', weight: 2 }, { shape: 'needle', weight: 1 }]],
   'trunk.knots': [9],              // 0/1 附近不明显
-  'trunk.junctionMode': ['extrude', 'collar', 'csg', 'implicit'],
   'roots.count': [11],
 }
 

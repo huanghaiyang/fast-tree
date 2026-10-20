@@ -30,10 +30,7 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { runAudit, AUDIT_EXEMPT, STORE_LEVEL } from './paramAudit.mjs'
 import { docFor, DOC_KEYS } from '../src/core/paramDocs.js'
-import { ensureManifold } from '../src/core/manifoldRuntime.js'
-
-// 严格流形模式依赖 WASM, 自检里先初始化
-await ensureManifold()
+import { analyzeTopology, validateSkin } from '../src/core/meshTopology.js'
 
 let pass = 0
 let fail = 0
@@ -566,13 +563,17 @@ check('组合名可读', classificationName('oak', 'mature', 'autumn').includes(
 
 /* 12. 几何完整性: 封闭 / 无半径硬拼接 / 末梢不截断 / 果实 */
 console.log('\n[12] 几何完整性 (封闭与过渡)')
-/** 边界边计数: 流形封闭曲面 = 0 (每条边恰好被 2 个三角面共享) */
-function boundaryEdges(geo) {
+/** 边界边计数: 流形封闭曲面 = 0 (每条边恰好被 2 个三角面共享)
+ *  weldPairs: UV 接缝复制顶点对 (渲染用缝), 统计前先焊回原顶点 */
+function boundaryEdges(geo, weldPairs) {
   const idx = geo.index.array
+  const weld = new Map()
+  if (weldPairs) for (const p of weldPairs) weld.set(p[0], p[1])
+  const rep = (i) => (weld.has(i) ? weld.get(i) : i)
   const map = new Map()
   const key = (a, b) => (a < b ? a + ':' + b : b + ':' + a)
   for (let i = 0; i < idx.length; i += 3) {
-    const t = [idx[i], idx[i + 1], idx[i + 2]]
+    const t = [rep(idx[i]), rep(idx[i + 1]), rep(idx[i + 2])]
     for (let e = 0; e < 3; e++) {
       const k = key(t[e], t[(e + 1) % 3])
       map.set(k, (map.get(k) || 0) + 1)
@@ -587,60 +588,104 @@ function boundaryEdges(geo) {
   return { boundary, nonManifold, edges: map.size }
 }
 const oakP = composeTree('oak', 'mature', 'summer', 4242)
-oakP.fruit = { ...oakP.fruit, enabled: false }   // 流形/封闭测试先排除果实(旋转体极点)
+oakP.fruit = { ...oakP.fruit, enabled: false }   // 果实是独立闭合壳, 树体拓扑验收先排除
 const oakR = buildTree(oakP)
-const be = boundaryEdges(oakR.barkGeometry)
-check('树皮几何流形 (每条边最多 2 个面)', be.nonManifold === 0, JSON.stringify(be))
-// 杆件基部埋进父枝内部, 故意留开口(否则会有双层面) -> 全局必有边界边, 但**主干必须完全封闭**
-const trunkGroup = oakR.groups.find((g) => g.id === 'trunk')
-const trunkIds = new Set(trunkGroup ? trunkGroup.nodeIds : [])
-const trunkBoundary = (() => {
-  const geo = oakR.barkGeometry
-  const idx = geo.index.array
-  const nodeAttr = geo.attributes.aNodeId.array
-  const map = new Map()
-  const key = (a, b) => (a < b ? a + ':' + b : b + ':' + a)
-  for (let i = 0; i < idx.length; i += 3) {
-    const t = [idx[i], idx[i + 1], idx[i + 2]]
-    if (!t.every((v) => trunkIds.has(nodeAttr[v]))) continue
-    for (let e = 0; e < 3; e++) {
-      const k = key(t[e], t[(e + 1) % 3])
-      map.set(k, (map.get(k) || 0) + 1)
+const be = boundaryEdges(oakR.barkGeometry, oakR.barkGeometry.userData.seamPairs)
+const sk = oakR.stats.skin
+const skv = sk.validation
+
+/* ---- 骨架图本身 (只描述节点/边/半径/父子关系) ---- */
+check('骨架图: 分支数 = 统计数据 (树干 + 树枝 + 树根)',
+  oakR.skeleton.branches.length === oakR.stats.branches,
+  `${oakR.skeleton.branches.length} vs ${oakR.stats.branches}`)
+check('骨架图: 每条分支都有 >= 2 个骨架节点 (半径/截面环的锚点)',
+  oakR.skeleton.branches.every((b) => b.nodeIds.length >= 2 && b.frames.length === b.nodeIds.length))
+check('骨架图: 非树干分支都有父分支与贴合点 (段 + 段内参数)',
+  oakR.skeleton.branches.filter((b) => b.parent !== null)
+    .every((b) => b.attach && b.attach.parentBranch === b.parent && b.attach.segment >= 0 && b.attach.t >= 0 && b.attach.t <= 1))
+check('骨架图: 骨架节点都串到父节点上 (仅树干根节点没有父节点)',
+  (() => {
+    const roots = oakR.skeleton.nodes.filter((n) => n.parentNode === null)
+    return roots.length === 1 && oakR.skeleton.nodes.every((n) => n.parentNode === null || Number.isInteger(n.parentNode))
+  })())
+check('骨架图: 边数 = 节点数 - 分支数 (每根分支内部串成一条链)',
+  oakR.skeleton.edges.length === oakR.skeleton.nodes.length - oakR.skeleton.branches.length &&
+  oakR.skeleton.branches.every((b) => b.edgeIds.length === b.nodeIds.length - 1),
+  `edges=${oakR.skeleton.edges.length} nodes=${oakR.skeleton.nodes.length} branches=${oakR.skeleton.branches.length}`)
+check('骨架图: 每条边的端点相连且半径为正',
+  oakR.skeleton.edges.every((e) => {
+    const b = oakR.skeleton.branches[e.branch]
+    return b.nodeIds[e.index] === e.from && b.nodeIds[e.index + 1] === e.to &&
+      e.radius0 > 0 && e.radius1 > 0
+  }))
+check('骨架图: 子分支的贴合点指向父分支真实的边',
+  oakR.skeleton.branches.filter((b) => b.parent !== null).every((b) => {
+    const pe = oakR.skeleton.edges[b.attach.parentEdge]
+    return !!pe && pe.branch === b.parent
+  }))
+
+/* ---- 蒙皮验收: boundary=0 / nonManifold=0 / components=1 / 分支全覆盖 ---- */
+check('蒙皮验收: 边界边 boundary = 0', be.boundary === 0, `boundary=${be.boundary}`)
+check('蒙皮验收: 非流形边 nonManifold = 0', be.nonManifold === 0, `nonManifold=${be.nonManifold}`)
+check('蒙皮验收: 非流形顶点 nonManifoldVertices = 0', skv.nonManifoldVertices === 0,
+  `nonManifoldVertices=${skv.nonManifoldVertices}`)
+check('蒙皮验收: 单连通 components = 1', skv.components === 1, `components=${skv.components}`)
+check('蒙皮验收: 所有骨架分支都有对应蒙皮 (无分支被丢弃)',
+  skv.missingBranches.length === 0 && skv.skinnedBranches === skv.skeletonBranches,
+  `${skv.skinnedBranches}/${skv.skeletonBranches} ` + skv.missingBranches.map((m) => m.slot).join(','))
+check('蒙皮验收: 每个分叉都做了显式环桥接 (桥接数 = 非树干分支数)',
+  sk.bridgeStrips === oakR.skeleton.branches.length - 1, `${sk.bridgeStrips} vs ${oakR.skeleton.branches.length - 1}`)
+check('蒙皮验收: 端盖 = 树干基部 + 每条分支末梢', sk.caps === oakR.skeleton.branches.length + 1,
+  `${sk.caps} vs ${oakR.skeleton.branches.length + 1}`)
+check('蒙皮验收: 法线朝外 (有向体积 > 0)', skv.volume > 0, `volume=${skv.volume.toFixed(3)}`)
+check('蒙皮验收: 无退化三角面', skv.degenerate === 0, `degenerate=${skv.degenerate}`)
+
+// 独立复核: 直接扫最终几何 (不依赖生成器内嵌的 validation 报告)
+const topo = analyzeTopology(oakR.barkGeometry, { weldPairs: oakR.barkGeometry.userData.seamPairs })
+check('独立复核拓扑: boundary=0 / nonManifold=0 / components=1',
+  topo.boundary === 0 && topo.nonManifold === 0 && topo.components === 1, JSON.stringify(topo))
+check('独立复核: 顶点也是流形 (link 为单环)', topo.nonManifoldVertices === 0,
+  `nonManifoldVertices=${topo.nonManifoldVertices}`)
+check('校验开关不影响几何 (validate:false 与默认逐字节一致)',
+  geomHash(buildTree(oakP, { validate: false }).barkGeometry) === geomHash(oakR.barkGeometry))
+
+/* ---- 多形态 + 极端配置同样满足验收 (不丢分支 / 不塌成多个组件) ---- */
+{
+  const stress = cloneParams(oakP)
+  stress.branches.levels = 5
+  stress.roots = { ...stress.roots, enabled: true, count: 16 }
+  stress.trunk.fork = { ...stress.trunk.fork, enabled: true, count: 6 }
+  const configs = [
+    ['默认参数', defaultParams()],
+    ['松树', composeTree('pine', 'mature', 'summer', 4242)],
+    ['极端: 5 级枝 + 16 根 + 6 主枝', stress],
+  ]
+  for (const [label, p] of configs) {
+    let r2 = null
+    try { r2 = buildTree(normalizeParams(p)) } catch (err) {
+      check(`${label}: 骨架蒙皮生成成功`, false, err.message)
+      continue
     }
+    const v = r2.stats.skin.validation
+    check(`${label}: boundary=0 / nonManifold=0 / components=1 / 全部分支有蒙皮`,
+      v.boundary === 0 && v.nonManifold === 0 && v.nonManifoldVertices === 0 &&
+      v.components === 1 && v.missingBranches.length === 0,
+      JSON.stringify({
+        boundary: v.boundary, nonManifold: v.nonManifold, nmv: v.nonManifoldVertices,
+        components: v.components, missing: v.missingBranches.length,
+        branches: r2.stats.branches,
+      }))
   }
-  let boundary = 0
-  for (const c of map.values()) if (c === 1) boundary++
-  return boundary
-})()
-check('主干完全封闭 (基部与分叉顶端都封口, 不出现截断截面)', trunkBoundary === 0, 'boundary=' + trunkBoundary)
-// 所有管状部件 (主干/树枝/树根) 首尾都加三角扇端盖 -> 整树树皮无边界边
-check('树干/树枝/树根全部首尾闭合 (无边界边)', be.boundary === 0, 'boundary=' + be.boundary)
-// 一体建模开关: 改变分支/树根基部领口几何, 但端盖仍保留 -> 仍然封闭
+}
+
+// 一体建模开关: 改变分支/树根基部领口几何 (导出仍是同一张蒙皮) -> 仍然封闭
 const oneP = { ...oakP, trunk: { ...oakP.trunk, onePiece: true } }
 const oneR = buildTree(oneP)
-const oneBE = boundaryEdges(oneR.barkGeometry)
+const oneBE = boundaryEdges(oneR.barkGeometry, oneR.barkGeometry.userData.seamPairs)
 check('一体建模改变树干/树枝/树根几何', geomHash(oneR.barkGeometry) !== geomHash(oakR.barkGeometry))
-check('一体建模仍保持首尾封闭', oneBE.boundary === 0 && oneBE.nonManifold === 0, JSON.stringify(oneBE))
-// 布尔并集 / 隐式重建 (可选高级模式): 生成新几何并保留自定义顶点属性
-const csgP = { ...oakP, trunk: { ...oakP.trunk, junctionMode: 'csg', onePiece: true } }
-const csgR = buildTree(csgP)
-check('CSG 布尔并集生成新几何', csgR.stats.barkTriangles > 0 &&
-  geomHash(csgR.barkGeometry) !== geomHash(oakR.barkGeometry) &&
-  csgR.barkGeometry.attributes.aWind && csgR.barkGeometry.attributes.color,
-  `tris=${csgR.stats.barkTriangles}`)
-const impP = { ...oakP, trunk: { ...oakP.trunk, junctionMode: 'implicit', onePiece: true } }
-const impR = buildTree(impP)
-check('隐式重建几何不同于 CSG 并集', geomHash(impR.barkGeometry) !== geomHash(csgR.barkGeometry),
-  `${geomHash(csgR.barkGeometry)} vs ${geomHash(impR.barkGeometry)}`)
-const manP = { ...oakP, trunk: { ...oakP.trunk, junctionMode: 'manifold', onePiece: true } }
-const manR = buildTree(manP)
-const manBE = boundaryEdges(manR.barkGeometry)
-check('严格流形模式生成新几何', manR.stats.barkTriangles > 0 &&
-  geomHash(manR.barkGeometry) !== geomHash(oakR.barkGeometry) &&
-  manR.barkGeometry.attributes.aWind && manR.barkGeometry.attributes.color,
-  `tris=${manR.stats.barkTriangles}`)
-check('严格流形输出无边界边且无非流形边', manBE.boundary === 0 && manBE.nonManifold === 0,
-  JSON.stringify(manBE))
+check('一体建模仍保持封闭且单连通',
+  oneBE.boundary === 0 && oneBE.nonManifold === 0 && oneR.stats.skin.validation.components === 1,
+  JSON.stringify(oneBE))
 // 分叉后主干仍然长到接近全高 (不是被截断的树桩)
 check('分叉时主干不被截断 (整树高度 >= 0.9 × 主干高度)',
   oakR.stats.height >= oakP.trunk.height * 0.9,
@@ -1463,27 +1508,36 @@ console.log('\n[27] 导出节点拆分')
   const triSum = parts.reduce((s, x) => s + x.triangles, 0)
   const vSum = parts.reduce((s, x) => s + x.vertices, 0)
   check('拆分后面数守恒', triSum === r.stats.barkTriangles, `${triSum} vs ${r.stats.barkTriangles}`)
-  check('拆分后顶点数守恒', vSum === r.stats.barkVertices, `${vSum} vs ${r.stats.barkVertices}`)
+  check('拆分后顶点数不小于原几何 (分叉缝合处的共享顶点按面片复制)',
+    vSum >= r.stats.barkVertices && vSum < r.stats.barkVertices * 2.5,
+    `${vSum} vs ${r.stats.barkVertices}`)
   check('每个拆分节点都有几何且属性齐全', parts.every((x) =>
     x.triangles > 0 && x.geometry.attributes.position && x.geometry.attributes.normal &&
     x.geometry.attributes.uv && x.geometry.attributes.color && x.geometry.attributes.aNodeId && x.geometry.index))
-  // 端盖顶点必须带正确的 aNodeId, 否则拆分后端盖会掉到别的节点/留下开口
-  const openTubeParts = parts.filter((x) => x.name !== 'Bark_Fruit' && boundaryEdges(x.geometry).boundary !== 0)
-  check('拆分后的树干/树枝/树根节点仍首尾闭合', openTubeParts.length === 0,
-    openTubeParts.map((x) => x.name + ':' + boundaryEdges(x.geometry).boundary).join(', '))
+  // 整张树体 (树干+树枝+树根) 才是闭合 2-manifold; 按节点拆分后各片在分叉缝处
+  // 天然是开放面片 (这是对的: 分叉由显式环桥接缝合在同一张蒙皮上)。
+  const bodyParts = barkExportParts(r.barkGeometry, r.nodes, true, true)
+  const bodyPart = bodyParts.find((x) => x.name === 'Bark')
+  const bodyTopo = bodyPart ? analyzeTopology(bodyPart.geometry, { weldPositions: true }) : null
+  check('合并树体 (树干+树枝+树根) 仍闭合且单连通',
+    !!bodyTopo && bodyTopo.boundary === 0 && bodyTopo.nonManifold === 0 && bodyTopo.components === 1,
+    JSON.stringify(bodyTopo))
   const oneParts = splitBarkGeometryByNodeGroups(r.barkGeometry, r.nodes, { mergeTrunkBranches: true, mergeRoots: true })
   const oneNames = oneParts.map((x) => x.name)
   check('一体建模拆分: 树干/树枝/树根合并为单个 Bark', oneNames.includes('Bark') &&
     !oneNames.some((n) => n === 'Bark_Trunk' || n === 'Bark_Roots' || n.startsWith('Bark_Branch_')), oneNames.join(', '))
   const byId = new Map(r.nodes.map((n) => [n.id, n]))
-  let mixed = ''
+  let misattributed = ''
   for (const part of parts) {
-    const ids = part.geometry.attributes.aNodeId.array
-    const labels = new Set()
-    for (let i = 0; i < ids.length; i++) labels.add(barkGroupName(byId.get(ids[i])))
-    if (labels.size !== 1 || [...labels][0] !== part.name) mixed += part.name + ':' + [...labels].join('|') + ';'
+    if (misattributed) break
+    const partIdx = part.geometry.index.array
+    const partIds = part.geometry.attributes.aNodeId.array
+    for (let t = 0; t < partIdx.length; t += 3) {
+      const label = barkGroupName(byId.get(partIds[partIdx[t]]))
+      if (label !== part.name) { misattributed = `${part.name} <- ${label}`; break }
+    }
   }
-  check('拆分节点内不混入其它节点组', mixed === '', mixed)
+  check('每个拆分三角面都归到正确节点组 (按首顶点 aNodeId)', misattributed === '', misattributed)
   check('拆分不修改原树皮几何', r.barkGeometry.attributes.position.count === r.stats.barkVertices &&
     r.barkGeometry.attributes.aNodeId.count === r.stats.barkVertices)
 
