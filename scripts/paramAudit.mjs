@@ -268,6 +268,7 @@ const SPECIAL_PERTURB = {
   'leaves.shapeMix': [[{ shape: 'oak', weight: 2 }, { shape: 'needle', weight: 1 }]],
   'trunk.knots': [9],              // 0/1 附近不明显
   'roots.count': [11],
+  'bark.pipeline': ['skin'],
 }
 
 /** 小树探针: 让每次审计重建都很快, 但必须包含带叶片的层级 */
@@ -285,13 +286,17 @@ export function probeParams() {
   p.leaves.clusterCount = 2
   p.leaves.segments = 3
   p.lod.maxLeaves = 20000
+  // 根系参数只有在启用树根时才有效
+  p.roots.enabled = true
   return p
 }
 
 export function auditGeometry(baseParams = probeParams()) {
   const base = geometrySignature(baseParams)
   const results = []
-  const paths = collectPaths(baseParams).filter(({ path }) => GROUP_KEYS.geometry.some((k) => path === k || path.startsWith(k + '.')))
+  // bark.pipeline 切换的是几何管线（虽然字段放在 material 组的 bark 下）
+  const paths = collectPaths(baseParams).filter(({ path }) => path === 'bark.pipeline' ||
+    GROUP_KEYS.geometry.some((k) => path === k || path.startsWith(k + '.')))
   for (const { path, value } of paths) {
     const candidates = perturbations(path, value)
     let changed = false
@@ -404,7 +409,9 @@ function materialSignature(params) {
 export function auditMaterial(baseParams = defaultParams()) {
   const base = materialSignature(baseParams)
   const results = []
-  const paths = collectPaths(baseParams).filter(({ path }) => GROUP_KEYS.material.some((k) => path === k || path.startsWith(k + '.')))
+  // bark.pipeline 是几何管线开关, 由 auditGeometry 负责 (材质签名看不到它)
+  const paths = collectPaths(baseParams).filter(({ path }) => path !== 'bark.pipeline' &&
+    GROUP_KEYS.material.some((k) => path === k || path.startsWith(k + '.')))
   for (const { path, value } of paths) {
     let changed = false
     let how = ''

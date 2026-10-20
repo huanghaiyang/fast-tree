@@ -59,6 +59,8 @@ export function preserveUserBits(next, prev) {
   if (prev.bark) {
     next.bark.texture = prev.bark.texture || ''
     next.bark.normalTexture = prev.bark.normalTexture || ''
+    // 树皮几何管线属于用户选择, 不应被预设重置
+    if (prev.bark.pipeline) next.bark.pipeline = prev.bark.pipeline
   }
   if (prev.leafMat) {
     next.leafMat.texture = prev.leafMat.texture || ''

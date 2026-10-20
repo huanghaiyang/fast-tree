@@ -88,6 +88,8 @@ setTimeout(async () => {
     // 果实是独立闭合壳, 拓扑验收先关掉; 树叶不影响树皮
     state.params.fruit.enabled = false
     state.params.leaves.enabled = false
+    // 这个页面验证的是旧单张连续蒙皮管线; 新默认是 SpeedTree 分枝管
+    state.params.bark.pipeline = 'skin'
     await sleep(800)
 
     line('===== 骨架蒙皮拓扑验收 =====')

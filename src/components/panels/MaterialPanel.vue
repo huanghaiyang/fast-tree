@@ -2,6 +2,8 @@
   <MaterialPreview />
 
   <Section title="树皮材质" hint="Bark">
+    <SelectRow label="树皮管线" v-model="b.pipeline" :options="barkPipelines"
+      hint="默认 SpeedTree 分枝管+领口（无窗口偏移，多个闭合分量）；可切回旧单张连续蒙皮" />
     <SelectRow label="程序化花纹" v-model="b.procedural.style" :options="barkStyles" />
     <SliderRow label="花纹缩放" v-model="b.procedural.scale" :min="0.3" :max="3" :step="0.05" />
     <SliderRow label="花纹对比" v-model="b.procedural.contrast" :min="0" :max="1" :step="0.01" />
@@ -128,6 +130,11 @@ function randomBarkTexture() {
   const pool = barkChoices.value.length ? barkChoices.value : BARK_TEXTURES
   return pool[Math.floor(Math.random() * pool.length)]
 }
+
+const barkPipelines = [
+  { value: 'speedtree', label: 'SpeedTree 分枝管 + 领口（默认）' },
+  { value: 'skin', label: '单张连续蒙皮（旧）' },
+]
 
 const barkStyles = [
   { value: 'rough', label: '粗糙 rough' },

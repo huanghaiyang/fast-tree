@@ -590,6 +590,8 @@ function boundaryEdges(geo, weldPairs) {
 }
 const oakP = composeTree('oak', 'mature', 'summer', 4242)
 oakP.fruit = { ...oakP.fruit, enabled: false }   // 果实是独立闭合壳, 树体拓扑验收先排除
+// 骨架/单连通蒙皮验收针对旧 skin 管线; 默认管线由 [33] 单独测试
+oakP.bark.pipeline = 'skin'
 const oakR = buildTree(oakP)
 const be = boundaryEdges(oakR.barkGeometry, oakR.barkGeometry.userData.seamPairs)
 const sk = oakR.stats.skin
@@ -662,6 +664,7 @@ check('校验开关不影响几何 (validate:false 与默认逐字节一致)',
     ['极端: 5 级枝 + 16 根 + 6 主枝', stress],
   ]
   for (const [label, p] of configs) {
+    if (p.bark) p.bark.pipeline = 'skin'
     let r2 = null
     try { r2 = buildTree(normalizeParams(p)) } catch (err) {
       check(`${label}: 骨架蒙皮生成成功`, false, err.message)
@@ -1511,6 +1514,8 @@ console.log('\n[26] 扭曲曲线与句柄')
 console.log('\n[27] 导出节点拆分')
 {
   const p = normalizeParams(applyPreset(defaultParams(), 'oak', 'mature', 'summer'))
+  p.roots.enabled = true
+  p.bark.pipeline = 'skin' // 这一段验证旧单连通蒙皮的拆分/合并语义
   const r = buildTree(p)
   const parts = splitBarkGeometryByNodeGroups(r.barkGeometry, r.nodes)
   const names = parts.map((x) => x.name)
@@ -1745,6 +1750,32 @@ console.log('\n[32] 分叉开口对中与根部圆度')
     }
   }
   check('相邻树根窗口不挤在同一处 (rim 最小间距 > 0.1m)', minRootRim > 0.1, minRootRim.toFixed(3))
+}
+
+/* 33. SpeedTree 风格树皮 (分枝管+领口, 无窗口) */
+console.log('\n[33] SpeedTree 风格树皮')
+{
+  const p = normalizeParams(applyPreset(defaultParams(), 'oak', 'mature', 'summer'))
+  p.leaves.enabled = false
+  p.fruit.enabled = false
+  p.roots.enabled = true
+  p.bark.pipeline = 'speedtree'
+  const r = buildTree(p)
+  const v = r.stats.skin.validation
+  check('SpeedTree 模式: 每枝闭合分量, 无边界/非流形边',
+    v.boundary === 0 && v.nonManifold === 0 && v.nonManifoldVertices === 0 &&
+    v.components === v.expectedComponents && v.ok,
+    JSON.stringify({ b: v.boundary, nm: v.nonManifold, c: v.components, exp: v.expectedComponents }))
+  check('SpeedTree 模式: 所有骨架分支都有蒙皮', v.missingBranches.length === 0 && v.failedWindows === 0)
+  const skinP = normalizeParams(applyPreset(defaultParams(), 'oak', 'mature', 'summer'))
+  skinP.leaves.enabled = false
+  skinP.fruit.enabled = false
+  skinP.roots.enabled = true
+  skinP.bark.pipeline = 'skin'
+  const r2 = buildTree(skinP)
+  check('SpeedTree 模式: 几何与旧连续蒙皮不同',
+    r.stats.barkTriangles !== r2.stats.barkTriangles || r.stats.barkVertices !== r2.stats.barkVertices,
+    `${r.stats.barkTriangles}/${r2.stats.barkTriangles}`)
 }
 
 /* 汇总 */

@@ -200,6 +200,8 @@ function customSignature() {
 
 function setupWatchers() {
   watch(() => serializeGroup(state.params, 'geometry'), () => scheduleRebuild(false))
+  // 树皮几何管线虽然在 bark 材质组里, 但切换会改变整张树皮拓扑 -> 必须重建几何
+  watch(() => state.params.bark && state.params.bark.pipeline, () => scheduleRebuild(false))
   watch(() => selectionSignature(), () => {
     scene?.setSelection(state.selection)
   })

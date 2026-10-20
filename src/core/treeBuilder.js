@@ -10,6 +10,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { makeRng } from './rng.js'
 import { createBarkSkeleton, addBarkBranch, finalizeBarkSkeleton } from './barkSkeleton.js'
 import { buildBarkSkin } from './barkSkin.js'
+import { buildSpeedtreeBark } from './speedtreeBark.js'
 import { buildLeafTemplate, buildLeafCardTemplate, pushLeafInstance } from './leaf.js'
 import { buildFruitTemplate, pushFruitInstance } from './fruit.js'
 import { buildOcclusionGrid, bakeOcclusion, bakeOcclusionByRanges } from './ambientOcclusion.js'
@@ -925,10 +926,16 @@ export function buildTree(params, options = {}) {
   // 分叉在父环带上真实切孔并桥接, 树干基部与所有枝梢端盖封闭;
   // 不丢弃任何骨架分支, 不做最大连通过滤, 不用 SDF, 不逐枝建管再合并。
   finalizeBarkSkeleton(barkSkeleton)
-  const skin = buildBarkSkin(barkSkeleton, {
-    barkDetail: (P.lod && P.lod.barkDetail) || 1,
-    validate: options.validate !== false,
-  })
+  const skinMode = P.bark && P.bark.pipeline === 'speedtree' ? 'speedtree' : 'skin'
+  const skin = skinMode === 'speedtree'
+    ? buildSpeedtreeBark(barkSkeleton, {
+      barkDetail: (P.lod && P.lod.barkDetail) || 1,
+      validate: options.validate !== false,
+    })
+    : buildBarkSkin(barkSkeleton, {
+      barkDetail: (P.lod && P.lod.barkDetail) || 1,
+      validate: options.validate !== false,
+    })
   let barkGeometry = skin.geometry
   if (fruitAcc.vertexCount > 0) {
     const fruitGeo = fruitAcc.build()

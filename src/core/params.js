@@ -253,6 +253,7 @@ export function defaultParams() {
 
     // ---------------- 树皮材质 ----------------
     bark: {
+      pipeline: 'speedtree',    // 'skin' = 单张连续蒙皮; 'speedtree' = 分枝管+领口 (默认)
       color: '#9a7a54',
       color2: '#b99b73',
       tint: '#ffffff',
