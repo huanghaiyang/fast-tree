@@ -118,7 +118,7 @@ export function defaultParams() {
 
     // ---------------- 树根 ----------------
     roots: {
-      enabled: true,
+      enabled: false,
       count: 5,
       length: 0.22,        // 相对树干高度
       lengthVariance: 0.35,

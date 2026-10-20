@@ -17,7 +17,7 @@
     "mcp:check": "node scripts/mcp-selfcheck.mjs",
     "chat:check": "node scripts/chat-selfcheck.mjs",
     "review": "node scripts/code-review.mjs",
-    "check": "node scripts/code-review.mjs && node scripts/selftest.mjs && node scripts/audit-params.mjs && node scripts/vite-sandbox.mjs build && node scripts/mcp-selfcheck.mjs"
+    "check": "node scripts/mcp-selfcheck.mjs && node scripts/code-review.mjs && node scripts/selftest.mjs && node scripts/audit-params.mjs && node scripts/vite-sandbox.mjs build"
   },
   "dependencies": {
     "three": "^0.186.1",

@@ -360,6 +360,76 @@ function placeWindows(groups, info, K, M, requireGap = true) {
 }
 
 /** 两个闭环缝合 (A 正向、B 反向出现在三角形里); 按累积弧长推进, 避免长三角形 */
+/** 按归一化弧长采样一个闭合环上的点 (返回插值后的属性, 不新建顶点) */
+function sampleLoopVertex(acc, loop, u) {
+  const n = loop.length
+  if (!n) return null
+  if (n === 1) return readVertex(acc, loop[0])
+  const params = closedParams(loop, (a, b) => distanceBetween(acc, a, b))
+  u = ((u % 1) + 1) % 1
+  let k = 0
+  while (k < n - 1 && params[k + 1] < u) k++
+  const span = params[k + 1] - params[k]
+  const f = span < 1e-9 ? 0 : (u - params[k]) / span
+  return mixVertex(readVertex(acc, loop[k]), readVertex(acc, loop[(k + 1) % n]), f)
+}
+
+function readVertex(acc, i) {
+  const p = acc.position
+  const n = acc.normal
+  const uv = acc.uv
+  const c = acc.color
+  return {
+    pos: [p[i * 3], p[i * 3 + 1], p[i * 3 + 2]],
+    normal: [n[i * 3], n[i * 3 + 1], n[i * 3 + 2]],
+    uv: [uv[i * 2], uv[i * 2 + 1]],
+    color: [c[i * 3], c[i * 3 + 1], c[i * 3 + 2]],
+    wind: acc.aWind[i], phase: acc.aPhase[i],
+    origin: [acc.aOrigin[i * 3], acc.aOrigin[i * 3 + 1], acc.aOrigin[i * 3 + 2]],
+    grow: [acc.aGrow[i * 2], acc.aGrow[i * 2 + 1]],
+    nodeId: acc.aNodeId[i],
+  }
+}
+
+function mixVertex(a, b, f) {
+  const mix = (x, y) => x + (y - x) * f
+  const nx = mix(a.normal[0], b.normal[0])
+  const ny = mix(a.normal[1], b.normal[1])
+  const nz = mix(a.normal[2], b.normal[2])
+  const nl = Math.hypot(nx, ny, nz) || 1
+  return {
+    pos: [mix(a.pos[0], b.pos[0]), mix(a.pos[1], b.pos[1]), mix(a.pos[2], b.pos[2])],
+    normal: [nx / nl, ny / nl, nz / nl],
+    uv: [mix(a.uv[0], b.uv[0]), mix(a.uv[1], b.uv[1])],
+    color: [mix(a.color[0], b.color[0]), mix(a.color[1], b.color[1]), mix(a.color[2], b.color[2])],
+    wind: mix(a.wind, b.wind), phase: mix(a.phase, b.phase),
+    origin: [mix(a.origin[0], b.origin[0]), mix(a.origin[1], b.origin[1]), mix(a.origin[2], b.origin[2])],
+    grow: [mix(a.grow[0], b.grow[0]), mix(a.grow[1], b.grow[1])],
+    nodeId: f < 0.5 ? a.nodeId : b.nodeId,
+  }
+}
+
+/** 窗口 rim 与子枝 ring0 之间的中间领口环: 把又长又平的桥接三角面细分成两层 */
+function buildCollarLoop(acc, rim, child, count) {
+  const out = []
+  for (let i = 0; i < count; i++) {
+    const u = i / count
+    const a = sampleLoopVertex(acc, rim, u)
+    const b = sampleLoopVertex(acc, child, u)
+    const m = mixVertex(a, b, 0.5)
+    out.push(acc.vertex(
+      m.pos[0], m.pos[1], m.pos[2],
+      m.normal[0], m.normal[1], m.normal[2],
+      m.uv[0], m.uv[1],
+      m.color[0], m.color[1], m.color[2],
+      m.wind, m.phase,
+      m.origin[0], m.origin[1], m.origin[2],
+      m.grow[0], m.grow[1], m.nodeId,
+    ))
+  }
+  return out
+}
+
 function stitchLoops(acc, A, B, scaleLoop) {
   const nA = A.length
   const nB = B.length
@@ -739,7 +809,13 @@ export function buildBarkSkin(skeleton, opts = {}) {
       // 旋转子环, 让接缝落在最近的位置 (避免桥接面绕一圈)
       const offset = bestRotation(acc, rim, B, childM)
       const B2 = B.slice(offset).concat(B.slice(0, offset))
-      bridgeTriangles += stitchLoops(acc, rim, B2, (u, v) => distanceBetween(acc, u, v))
+      // 细化洞口: 在窗口 rim 与子枝 ring0 之间插一圈中间领口环, 再分两段 stitch。
+      // 原来直接 stitch 会产生跨越大半个洞口的狭长三角面 (斜鳍), 细分后三角面更均匀,
+      // 边界仍是原来的 rim/child 环, 拓扑保持 2-manifold。
+      const collarCount = Math.max(24, rim.length, B2.length)
+      const collar = buildCollarLoop(acc, rim, B2, collarCount)
+      bridgeTriangles += stitchLoops(acc, rim, collar, (u, v) => distanceBetween(acc, u, v))
+      bridgeTriangles += stitchLoops(acc, collar, B2, (u, v) => distanceBetween(acc, u, v))
       bridgeStrips++
     }
   }

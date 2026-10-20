@@ -838,26 +838,66 @@ export function buildTree(params, options = {}) {
         upBias: 0.1,
         segments: Math.max(5, Math.round((base1.segments || 8) * 0.9)),
       }
+      // 记录已有 L1 枝在主干上的高度, 分叉主枝尽量避开它们的窗口高度。
+      const projectTOnTrunk = (p) => {
+        let best = 0, bestD = Infinity
+        for (let i = 0; i < trunkFramesAll.length - 1; i++) {
+          const a = trunkFramesAll[i].pos
+          const b = trunkFramesAll[i + 1].pos
+          const abx = b.x - a.x, aby = b.y - a.y, abz = b.z - a.z
+          const den = abx * abx + aby * aby + abz * abz || 1
+          let u = ((p.x - a.x) * abx + (p.y - a.y) * aby + (p.z - a.z) * abz) / den
+          u = Math.max(0, Math.min(1, u))
+          const qx = a.x + abx * u, qy = a.y + aby * u, qz = a.z + abz * u
+          const d = (p.x - qx) ** 2 + (p.y - qy) ** 2 + (p.z - qz) ** 2
+          if (d < bestD) { bestD = d; best = (i + u) / (trunkFramesAll.length - 1) }
+        }
+        return best
+      }
+      const occupiedT = barkSkeleton.branches
+        .filter((b) => b.type === 'branch' && b.parent === 0)
+        .map((b) => ({ t: projectTOnTrunk(b.frames[0].pos), r: b.frames[0].radius }))
+      let trunkLen = 0
+      for (let i = 1; i < trunkFramesAll.length; i++) trunkLen += trunkFramesAll[i].pos.distanceTo(trunkFramesAll[i - 1].pos)
+      trunkLen = Math.max(1e-3, trunkLen)
       for (let k = 0; k < n; k++) {
+        // 分叉主枝错开一点高度: 多条主枝如果都从 forkT 同一圈长出来,
+        // 粗主枝的两个窗口会挤在主干同一处。这里给它们 ± 少量 t 偏移,
+        // 并避开已有 L1 枝的高度; 窗口随各自基部走, 仍然对中。
+        const nominalT = forkT + (k - (n - 1) / 2) * 0.05 + rng.range(-0.004, 0.004)
+        let leaderT = Math.min(0.98, Math.max(0.02, nominalT))
+        let bestClear = -Infinity
+        const leaderR = Math.max(0.002, fr.radius * radiusScale)
+        for (const off of [0, 0.03, -0.03, 0.06, -0.06, 0.09, -0.09, 0.12, -0.12, 0.15, -0.15, 0.18, -0.18, 0.21, -0.21]) {
+          const cand = Math.min(0.98, Math.max(0.02, nominalT + off))
+          let clear = Infinity
+          for (const q of occupiedT) {
+            const need = ((leaderR + q.r) * 1.15) / trunkLen + 0.012
+            clear = Math.min(clear, Math.abs(cand - q.t) - need)
+          }
+          if (clear > bestClear) { bestClear = clear; leaderT = cand }
+        }
+        occupiedT.push({ t: leaderT, r: leaderR })
+        const lf = sampleFrame(trunkFramesAll, leaderT) || fr
         const az = ((k + 0.5) / n) * Math.PI * 2 + rng.range(-0.5, 0.5) * spread
-        const side = azimuthPerp(fr.dir, az, new THREE.Vector3())
-        const dir = fr.dir.clone().applyAxisAngle(side, angle * rng.range(0.8, 1.25))
+        const side = azimuthPerp(lf.dir, az, new THREE.Vector3())
+        const dir = lf.dir.clone().applyAxisAngle(side, angle * rng.range(0.8, 1.25))
         rotateTowardUp(dir, 0.06)
         // 分叉主枝也要跟随主干的扭转 (基础 twist + 扭曲曲线)
-        if (fr.roll) dir.applyAxisAngle(fr.dir, fr.roll)
-        const r0 = Math.max(0.002, fr.radius * radiusScale * rng.vary(0.1))
+        if (lf.roll) dir.applyAxisAngle(lf.dir, lf.roll)
+        const r0 = Math.max(0.002, lf.radius * radiusScale * rng.vary(0.1))
         // 分叉主枝: 基部也要落在主干"真实表面"上 (含 forkShrink/squash/flare)。
         // 旧实现沿 dir 偏移 0.45R, 主枝环会深埋在主干内部, 桥接后洞口露出空腔,
         // 且与生长方向不对齐 (看起来像主枝插进树干再从里面穿出来)。
-        const radialDir = dir.clone().addScaledVector(fr.dir, -dir.dot(fr.dir))
+        const radialDir = dir.clone().addScaledVector(lf.dir, -dir.dot(lf.dir))
         if (radialDir.lengthSq() < 1e-10) radialDir.copy(side)
         radialDir.normalize()
-        const lb = frameBasisAt(trunkFramesAll, forkT)
+        const lb = frameBasisAt(trunkFramesAll, leaderT)
         const la = Math.atan2(radialDir.dot(lb.up), radialDir.dot(lb.side))
-        const lmod = trunkModifier(forkT, la, lb.frame.radius)
+        const lmod = trunkModifier(leaderT, la, lb.frame.radius)
         const lproj = Math.hypot(Math.cos(la) * trunkSquashX, Math.sin(la) * trunkSquashZ)
-        const lr = Math.max(fr.radius, lb.frame.radius * lmod * lproj) * 0.95
-        const startPos = fr.pos.clone().addScaledVector(radialDir, lr)
+        const lr = Math.max(lf.radius, lb.frame.radius * lmod * lproj) * 0.95
+        const startPos = lf.pos.clone().addScaledVector(radialDir, lr)
         buildBranch({
           level: 1,
           startPos,

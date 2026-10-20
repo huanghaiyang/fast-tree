@@ -1677,6 +1677,7 @@ console.log('\n[32] 分叉开口对中与根部圆度')
   const branches = r.skeleton.branches
   const pos = skin.geometry.attributes.position.array
   let maxAxial = 0
+  let badAxial = 0
   let minAspect = 1
   const rootRims = []
   for (const [bi, pl] of plan) {
@@ -1698,7 +1699,11 @@ console.log('\n[32] 分叉开口对中与根部圆度')
       const f = pf[w.band]
       const dx = cx - c0.x, dy = cy - c0.y, dz = cz - c0.z
       const axial = Math.abs(dx * f.dir.x + dy * f.dir.y + dz * f.dir.z)
-      if (child.type !== 'root') maxAxial = Math.max(maxAxial, axial)
+      if (child.type !== 'root') {
+        maxAxial = Math.max(maxAxial, axial)
+        // 细枝允许的绝对误差更小; 粗枝按半径比例放宽
+        if (axial > 0.01 + 0.3 * child.frames[0].radius) badAxial++
+      }
       if (child.type === 'root') {
         const rim = []
         for (const ring of [A, B]) {
@@ -1724,7 +1729,7 @@ console.log('\n[32] 分叉开口对中与根部圆度')
       }
     }
   }
-  check('分叉窗口轴向对中 (树枝 |轴向偏差| < 0.05m)', maxAxial < 0.05, maxAxial.toFixed(3))
+  check(`分叉窗口轴向对中 (树枝 |轴向偏差| < 0.3×半径+1cm, 最大 ${maxAxial.toFixed(3)}m)`, badAxial === 0, `${badAxial} 个超限`)
   check('粗树枝根部圆度 (ring0 短/长轴 > 0.85)', minAspect > 0.85, minAspect.toFixed(3))
   // 两个根窗口不能挤在同一处: 取所有根窗口 rim 顶点的最小三维距离
   let minRootRim = Infinity

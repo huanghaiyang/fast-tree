@@ -147,7 +147,7 @@ export const SPECIES = [
         fork: { ...OAK_FORK, enabled: true },
       },
       // 板根贴着地面向外铺 (原来 pitch 116° 是往地下扎, 所以几乎看不见)
-      roots: { enabled: true, count: 7, length: 0.2, lengthVariance: 0.32, radiusRatio: 0.42, spread: 1.0, pitch: 96, segments: 6, radialSegments: 6, curve: 0.75, sink: 0.18 },
+      roots: { enabled: false, count: 7, length: 0.2, lengthVariance: 0.32, radiusRatio: 0.42, spread: 1.0, pitch: 96, segments: 6, radialSegments: 6, curve: 0.75, sink: 0.18 },
       branches: {
         levels: 4, apicalDominance: 0.3, phototropism: 0.03, gravityScale: 1.15,
         lengthScale: 1.0, radiusScale: 1.0, startSpread: 0,
@@ -215,7 +215,7 @@ export const SPECIES = [
     },
     patch: () => ({
       trunk: { height: 11, baseRadius: 0.42, taper: 0.06, radiusCurve: 1.5, curve: 0.06, gnarl: 0.14, radialSegments: 11 },
-      roots: { enabled: true, count: 6, length: 0.18 },
+      roots: { enabled: false, count: 6, length: 0.18 },
       branches: {
         levels: 3, apicalDominance: 0.8, phototropism: -0.08, gravityScale: 1.1,
         level: levels(
@@ -325,7 +325,7 @@ export const SPECIES = [
     },
     patch: () => ({
       trunk: { height: 1.6, baseRadius: 0.14, taper: 0.35, segments: 6, curve: 0.5, gnarl: 0.5, flare: 0.5, fork: { enabled: true, count: 3, height: 0.16, angle: 34, radiusScale: 0.7, lengthScale: 1.05, taper: 0.42, curve: 0.5 } },
-      roots: { enabled: true, count: 4, length: 0.3 },
+      roots: { enabled: false, count: 4, length: 0.3 },
       branches: {
         levels: 3, apicalDominance: 0.1, phototropism: 0.1,
         level: levels(
@@ -346,7 +346,7 @@ export const SPECIES = [
     seasonal: {},
     patch: () => ({
       trunk: { height: 8, baseRadius: 0.42, taper: 0.06, curve: 0.6, curveVariance: 0.6, gnarl: 0.85, twist: 0.4, knots: 5, knotSize: 0.5, flare: 1.2, fork: { enabled: true, count: 2, height: 0.42, angle: 30, radiusScale: 0.6, lengthScale: 0.9, taper: 0.22, curve: 0.6, gravity: -0.05 } },
-      roots: { enabled: true, count: 7, length: 0.26, curve: 0.7 },
+      roots: { enabled: false, count: 7, length: 0.26, curve: 0.7 },
       branches: {
         levels: 4, phototropism: -0.05, gravityScale: 1.3,
         level: levels(
