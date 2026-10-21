@@ -170,3 +170,60 @@ export function finalizeBarkSkeleton(skeleton) {
   }
   return skeleton
 }
+
+/**
+ * 子枝半径约束: 生成蒙皮前, 每个子分支基部半径不得超过父分支在贴合点半径的 80%。
+ * 逐级处理 (父分支先于子分支), 因此 L1 被收细后, L2/L3 会按收细后的父半径继续约束。
+ * 只缩放半径, 不改骨架位置/贴合点/生长方向。
+ */
+export function enforceChildBranchRadii(skeleton, maxRatio = 0.8) {
+  const ratio = Math.max(0.05, Math.min(1, Number(maxRatio) || 0.8))
+  const stats = { maxRatio: ratio, clamped: 0, clampedByLevel: {} }
+  for (const branch of skeleton.branches) {
+    if (branch.parent === null || branch.parent === undefined) continue
+    const parent = skeleton.branches[branch.parent]
+    if (!parent || !branch.frames || !parent.frames || parent.frames.length < 2) continue
+    const seg = Math.max(0, Math.min(parent.frames.length - 2, branch.attach ? branch.attach.segment : 0))
+    const t = branch.attach ? Math.max(0, Math.min(1, branch.attach.t)) : 0
+    const a = parent.frames[seg]
+    const b = parent.frames[seg + 1]
+    const frameR = Math.max(0.0001, a.radius + (b.radius - a.radius) * t)
+    // 父枝蒙皮半径可能被 radiusModifier 收细 (例如 forkShrink)。
+    // 用"基准半径与该调制半径的较小值"作为限制, 保证不会因父枝在分叉处
+    // 被收细而让子枝反而超过父枝实际半径的 80%。
+    let parentR = frameR
+    const render = parent.render || {}
+    const rm = render.radiusModifier
+    if (typeof rm === 'function') {
+      const tGlobal = (seg + t) / Math.max(1, parent.frames.length - 1)
+      const mod = Number(rm(tGlobal, 0, frameR))
+      if (Number.isFinite(mod) && mod > 0) parentR = Math.min(parentR, frameR * mod)
+    }
+    // 父枝若被压扁 (squash), 取短轴作为限制, 保证在任一方向都不超过 80%。
+    const sx = render.squashX === undefined ? 1 : Math.abs(Number(render.squashX) || 1)
+    const sz = render.squashZ === undefined ? 1 : Math.abs(Number(render.squashZ) || 1)
+    parentR = Math.min(parentR, frameR * Math.min(sx, sz))
+    const baseR = branch.frames[0].radius
+    const limit = parentR * ratio
+    if (baseR <= limit + 1e-9) continue
+    const scale = limit / Math.max(1e-9, baseR)
+    for (const f of branch.frames) f.radius = Math.max(0.0005, f.radius * scale)
+    for (const nodeId of branch.nodeIds) {
+      const n = skeleton.nodes[nodeId]
+      if (n) n.radius = Math.max(0.0005, n.radius * scale)
+    }
+    for (const edgeId of branch.edgeIds) {
+      const e = skeleton.edges[edgeId]
+      if (e) {
+        e.radius0 = Math.max(0.0005, e.radius0 * scale)
+        e.radius1 = Math.max(0.0005, e.radius1 * scale)
+      }
+    }
+    stats.clamped++
+    const key = branch.type === 'branch' ? `L${branch.level}` : branch.type
+    stats.clampedByLevel[key] = (stats.clampedByLevel[key] || 0) + 1
+  }
+  skeleton.radiusClampStats = stats
+  return stats
+}
+

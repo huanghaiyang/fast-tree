@@ -1852,6 +1852,46 @@ console.log('\n[35] 树干环绕式叶/花')
   check('树干环绕花: 花朵几何非空', !!fg && fg.attributes.position.count > 0)
 }
 
+/* 36. 子枝半径 <= 父枝贴合处半径的 80% */
+console.log('\n[36] 子枝半径约束')
+{
+  const p = normalizeParams(defaultParams())
+  p.leaves.enabled = false
+  p.flower.enabled = false
+  p.fruit.enabled = false
+  p.roots.enabled = true
+  p.branches.level[0].radiusRatio = 1.3 // 故意把 L1 加粗, 触发逐级收细
+  const r = buildTree(p)
+  const branches = r.skeleton.branches
+  const clampStats = r.stats.skin.radiusClamp
+  const parentRadius = (b) => {
+    const parent = branches[b.parent]
+    const seg = Math.max(0, Math.min(parent.frames.length - 2, b.attach.segment))
+    const t = Math.max(0, Math.min(1, b.attach.t))
+    const a = parent.frames[seg].radius
+    const c = parent.frames[seg + 1].radius
+    return a + (c - a) * t
+  }
+  let worst = 0
+  let worstL1 = 0
+  let bad = 0
+  let l1 = 0
+  for (const b of branches) {
+    if (b.parent === null || b.parent === undefined) continue
+    const ratio = b.frames[0].radius / Math.max(1e-9, parentRadius(b))
+    if (ratio > worst) worst = ratio
+    if (ratio > 0.8001) bad++
+    if (b.type === 'branch' && b.level === 1) {
+      l1++
+      worstL1 = Math.max(worstL1, ratio)
+    }
+  }
+  check('子枝半径约束: 所有子枝 <= 0.8×父枝贴合处半径', bad === 0, `${bad} 个超限, worst=${worst.toFixed(4)}`)
+  check('子枝半径约束: L1 全部 <= 0.8×父枝', l1 > 0 && worstL1 <= 0.8001, `L1=${l1}, worst=${worstL1.toFixed(4)}`)
+  check('子枝半径约束: 逐级收细确实触发', clampStats && clampStats.clamped > 0 && clampStats.maxRatio === 0.8,
+    JSON.stringify(clampStats))
+}
+
 /* 汇总 */
 console.log(`\n=== 结果: ${pass} 通过 / ${fail} 失败 ===`)
 if (fail) {
