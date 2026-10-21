@@ -16,7 +16,7 @@ import {
 import { buildLeafTemplate, LEAF_SHAPE_KEYS } from '../src/core/leaf.js'
 import { buildFruitTemplate, FRUIT_TYPES } from '../src/core/fruit.js'
 import { expandExponentialNumbers } from '../src/core/exporter.js'
-import { createSharedUniforms, createLeafMaterial, createBarkMaterial, updateMaterials, internalShaderSources, resolveTintMix } from '../src/core/materials.js'
+import { createSharedUniforms, createLeafMaterial, createFlowerMaterial, createBarkMaterial, updateMaterials, internalShaderSources, resolveTintMix } from '../src/core/materials.js'
 import { sampleEmitPositions, buildParticleSeeds, createParticleMaterial, PARTICLE_VERT, PARTICLE_FRAG } from '../src/core/particles.js'
 import { buildFallingLeaves, fallRebuildKey, FALL_FRAG } from '../src/core/fallingLeaves.js'
 import { buildLeafLitter, litterRebuildKey } from '../src/core/litter.js'
@@ -1089,6 +1089,49 @@ check('堆积使用独立着色器并支持继承光照', (() => {
     legacy.litter.inheritLeafMat === true &&
     legacy.flowerFall.inheritFlowerMat === true &&
     legacy.flowerLitter.inheritFlowerMat === true)
+}
+
+/* 17.1 自发光: 正反面观感一致 (tone mapping 之后再合成)
+ * 根因: three 把 emissive 加进 outgoingLight 后整条像素一起 tone mapping,
+ * 正面被阳光照亮时 ACES 会把这份加法压掉, 只有背光的一面看得见 ->
+ * 表现为"自发光仅背面生效"。修法: 物理自发光清零, 改在 <colorspace_fragment>
+ * 之后按显示空间合成 (与底色亮度无关), 正反面同一个滑杆值观感一致。 */
+{
+  const p = normalizeParams(defaultParams())
+  p.leafMat.emissive = 0.5
+  p.flower.emissive = 0.5
+  const sh = createSharedUniforms()
+  const captured = (mat) => {
+    let src = null
+    const orig = mat.onBeforeCompile
+    mat.onBeforeCompile = (fn) => { orig(fn); src = fn.fragmentShader }
+    mat.onBeforeCompile({
+      uniforms: {},
+      vertexShader: '#include <begin_vertex>',
+      fragmentShader: '#include <color_fragment>\n#include <emissivemap_fragment>\n#include <colorspace_fragment>',
+    })
+    return src
+  }
+  const sources = internalShaderSources()
+  const comp = sources.snippets.EMISSIVE_COMPOSITE
+  check('自发光有独立的显示空间合成片段', !!comp && comp.includes('gl_FragColor.rgb'))
+  check('自发光合成与朝向无关 (不依赖 gl_FrontFacing / normal)',
+    !comp.includes('gl_FrontFacing') && !comp.includes('normal'))
+  check('自发光合成权重可配置且非零',
+    sources.emissiveComposite.hueMix > 0 && sources.emissiveComposite.add > 0,
+    JSON.stringify(sources.emissiveComposite))
+  const leafSrc = captured(createLeafMaterial(p, sh))
+  const flowerSrc = captured(createFlowerMaterial(p, sh))
+  const colorspaceAt = leafSrc.indexOf('#include <colorspace_fragment>')
+  check('叶片: 自发光在 tone mapping / 色彩空间转换之后合成',
+    colorspaceAt >= 0 && leafSrc.indexOf(comp) > colorspaceAt)
+  check('叶片: tone mapping 之前的物理自发光已清零 (避免叠加两次)',
+    leafSrc.includes('totalEmissiveRadiance = vec3(0.0);'))
+  check('花朵: 与树叶走同一条自发光合成路径',
+    flowerSrc.includes(comp) && flowerSrc.indexOf(comp) > flowerSrc.indexOf('#include <colorspace_fragment>'))
+  const mat = createLeafMaterial(p, sh)
+  check('自发光强度仍写在材质上 (GLB 导出的 emissive 不受影响)',
+    Math.abs(mat.emissiveIntensity - 0.5) < 1e-6 && mat.emissive.getHexString() === 'ffffff')
 }
 
 /* 18. 贴图染色模式 */

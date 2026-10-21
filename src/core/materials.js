@@ -230,6 +230,39 @@ const LEAF_REFLECTION = /* glsl */`
   #endif
 `
 
+/**
+ * 自发光二次合成 (tone mapping + 输出色彩空间转换之后)
+ * ------------------------------------------------------------
+ * three 的自发光是"辐射亮度": `outgoingLight += emissive`, 然后整条像素一起做
+ * ACES tone mapping + 曝光。这在叶/花这种双面卡片上有明显副作用:
+ *   - 正面(朝太阳、被照得很亮)已经处在 tone 曲线的高位, 同一份 emissive 被压得
+ *     几乎看不出变化 -> 用户看到的是"正面自发光不生效";
+ *   - 背面/树下很暗, 同样的加法非常显眼 -> "只有背面生效"。
+ * 所以问题不在 `side` / `gl_FrontFacing`, 而在**加法发生的位置**。
+ *
+ * 修法: 把自发光从"进入 tone mapping 之前的辐射亮度"改成"显示空间的发光合成":
+ *   1) 色相: 向自发光颜色混合 -> 被强光照白的正面也能明确看出颜色变化;
+ *   2) 亮度: 显示空间加法 -> 同一个强度值在亮面/暗面产生接近的视觉增量。
+ * 物理路径里原来的 emissive 项在 emissiveInjection 里被清零, 避免叠加两次。
+ * 具体权重见 EMISSIVE_HUE_MIX / EMISSIVE_ADD。
+ */
+const EMISSIVE_HUE_MIX = 0.10
+const EMISSIVE_ADD = 0.22
+const EMISSIVE_COMPOSITE = /* glsl */`
+  {
+    vec3 treeEmis = emissive;                              // emissiveColor * emissiveIntensity
+    float treeEmax = max(treeEmis.r, max(treeEmis.g, treeEmis.b));
+    if (treeEmax > 1e-4) {
+      vec3 treeHue = treeEmis / treeEmax;                  // 纯色相 (主导通道 = 1)
+      float treeAmt = clamp(treeEmax, 0.0, 1.0);           // 强度 0..1
+      // 1) 色相: 亮面也看得见颜色 (纯白自发光则表现为提亮到白)
+      gl_FragColor.rgb = mix(gl_FragColor.rgb, treeHue, treeAmt * ${EMISSIVE_HUE_MIX.toFixed(2)});
+      // 2) 亮度: 显示空间加法, 保证"正面被照亮"时也有同量级的发光增量
+      gl_FragColor.rgb = min(gl_FragColor.rgb + treeHue * (treeAmt * ${EMISSIVE_ADD.toFixed(2)}), vec3(1.0));
+    }
+  }
+`
+
 /** 双面叶片: 用 gl_FrontFacing 在正面贴图 / 背面贴图之间切换 (alpha 一起切换) */
 const LEAF_BACK_MAP_FRAGMENT = /* glsl */`
 #ifdef USE_MAP
@@ -248,7 +281,8 @@ export function internalShaderSources() {
   return {
     fragmentHeader: FRAGMENT_HEADER,
     vertexHeader: VERTEX_HEADER,
-    snippets: { TRANSLUCENCY, LEAF_REFLECTION, SELECTION_GLOW, LEAF_BACK_MAP_FRAGMENT },
+    snippets: { TRANSLUCENCY, LEAF_REFLECTION, SELECTION_GLOW, LEAF_BACK_MAP_FRAGMENT, EMISSIVE_COMPOSITE },
+    emissiveComposite: { hueMix: EMISSIVE_HUE_MIX, add: EMISSIVE_ADD },
   }
 }
 
@@ -424,11 +458,22 @@ function applyTreeShader(material, shaderUniforms, opts) {
       fragmentBody(customFragment),
     )
     // 选中高亮 (自发光) 必须在 totalEmissiveRadiance 声明之后注入
-    const emissiveInjection = '#include <emissivemap_fragment>\n' + SELECTION_GLOW +
+    // 注意: three 自带的 emissive 项在这里清零 —— 它原本加在 outgoingLight 上再统一
+    // tone mapping, 正面被阳光照亮时会被压得看不出, 造成"自发光只有背面生效"。
+    // 自发光改由 EMISSIVE_COMPOSITE 在 tone mapping 之后按显示空间合成。
+    const emissiveInjection = '#include <emissivemap_fragment>\n' +
+      'totalEmissiveRadiance = vec3(0.0);\n' +
+      SELECTION_GLOW +
       (opts.translucency ? TRANSLUCENCY + LEAF_REFLECTION : '')
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <emissivemap_fragment>',
       emissiveInjection,
+    )
+    // 自发光二次合成: 在 tone mapping + 输出色彩空间转换之后再做一次,
+    // 否则正面(被阳光照亮)的加法会被 ACES 压掉, 只有背面/暗处看得见 (见 EMISSIVE_COMPOSITE)
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <colorspace_fragment>',
+      '#include <colorspace_fragment>\n' + EMISSIVE_COMPOSITE,
     )
     material.userData.shader = shader
   }
