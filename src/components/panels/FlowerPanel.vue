@@ -32,6 +32,13 @@
     <SliderRow label="每簇花朵数" v-model="f.clusterCount" :min="1" :max="12" :step="1" />
     <SliderRow label="分布起始位置" v-model="f.startT" :min="0" :max="1" :step="0.01" />
     <SliderRow label="分布结束位置" v-model="f.endT" :min="0" :max="1" :step="0.01" />
+    <ToggleRow label="树干环绕生长" v-model="f.trunkWrap"
+      hint="沿树干螺旋分布花朵，不依赖枝条；可单独开启" />
+    <template v-if="f.trunkWrap">
+      <SliderRow label="树干起始高度" v-model="f.trunkStartT" :min="0.02" :max="0.98" :step="0.01" />
+      <SliderRow label="树干结束高度" v-model="f.trunkEndT" :min="0.02" :max="0.99" :step="0.01" />
+      <SliderRow label="环绕花朵点数" v-model="f.trunkCount" :min="3" :max="100" :step="1" />
+    </template>
     <SliderRow label="花朵密度" v-model="f.density" :min="0.05" :max="1" :step="0.05" />
     <ColorRow label="花色 A" v-model="f.color" />
     <ColorRow label="花色 B" v-model="f.colorTip" />

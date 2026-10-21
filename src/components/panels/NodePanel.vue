@@ -91,6 +91,8 @@
     <p class="muted" style="margin: 0">
       节点结构与随机种子绑定：同一个 seed 生成同一套节点（id 顺序稳定，按组连续编号）。
     </p>
+    <BranchEditPanel v-if="activeBranchIndex !== null"
+      :branch-index="activeBranchIndex" :branch-name="activeNode ? activeNode.name : ''" />
   </Section>
 </template>
 
@@ -98,6 +100,7 @@
 import { computed, ref, watch } from 'vue'
 import Section from '../ui/Section.vue'
 import SliderRow from '../ui/SliderRow.vue'
+import BranchEditPanel from './BranchEditPanel.vue'
 import {
   state, getNodeModel, selectNodes, selectGroup, clearSelection, setSelectionMode,
   focusSelection, focusNode,
@@ -142,6 +145,10 @@ const visibleGroups = computed(() => {
 const allOpen = computed(() => visibleGroups.value.length > 0 && visibleGroups.value.every((g) => open.value.has(g.id)))
 
 const activeNode = computed(() => (sel.activeId == null ? null : model.value.byId.get(sel.activeId) || null))
+const activeBranchIndex = computed(() => {
+  const b = activeNode.value && activeNode.value.meta && activeNode.value.meta.branchIndex
+  return Number.isInteger(b) ? b : null
+})
 
 function matchNode(c, f) {
   return c.name.toLowerCase().includes(f) || String(c.id).includes(f)

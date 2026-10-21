@@ -229,11 +229,13 @@ export function buildTree(params, options = {}) {
   /* ------------------------------------------------------------------ */
   /* 叶片                                                                */
   /* ------------------------------------------------------------------ */
-  const spawnLeaves = (frames, level, branchWind, parentSlot) => {
+  const spawnLeaves = (frames, level, branchWind, parentSlot, opts = {}) => {
     // 花朵独立: 即使树叶关闭, 也要跑位置采集 (否则花朵没有附着点)
     if ((!L.enabled && !FL.enabled) || leafCount >= maxLeaves) return
     // 记录这条可开花的枝条: 花朵用自己的 perBranch/clusterCount/startT/endT 采样
-    if (flowerAcc) flowerBranches.push({ frames, level, wind1: branchWind })
+    if (flowerAcc && opts.flower !== false) {
+      flowerBranches.push({ frames, level, wind1: branchWind, trunkWrap: !!opts.trunkWrap })
+    }
     const rng = leafRng
     const perBranch = Math.max(1, Math.round(L.perBranch))
     const clusterCount = Math.max(1, Math.round(L.clusterCount))
@@ -409,6 +411,47 @@ export function buildTree(params, options = {}) {
     }
   }
 
+  /* ------------------------------------------------------------------ */
+  /* 单枝手工编辑 (半径/移动/旋转/扭曲)                                   */
+  /* ------------------------------------------------------------------ */
+  // 以骨架分支下标为 key, 在同一 seed/骨架结构下稳定。编辑在 addBarkBranch
+  // 之前应用到 frames, 因此子枝、叶片、果实和蒙皮窗口都会跟着变换。
+  const branchEdits = P.branchEdits && typeof P.branchEdits === 'object' ? P.branchEdits : null
+  const branchEditOf = (index) => {
+    if (!branchEdits) return null
+    const e = branchEdits[index]
+    if (!e || typeof e !== 'object') return null
+    return e
+  }
+  const applyBranchEdit = (frames, index) => {
+    const e = branchEditOf(index)
+    if (!e || !Array.isArray(frames) || !frames.length) return
+    const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d)
+    const radiusScale = Math.max(0.05, Math.min(6, num(e.radiusScale, 1)))
+    const rx = num(e.rotX) * DEG
+    const ry = num(e.rotY) * DEG
+    const rz = num(e.rotZ) * DEG
+    const twist = num(e.twist) * DEG
+    const mx = num(e.moveX)
+    const my = num(e.moveY)
+    const mz = num(e.moveZ)
+    const pivot = frames[0].pos.clone()
+    const q = (rx || ry || rz) ? new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz, 'XYZ')) : null
+    for (const f of frames) {
+      f.radius = Math.max(0.0005, (f.radius || 0.0005) * radiusScale)
+      if (q) {
+        f.pos.sub(pivot).applyQuaternion(q).add(pivot)
+        if (f.dir) f.dir.applyQuaternion(q).normalize()
+      }
+      if (twist) {
+        const k = Number.isFinite(f.t) ? f.t : 0
+        f.roll = (f.roll || 0) + twist * k
+        f.profileRoll = (f.profileRoll || 0) + twist * k
+      }
+      if (mx || my || mz) f.pos.set(f.pos.x + mx, f.pos.y + my, f.pos.z + mz)
+    }
+  }
+
   const buildBranch = (o) => {
     const { level, startPos, startDir, length, radius0, radius1, cfg, rng, wind0, wind1, parentSlot, parentBranch } = o
     const frames = growFrames(rng, {
@@ -428,6 +471,10 @@ export function buildTree(params, options = {}) {
       gnarl: 0.18,
       taperRatio: cfg.taper,
     })
+    // 单枝编辑必须在 addBarkBranch 之前应用: 子枝 attach / 叶片 / 蒙皮窗口
+    // 都从修改后的 frames 计算。
+    const branchIndex = barkSkeleton.branches.length
+    applyBranchEdit(frames, branchIndex)
     // 每层取第一根枝条作为该层扭曲句柄的可视化引导线
     if (level >= 1 && !twistGuides.branches[level]) twistGuides.branches[level] = sampleGuidePoints(frames)
 
@@ -443,7 +490,7 @@ export function buildTree(params, options = {}) {
       group: `branch-L${level}`,
       name: `L${level} 枝 #${levelBranchCounter[level]}`,
       parent: parentSlot,
-      meta: { length, radius: radius0, segments: Math.max(2, Math.round(cfg.segments)) },
+      meta: { length, radius: radius0, segments: Math.max(2, Math.round(cfg.segments)), branchIndex },
     })
 
     // 骨架先行: 这里只登记骨架分支 (节点/边/半径/父子关系)。
@@ -467,7 +514,7 @@ export function buildTree(params, options = {}) {
         wind1,
         windCurve: 1.5,
         grow: growSpan,
-        origin: startPos.clone(),
+        origin: frames[0].pos.clone(),
         phase: rng.range(0, Math.PI * 2),
         // 末梢圆钝收尖 (不是平截面)。
         // 基部领口不再靠"把子枝基部吹粗"来遮缝: 现在分叉是真实切孔 + 环桥接,
@@ -579,6 +626,9 @@ export function buildTree(params, options = {}) {
     : baseTrunkMod
 
   const squash = Math.max(0.2, t.squash || 1)
+  // 树干也是可编辑分支 (index 0)
+  const trunkBranchIndex = barkSkeleton.branches.length
+  applyBranchEdit(trunkFrames, trunkBranchIndex)
   // 树干实际截面 (含 flare/knots 与 squash): 子枝/树根的基部要贴在这个表面上
   const trunkSquashX = 1 / Math.sqrt(squash)
   const trunkSquashZ = Math.sqrt(squash)
@@ -588,7 +638,7 @@ export function buildTree(params, options = {}) {
     group: 'trunk',
     name: '树干',
     parent: null,
-    meta: { length: t.height * forkT, radius: trunkR0, segments: Math.max(3, Math.round(t.segments)), fork: forkOn ? Math.round(forkCfg.count) : 0 },
+    meta: { length: t.height * forkT, radius: trunkR0, segments: Math.max(3, Math.round(t.segments)), fork: forkOn ? Math.round(forkCfg.count) : 0, branchIndex: trunkBranchIndex },
   })
   // 树干: 登记为骨架根分支 (parent = null)。基部端盖在蒙皮阶段生成。
   const trunkBranch = addBarkBranch(barkSkeleton, {
@@ -618,6 +668,41 @@ export function buildTree(params, options = {}) {
     },
   })
   branchCount++
+
+  /* ---- 树干环绕式叶/花 ------------------------------------------------ */
+  // 用树干表面的一串采样帧喂给同一个 spawnLeaves: 叶簇按
+  // i*137.5° 的叶序绕干分布, 自然形成螺旋环绕; 花朵用独立帧列表。
+  const makeWrapFrames = (startT, endT, count) => {
+    const n = Math.max(2, Math.round(count || 16))
+    const a = Math.min(0.98, Math.max(0.01, Number(startT) || 0.15))
+    const b = Math.min(0.995, Math.max(a + 0.01, Number(endT) || 0.8))
+    const out = []
+    for (let i = 0; i < n; i++) {
+      const t = n === 1 ? a : a + (b - a) * (i / (n - 1))
+      const fr = sampleFrame(trunkFrames, t)
+      if (fr) out.push({ ...fr, t: n === 1 ? 0.5 : i / (n - 1) })
+    }
+    return out
+  }
+  if (L.enabled && L.trunkWrap) {
+    const frames = makeWrapFrames(L.trunkStartT, L.trunkEndT, L.trunkCount)
+    if (frames.length >= 2) {
+      const saved = { perBranch: L.perBranch, startT: L.startT, endT: L.endT }
+      L.perBranch = frames.length
+      L.startT = 0
+      L.endT = 1
+      spawnLeaves(frames, 0, 0.16, trunkSlot, { trunkWrap: true, flower: false })
+      L.perBranch = saved.perBranch
+      L.startT = saved.startT
+      L.endT = saved.endT
+    }
+  }
+  if (flowerAcc && FL.enabled && FL.trunkWrap) {
+    const frames = makeWrapFrames(FL.trunkStartT, FL.trunkEndT, FL.trunkCount)
+    if (frames.length >= 2) {
+      flowerBranches.push({ frames, level: 0, wind1: 0.16, trunkWrap: true })
+    }
+  }
 
 
 
@@ -702,6 +787,8 @@ export function buildTree(params, options = {}) {
         taperRatio: 0.16,
       })
       // 树根也是骨架分支 (父分支 = 树干), 基部由蒙皮阶段切孔桥接, 梢部端盖
+      const rootBranchIndex = barkSkeleton.branches.length
+      applyBranchEdit(frames, rootBranchIndex)
       addBarkBranch(barkSkeleton, {
         frames,
         parent: trunkBranch,
@@ -726,6 +813,7 @@ export function buildTree(params, options = {}) {
           tipRound: 0.06,
         },
       })
+      slots[rootSlot].meta.branchIndex = rootBranchIndex
       branchCount++
     }
   }
@@ -982,12 +1070,19 @@ export function buildTree(params, options = {}) {
     const upVec = new THREE.Vector3(0, 1, 0)
     const fRng = makeRng(P.seed, 'flowers')
     for (const br of flowerBranches) {
-      const lvIdx = Math.max(0, Math.min((levelsOn ? levelsOn.length : 5) - 1, (br.level || 1) - 1))
-      if (levelsOn && levelsOn[lvIdx] === false) continue
-      for (let i = 0; i < perBranch; i++) {
+      const isWrap = !!br.trunkWrap
+      if (isWrap && !FL.trunkWrap) continue
+      if (!isWrap) {
+        const lvIdx = Math.max(0, Math.min((levelsOn ? levelsOn.length : 5) - 1, (br.level || 1) - 1))
+        if (levelsOn && levelsOn[lvIdx] === false) continue
+      }
+      const entryPer = isWrap ? Math.max(1, Math.round(FL.trunkCount || 16)) : perBranch
+      const entryTA = isWrap ? 0 : tA
+      const entryTB = isWrap ? 1 : tB
+      for (let i = 0; i < entryPer; i++) {
         if (!fRng.chance(density)) continue
-        const u = (i + 0.5) / perBranch
-        let tt = tA + (tB - tA) * u + fRng.signed() * 0.04
+        const u = (i + 0.5) / entryPer
+        let tt = entryTA + (entryTB - entryTA) * u + fRng.signed() * 0.04
         tt = Math.min(0.999, Math.max(0.01, tt))
         const fr = sampleFrame(br.frames, tt)
         if (!fr) continue
@@ -999,10 +1094,11 @@ export function buildTree(params, options = {}) {
           const jitter = 1 + fRng.signed() * (FL.colorVariance === undefined ? 0.16 : FL.colorVariance) * 0.3
           const sv = fSize * (1 + fRng.signed() * sizeVar)
           const scale = new THREE.Vector3(sv * fWidth, sv, sv * fWidth)
-          // 位置: 枝条表面 + 簇内散布
+          // 位置: 枝条表面 + 簇内散布; 树干环绕时从树干表面向外
           const az = azimuthBase + (c / perCluster) * Math.PI * 2
           const radial = perp.clone().multiplyScalar(Math.cos(az)).add(new THREE.Vector3().crossVectors(dir, perp).multiplyScalar(Math.sin(az)))
-          const pos = fr.pos.clone().add(radial.multiplyScalar(clusterR * fRng.range(0.2, 1)))
+          const surfaceR = isWrap ? fr.radius : 0
+          const pos = fr.pos.clone().add(radial.multiplyScalar(surfaceR + clusterR * fRng.range(0.2, 1)))
           // 朝向: 花轴 = 枝条方向 -> faceUp 朝上 -> 加俯仰 -> 下垂 -> 自转
           const by = dir.clone()
           if (FL.faceUp !== false) by.lerp(upVec, 0.45).normalize()
@@ -1115,6 +1211,7 @@ const NODE_GROUPS = [
   { id: 'branch-L3', name: '树枝 L3', icon: '🌿', type: 'bark', level: 3 },
   { id: 'branch-L4', name: '树枝 L4', icon: '🌿', type: 'bark', level: 4 },
   { id: 'branch-L5', name: '树枝 L5', icon: '🌿', type: 'bark', level: 5 },
+  { id: 'leaves-L0', name: '树叶 L0 (树干)', icon: '🍃', type: 'leaf', level: 0 },
   { id: 'leaves-L1', name: '树叶 L1', icon: '🍃', type: 'leaf', level: 1 },
   { id: 'leaves-L2', name: '树叶 L2', icon: '🍃', type: 'leaf', level: 2 },
   { id: 'leaves-L3', name: '树叶 L3', icon: '🍃', type: 'leaf', level: 3 },

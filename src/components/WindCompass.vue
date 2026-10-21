@@ -140,9 +140,10 @@ watch(() => [wind.value.direction, wind.value.strength, wind.value.enabled], () 
 .wind-compass {
   position: absolute;
   right: 12px;
-  top: 12px;
+  /* 顶部 12px 是“从 0 播放生长”按钮；罗盘下移，避免和按钮叠在一起 */
+  top: 58px;
   width: 104px;
-  height: 104px;
+  height: 122px;
   pointer-events: auto;
 }
 .wind-compass.off { opacity: 0.55; }
@@ -151,10 +152,12 @@ watch(() => [wind.value.direction, wind.value.strength, wind.value.enabled], () 
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 12px;
+  /* 文字放到画布下方，避免和圆内的 N / 箭头尖端重叠 */
+  bottom: 0;
   display: flex;
   justify-content: center;
   gap: 5px;
+  line-height: 1;
   font-size: 10px;
   color: #b9c6d6;
   text-shadow: 0 1px 3px #000;

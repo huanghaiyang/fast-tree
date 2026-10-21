@@ -276,11 +276,13 @@ export function redo() {
 
 export function setSeed(seed) {
   state.params.seed = Math.max(1, Math.floor(seed) || 1)
+  state.params.branchEdits = {}
 }
 
 export function randomizeSeed() {
   pushUndo()
   state.params.seed = randomSeed()
+  state.params.branchEdits = {}
   randomizeFoliageAssets(state.params.seed)
   if (state.params.wind.auto) {
     Object.assign(state.params.wind, autoWind(state.params.seed, state.params.wind.intensity))
@@ -294,6 +296,7 @@ export function regenerateNow() {
 /** 由种子自动生成一棵完整的树 */
 export function doAutoGenerate(opts = {}) {
   pushUndo()
+  state.params.branchEdits = {}
   const seed = opts.seed !== undefined ? opts.seed : (randomSeed())
   const chaos = opts.chaos !== undefined ? opts.chaos : state.params.auto.chaos
   const type = opts.type !== undefined ? opts.type : state.autoType
@@ -338,6 +341,7 @@ function pickBarkOverrides(p) {
 export function doApplyPreset(id) {
   pushUndo()
   state.params = normalizeParams(applyPreset(state.params, id))
+  state.params.branchEdits = {}
   state.archetype = id
   if (state.params.wind.auto) {
     Object.assign(state.params.wind, autoWind(state.params.seed, state.params.wind.intensity))

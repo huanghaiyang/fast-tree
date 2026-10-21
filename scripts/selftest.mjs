@@ -1778,6 +1778,80 @@ console.log('\n[33] SpeedTree 风格树皮')
     `${r.stats.barkTriangles}/${r2.stats.barkTriangles}`)
 }
 
+/* 34. 单枝编辑: 半径 / 移动 / 旋转 / 扭曲 */
+console.log('\n[34] 单枝编辑')
+{
+  const baseP = normalizeParams(defaultParams())
+  baseP.leaves.enabled = false
+  baseP.fruit.enabled = false
+  baseP.flower.enabled = false
+  const baseR = buildTree(baseP)
+  const idx = 1
+  const b0 = baseR.skeleton.branches[idx]
+  const p = normalizeParams(baseP)
+  p.branchEdits = { [idx]: { radiusScale: 2, moveX: 0.6, moveY: 0.4, rotZ: 25, twist: 70 } }
+  const r = buildTree(p)
+  const b1 = r.skeleton.branches[idx]
+  check('单枝编辑: 半径倍率生效',
+    b1.frames[0].radius > b0.frames[0].radius * 1.9,
+    `${b0.frames[0].radius.toFixed(3)} -> ${b1.frames[0].radius.toFixed(3)}`)
+  check('单枝编辑: 移动/旋转改变枝基位置',
+    b1.frames[0].pos.distanceTo(b0.frames[0].pos) > 0.2,
+    b1.frames[0].pos.distanceTo(b0.frames[0].pos).toFixed(3))
+  const child = b0.children && b0.children.length ? r.skeleton.branches[b0.children[0]] : null
+  const child0 = b0.children && b0.children.length ? baseR.skeleton.branches[b0.children[0]] : null
+  check('单枝编辑: 子枝跟随父枝移动',
+    !child || !child0 || child.frames[0].pos.distanceTo(child0.frames[0].pos) > 0.2,
+    child && child0 ? child.frames[0].pos.distanceTo(child0.frames[0].pos).toFixed(3) : 'no-child')
+  check('单枝编辑: 节点暴露 branchIndex 且可重置',
+    r.nodes.some((n) => n.type === 'branch' && n.meta && n.meta.branchIndex === idx))
+  const resetP = normalizeParams(p)
+  resetP.branchEdits = {}
+  check('单枝编辑: 重置后几何恢复',
+    geomHash(buildTree(resetP).barkGeometry) === geomHash(baseR.barkGeometry))
+}
+
+/* 35. 树干环绕式叶/花 */
+console.log('\n[35] 树干环绕式叶/花')
+{
+  const baseP = normalizeParams(defaultParams())
+  baseP.fruit.enabled = false
+  baseP.leaves.enabled = true
+  baseP.flower.enabled = true
+  baseP.flower.clusterCount = 2
+  const base = buildTree(baseP)
+  const p = normalizeParams(baseP)
+  p.leaves.trunkWrap = true
+  p.leaves.trunkStartT = 0.2
+  p.leaves.trunkEndT = 0.75
+  p.leaves.trunkCount = 12
+  p.flower.trunkWrap = true
+  p.flower.trunkStartT = 0.25
+  p.flower.trunkEndT = 0.7
+  p.flower.trunkCount = 8
+  const r = buildTree(p)
+  check('树干环绕叶: 叶量增加', r.stats.leaves > base.stats.leaves,
+    `${r.stats.leaves} vs ${base.stats.leaves}`)
+  check('树干环绕花: 花朵生成', r.stats.flowers > 0 && r.stats.flowerTriangles > 0,
+    `${r.stats.flowers}`)
+  const leafNode = r.nodes.find((n) => n.type === 'leaves' && n.groupName && n.groupName.includes('L0'))
+  check('树干环绕叶: 有独立的 L0 叶簇节点', !!leafNode)
+  const g = r.leafGeometry
+  const idAttr = g && g.attributes.aNodeId
+  const pos = g && g.attributes.position
+  const sectors = new Set()
+  if (leafNode && idAttr && pos) {
+    for (let i = 0; i < idAttr.count; i++) {
+      if (idAttr.array[i] !== leafNode.id) continue
+      const x = pos.array[i * 3], z = pos.array[i * 3 + 2]
+      sectors.add(Math.floor(((Math.atan2(z, x) + Math.PI) / (Math.PI * 2)) * 4))
+    }
+  }
+  check('树干环绕叶: 绕干分布 (覆盖 >= 3 个方位扇区)', sectors.size >= 3, `${sectors.size}`)
+  const fg = r.flowerGeometry
+  check('树干环绕花: 花朵几何非空', !!fg && fg.attributes.position.count > 0)
+}
+
 /* 汇总 */
 console.log(`\n=== 结果: ${pass} 通过 / ${fail} 失败 ===`)
 if (fail) {

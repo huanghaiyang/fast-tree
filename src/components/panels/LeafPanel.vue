@@ -14,6 +14,13 @@
       <SliderRow label="叶簇离散" v-model="L.clusterSpread" :min="0" :max="2" :step="0.02" />
       <SliderRow label="分布起始位置" v-model="L.startT" :min="0" :max="1" :step="0.01" />
       <SliderRow label="分布结束位置" v-model="L.endT" :min="0" :max="1" :step="0.01" />
+      <ToggleRow label="树干环绕生长" v-model="L.trunkWrap"
+        hint="沿树干螺旋分布叶簇，不依赖枝条；开启后可与枝条叶片叠加" />
+      <template v-if="L.trunkWrap">
+        <SliderRow label="树干起始高度" v-model="L.trunkStartT" :min="0.02" :max="0.98" :step="0.01" />
+        <SliderRow label="树干结束高度" v-model="L.trunkEndT" :min="0.02" :max="0.99" :step="0.01" />
+        <SliderRow label="环绕叶簇点数" v-model="L.trunkCount" :min="3" :max="120" :step="1" />
+      </template>
     </template>
   </Section>
 

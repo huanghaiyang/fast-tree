@@ -95,6 +95,14 @@ export const CONDITIONS = {
   'leaves.rollVariance': { 'leaves.cardMode': false },
   'leaves.faceUp': { 'leaves.cardMode': false },
   'leaves.width': { 'leaves.cardMode': false },
+  // 树干环绕叶/花: 子参数只在对应开关开启时生效
+  'leaves.trunkStartT': { 'leaves.trunkWrap': true },
+  'leaves.trunkEndT': { 'leaves.trunkWrap': true },
+  'leaves.trunkCount': { 'leaves.trunkWrap': true },
+  'flower.trunkWrap': { 'flower.enabled': true },
+  'flower.trunkStartT': { 'flower.enabled': true, 'flower.trunkWrap': true },
+  'flower.trunkEndT': { 'flower.enabled': true, 'flower.trunkWrap': true },
+  'flower.trunkCount': { 'flower.enabled': true, 'flower.trunkWrap': true },
   'branches.level[0].starDepth': { 'branches.level[0].crossSection': 'star' },
   // 分叉子参数只有在"启用分叉"时才有意义 (默认树种没有分叉)
   'trunk.fork.count': { 'trunk.fork.enabled': true },

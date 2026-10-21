@@ -164,6 +164,11 @@ export function defaultParams() {
       fold: 0.28,          // 横向 V 形折叠
       startT: 0.25,
       endT: 1.0,
+      // 树干环绕式生长: 沿树干螺旋分布叶簇 (不依赖枝条)
+      trunkWrap: false,
+      trunkStartT: 0.15,
+      trunkEndT: 0.8,
+      trunkCount: 24,
       pitch: -30,          // 相对枝条方向的俯仰(度, 负=下垂)
       pitchVariance: 28,
       droop: 0.35,         // 自重下垂
@@ -251,6 +256,10 @@ export function defaultParams() {
       radial: 8,
     },
 
+    // 单枝手工编辑: 以骨架分支下标为 key (同一 seed/结构下稳定)
+    // { radiusScale, moveX, moveY, moveZ, rotX, rotY, rotZ, twist }
+    branchEdits: {},
+
     // ---------------- 树皮材质 ----------------
     bark: {
       pipeline: 'speedtree',    // 'skin' = 单张连续蒙皮; 'speedtree' = 分枝管+领口 (默认)
@@ -277,6 +286,11 @@ export function defaultParams() {
       enabled: false,        // 与树叶可同时开启
       levels: [false, true, true, true, true],
       perBranch: 4,          // 每个枝端的花簇数
+      // 树干环绕式生长: 与枝条花朵独立
+      trunkWrap: false,
+      trunkStartT: 0.2,
+      trunkEndT: 0.8,
+      trunkCount: 16,
       density: 1,            // 开花密度 (按比例从树叶位置采样)
       clusterCount: 2,       // 每个点位几朵花
       size: 0.42,            // 花朵尺寸 (通常比叶大)
@@ -519,7 +533,7 @@ export function normalizeParams(p) {
   return out
 }
 
-const GEOMETRY_KEYS = ['seed', 'auto', 'trunk', 'roots', 'branches', 'leaves', 'flower', 'fruit', 'lod', 'ao']
+const GEOMETRY_KEYS = ['seed', 'auto', 'trunk', 'roots', 'branches', 'leaves', 'flower', 'fruit', 'lod', 'ao', 'branchEdits']
 const MATERIAL_KEYS = ['bark', 'leafMat', 'custom', 'particles', 'fall', 'litter', 'flowerFall', 'flowerLitter']
 const WIND_KEYS = ['wind']
 const SCENE_KEYS = ['scene', 'growth']
