@@ -143,8 +143,8 @@ const barkStyles = [
   { value: 'smooth', label: '光滑 smooth' },
 ]
 
-const b = state.params.bark
-const c = state.params.custom
+const b = computed(() => state.params.bark)
+const c = computed(() => state.params.custom)
 const shaderError = computed(() => state.shaderError)
 
 function applyCustom() {

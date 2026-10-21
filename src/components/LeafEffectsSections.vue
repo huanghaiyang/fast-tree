@@ -96,9 +96,9 @@ import ColorRow from './ui/ColorRow.vue'
 import { state } from '../store/treeStore.js'
 import { LEAF_CARDS } from '../core/leafCards.generated.js'
 
-const fl = state.params.fall
-const lt = state.params.litter
-const pt = state.params.particles
+const fl = computed(() => state.params.fall)
+const lt = computed(() => state.params.litter)
+const pt = computed(() => state.params.particles)
 
 /* 落叶/堆积的贴图候选: 每个批次/叶形取一张代表卡 (最多 12 张) */
 const missing = ref({})

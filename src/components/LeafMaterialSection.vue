@@ -91,18 +91,20 @@ import TexturePad from './ui/TexturePad.vue'
 import { state } from '../store/treeStore.js'
 import { LEAF_CARDS, LEAF_CARD_BATCHES, LEAF_CARD_BATCH_NAMES, leafCardsFor, leafCardRows } from '../core/leafCards.generated.js'
 
-const lm = state.params.leafMat
+// 不能缓存成 state.params.leafMat：换种子/自动生成会整体替换 state.params，
+// 旧引用会继续改上一棵树的材质，导致滑杆“看起来动了但树没变”。
+const lm = computed(() => state.params.leafMat)
 // 二维偏移手柄 <-> leafMat.textureU / textureV
 const texOffset = computed({
-  get: () => [lm.textureU || 0, lm.textureV || 0],
-  set: (v) => { lm.textureU = v[0]; lm.textureV = v[1] },
+  get: () => [lm.value.textureU || 0, lm.value.textureV || 0],
+  set: (v) => { lm.value.textureU = v[0]; lm.value.textureV = v[1] },
 })
 function resetTexture() {
-  lm.textureU = 0
-  lm.textureV = 0
-  lm.textureRepeatU = 1
-  lm.textureRepeatV = 1
-  lm.textureRotation = 0
+  lm.value.textureU = 0
+  lm.value.textureV = 0
+  lm.value.textureRepeatU = 1
+  lm.value.textureRepeatV = 1
+  lm.value.textureRotation = 0
 }
 const tintOptions = [
   { value: 'texture', label: '原色 (贴图不变色)' },
@@ -148,12 +150,12 @@ const backCards = computed(() => leafCardsFor(backBatch.value, backRow.value)
 watch(backUrlList, (urls) => probe(urls), { immediate: true })
 function useBackCard(card) {
   if (!card) return
-  lm.backTexture = card.url
+  lm.value.backTexture = card.url
 }
 function randomBackCard() {
   const pool = backCards.value.length ? backCards.value : LEAF_CARDS.filter((c) => exists.value[c.url] === true)
   const card = pool[Math.floor(Math.random() * pool.length)]
-  if (card) lm.backTexture = card.url
+  if (card) lm.value.backTexture = card.url
 }
 </script>
 

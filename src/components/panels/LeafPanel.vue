@@ -106,6 +106,7 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import Section from '../ui/Section.vue'
 import SliderRow from '../ui/SliderRow.vue'
 import ToggleRow from '../ui/ToggleRow.vue'
@@ -118,9 +119,9 @@ import LeafEffectsSections from '../LeafEffectsSections.vue'
 import MaterialPreview from './MaterialPreview.vue'
 import { state } from '../../store/treeStore.js'
 
-const L = state.params.leaves
-const lod = state.params.lod
-const ao = state.params.ao
+const L = computed(() => state.params.leaves)
+const lod = computed(() => state.params.lod)
+const ao = computed(() => state.params.ao)
 const shapes = [
   { value: 'oval', label: '椭圆 oval' },
   { value: 'round', label: '圆叶 round' },
