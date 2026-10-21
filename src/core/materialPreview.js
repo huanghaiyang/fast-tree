@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { createSharedUniforms, createBarkMaterial, createLeafMaterial } from './materials.js'
+import { createSharedUniforms, createBarkMaterial, createLeafMaterial, createFlowerMaterial } from './materials.js'
 
 /**
  * 材质球预览 (实时 + 可拖动旋转)
@@ -70,7 +70,11 @@ export function createMaterialPreview(canvas, kind = 'bark') {
   function setParams(params) {
     const uniforms = createSharedUniforms(params)
     if (mat) mat.dispose()
-    mat = kind === 'leaf' ? createLeafMaterial(params, uniforms) : createBarkMaterial(params, uniforms)
+    mat = kind === 'leaf'
+      ? createLeafMaterial(params, uniforms)
+      : kind === 'flower'
+        ? createFlowerMaterial(params, uniforms)
+        : createBarkMaterial(params, uniforms)
     mesh.material = mat
     // 贴图 onUpdate -> 立刻补画 (比定时重试更快)
     for (const t of [mat.map, mat.normalMap, mat.roughnessMap]) {

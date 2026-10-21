@@ -82,6 +82,9 @@ export function setNodeModel(model) {
     // 材质节点恒在
   }
   refreshSelectionRanges()
+  // 节点表重建后节点 bbox/几何都变了 -> 选中框必须同步重算，
+  // 否则移动/旋转单枝时黄色节点框会停在旧位置。
+  updateSelectionBox()
 }
 
 function refreshSelectionRanges() {

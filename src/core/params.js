@@ -67,6 +67,28 @@ export function defaultLevel(i) {
   return JSON.parse(JSON.stringify(table[Math.min(i, table.length - 1)]))
 }
 
+/**
+ * 兼容旧会话/旧 JSON：补齐后加的功能开关默认值。
+ * HMR 不会重新执行 normalizeParams，已打开的页面需要主动调用一次。
+ */
+export function ensureFeatureDefaults(params) {
+  if (!params) return params
+  const d = defaultParams()
+  const fill = (obj, def) => {
+    if (!obj) return
+    for (const [k, v] of Object.entries(def)) {
+      if (obj[k] === undefined) obj[k] = v
+    }
+  }
+  fill(params.fall, d.fall)
+  fill(params.litter, d.litter)
+  fill(params.flowerFall, d.flowerFall)
+  fill(params.flowerLitter, d.flowerLitter)
+  fill(params.leaves, d.leaves)
+  fill(params.flower, d.flower)
+  return params
+}
+
 export function defaultParams() {
   return {
     seed: 20240607,
@@ -164,11 +186,9 @@ export function defaultParams() {
       fold: 0.28,          // 横向 V 形折叠
       startT: 0.25,
       endT: 1.0,
-      // 树干环绕式生长: 沿树干螺旋分布叶簇 (不依赖枝条)
-      trunkWrap: false,
-      trunkStartT: 0.15,
-      trunkEndT: 0.8,
-      trunkCount: 24,
+      // 树枝环绕式生长: 沿每根树枝螺旋分布叶簇 (不依赖树干)
+      branchWrap: false,
+      branchWrapTurns: 2.0,
       pitch: -30,          // 相对枝条方向的俯仰(度, 负=下垂)
       pitchVariance: 28,
       droop: 0.35,         // 自重下垂
@@ -193,6 +213,7 @@ export function defaultParams() {
     // ---------------- 落叶 (从树冠落下的叶片) ----------------
     fall: {
       enabled: false,
+      inheritLeafMat: true, // 落叶继承树叶的自发光/反光/散光
       cardId: '',          // 落叶自己的贴图卡片 (空 = 跟随树叶当前卡片)
       count: 80,           // 同时飘落的叶片数
       speed: 1.0,          // 下落速度倍率
@@ -210,6 +231,7 @@ export function defaultParams() {
     // ---------------- 地面落叶堆积 ----------------
     litter: {
       enabled: false,
+      inheritLeafMat: true, // 落叶堆继承树叶的自发光/反光/散光
       cardId: '',          // 堆积自己的贴图卡片 (空 = 跟随树叶当前卡片)
       count: 260,          // 地面落叶数
       radius: 1.0,         // 分布半径 = 树冠半径 × 该值
@@ -286,11 +308,9 @@ export function defaultParams() {
       enabled: false,        // 与树叶可同时开启
       levels: [false, true, true, true, true],
       perBranch: 4,          // 每个枝端的花簇数
-      // 树干环绕式生长: 与枝条花朵独立
-      trunkWrap: false,
-      trunkStartT: 0.2,
-      trunkEndT: 0.8,
-      trunkCount: 16,
+      // 树枝环绕式生长: 与枝条花朵独立
+      branchWrap: false,
+      branchWrapTurns: 2.0,
       density: 1,            // 开花密度 (按比例从树叶位置采样)
       clusterCount: 2,       // 每个点位几朵花
       size: 0.42,            // 花朵尺寸 (通常比叶大)
@@ -315,6 +335,14 @@ export function defaultParams() {
       colorTip: '#fbe3ec',
       colorVariance: 0.16,
       translucency: 0.7,
+      // 花朵材质: 与树叶一致的自发光/反光/散光
+      emissive: 0.0,
+      emissiveColor: '#ffffff',
+      specular: 0.2,
+      specularShininess: 24,
+      specularColor: '#ffffff',
+      scatter: 0.0,
+      scatterPower: 2.0,
 
       texture: '',           // 花朵贴图 (平面花卡, 贴图 alpha 决定轮廓)
       textureU: 0,           // 贴图在模型上的横向偏移
@@ -337,6 +365,7 @@ export function defaultParams() {
     // ---------------- 落花 / 落花堆积 (参照落叶实现) ----------------
     flowerFall: {
       enabled: false,
+      inheritFlowerMat: true, // 落花继承花朵材质的自发光/反光/散光
       cardId: '',          // 空 = 跟随花朵贴图
       count: 140,
       speed: 0.9,
@@ -352,6 +381,7 @@ export function defaultParams() {
     },
     flowerLitter: {
       enabled: false,
+      inheritFlowerMat: true, // 落花堆继承花朵材质的自发光/反光/散光
       cardId: '',          // 空 = 跟随花朵贴图
       count: 320,
       radius: 1.25,

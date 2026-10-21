@@ -196,7 +196,11 @@ const SELECTION_GLOW = /* glsl */`
 
 const TRANSLUCENCY = /* glsl */`
   #ifndef FLAT_SHADED
-    float treeBack = pow(max(dot(normalize(vNormal), normalize(-uSunDir)), 0.0), 1.4);
+    // 用视图空间 normal/vViewPosition/光源；正反面 normal 由 three 翻转，
+    // 不会再出现"只有背面透光/反光"。
+    vec3 treeN = normalize(normal);
+    vec3 treeL = normalize((viewMatrix * vec4(uSunDir, 0.0)).xyz);
+    float treeBack = pow(abs(dot(treeN, treeL)), 1.4);
     totalEmissiveRadiance += diffuseColor.rgb * uTranslucency * treeBack * uSunColor * (0.4 + 0.6 * vTreeWind);
   #endif
 `
@@ -205,14 +209,15 @@ const TRANSLUCENCY = /* glsl */`
 const LEAF_REFLECTION = /* glsl */`
   #ifndef FLAT_SHADED
   {
-    vec3 treeN = normalize(vNormal);
+    // 关键: 用 three 处理过正/反面翻转的视图空间 normal，而不是原始顶点法线。
+    vec3 treeN = normalize(normal);
     vec3 treeV = normalize(vViewPosition);        // 视空间视线方向
-    vec3 treeL = normalize(uSunDir);
+    vec3 treeL = normalize((viewMatrix * vec4(uSunDir, 0.0)).xyz);
     // 反光: Blinn-Phong 高光 + 菲涅尔增亮 -> 湿叶/蜡质叶面的那种反光
     if (uSpecular > 0.001) {
       vec3 treeH = normalize(treeL + treeV);
-      float treeSpec = pow(max(dot(treeN, treeH), 0.0), max(1.0, uSpecularShininess));
-      float treeFres = 0.35 + 0.65 * pow(1.0 - max(dot(treeN, treeV), 0.0), 3.0);
+      float treeSpec = pow(abs(dot(treeN, treeH)), max(1.0, uSpecularShininess));
+      float treeFres = 0.35 + 0.65 * pow(1.0 - abs(dot(treeN, treeV)), 3.0);
       totalEmissiveRadiance += uSpecularColor * (uSpecular * 3.0 * treeSpec * treeFres) * uSunColor;
     }
     // 散光: 视线与法线接近垂直时叶肉最薄 -> 边缘散射发亮 (逆光尤其明显)
@@ -480,6 +485,14 @@ function flowerLeafParams(params) {
       textureRepeatV: f.textureRepeatV === undefined ? (f.textureRepeat === undefined ? 1 : f.textureRepeat) : f.textureRepeatV,
       textureRotation: f.textureRotation || 0,
       translucency: f.translucency === undefined ? params.leafMat.translucency : f.translucency,
+      // 花朵也使用自己的自发光/反光/散光 (与树叶解耦)
+      emissive: f.emissive === undefined ? 0 : f.emissive,
+      emissiveColor: f.emissiveColor || '#ffffff',
+      specular: f.specular === undefined ? 0 : f.specular,
+      specularShininess: f.specularShininess === undefined ? 24 : f.specularShininess,
+      specularColor: f.specularColor || '#ffffff',
+      scatter: f.scatter === undefined ? 0 : f.scatter,
+      scatterPower: f.scatterPower === undefined ? 2 : f.scatterPower,
       // 背面独立材质只给树叶用, 花朵保持单面材质
       backEnabled: false,
       backTexture: '',

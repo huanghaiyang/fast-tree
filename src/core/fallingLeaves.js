@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { makeRng } from './rng.js'
 import { sampleEmitPositions } from './particles.js'
 import { resolveEffectTexture, resolveEffectAspect } from './leafTexture.js'
+import { resolveLeafEffects } from './leafEffects.js'
 
 /**
  * 落叶效果 (falling leaves)
@@ -34,6 +35,8 @@ uniform float uWindFollow;
 attribute vec4 aLeafSeed;   // phase, speedScale, sizeScale, spinDir
 varying vec2 vUv;
 varying float vShade;
+varying vec3 vWorldNormal;
+varying vec3 vWorldPos;
 
 mat3 rotX(float a) { float c = cos(a), s = sin(a); return mat3(1.,0.,0., 0.,c,s, 0.,-s,c); }
 mat3 rotY(float a) { float c = cos(a), s = sin(a); return mat3(c,0.,-s, 0.,1.,0., s,0.,c); }
@@ -80,6 +83,9 @@ void main() {
   gl_Position = projectionMatrix * mv;
 
   vUv = uv;
+  // 法线/世界位置给碎片着色器继承树叶自发光/反光/散光
+  vWorldNormal = normalize(mat3(modelMatrix) * (R * vec3(0.0, 0.0, 1.0)));
+  vWorldPos = world;
   // 正面朝上时亮一点, 背面暗一点 (翻飞时的明暗变化)
   vShade = 0.55 + 0.45 * max(0.0, R[1][1]) ;
   vShade *= fade;
@@ -92,8 +98,20 @@ uniform float uHasMap;
 uniform vec3 uColor;
 uniform float uOpacity;
 uniform float uAlphaTest;
+uniform vec3 uSunDir;
+uniform vec3 uSunColor;
+uniform float uInherit;
+uniform float uEmissive;
+uniform vec3 uEmissiveColor;
+uniform float uSpecular;
+uniform float uSpecularShininess;
+uniform vec3 uSpecularColor;
+uniform float uScatter;
+uniform float uScatterPower;
 varying vec2 vUv;
 varying float vShade;
+varying vec3 vWorldNormal;
+varying vec3 vWorldPos;
 
 void main() {
   vec4 tex = uHasMap > 0.5 ? texture2D(uMap, vUv) : vec4(1.0);
@@ -106,6 +124,25 @@ void main() {
   // 贴图是 sRGB 纹理, 采样后已是线性值; 输出必须和主树叶材质走同一套变换,
   // 否则同一张贴图在"树上"和"落叶上"颜色会不一致。
   vec3 col = (uHasMap > 0.5 ? tex.rgb : uColor) * vShade;
+  // 落叶继承树叶材质: 自发光 / 反光 / 散光
+  if (uInherit > 0.5) {
+    vec3 N = normalize(vWorldNormal);
+    if (!gl_FrontFacing) N = -N;
+    vec3 V = normalize(cameraPosition - vWorldPos);
+    vec3 L = normalize(uSunDir);
+    col += uEmissiveColor * uEmissive;
+    if (uSpecular > 0.001) {
+      vec3 H = normalize(L + V);
+      float spec = pow(max(dot(N, H), 0.0), max(1.0, uSpecularShininess));
+      float fres = 0.35 + 0.65 * pow(1.0 - max(dot(N, V), 0.0), 3.0);
+      col += uSpecularColor * (uSpecular * 3.0 * spec * fres) * uSunColor;
+    }
+    if (uScatter > 0.001) {
+      float rim = pow(1.0 - abs(dot(N, V)), max(1.0, uScatterPower));
+      float lit = 0.35 + 0.65 * max(dot(N, L), 0.0);
+      col += tex.rgb * (uScatter * rim * lit) * uSunColor;
+    }
+  }
   float alpha = (uHasMap > 0.5 ? 1.0 : uOpacity) * vShade;
   if (alpha < 0.01) discard;
   gl_FragColor = vec4(col, alpha);
@@ -134,6 +171,32 @@ export function fallRebuildKey(params) {
  * @param {THREE.Texture|null} map 叶片贴图
  * @param {{min:{x,y,z},max:{x,y,z}}} bbox 树冠包围盒
  */
+function effectUniforms(params) {
+  const e = resolveLeafEffects(params, params.effectSource || 'leaf', params.effectInherit !== false)
+  return {
+    uInherit: { value: e.inherit },
+    uEmissive: { value: e.emissive },
+    uEmissiveColor: { value: new THREE.Color(e.emissiveColor) },
+    uSpecular: { value: e.specular },
+    uSpecularShininess: { value: e.specularShininess },
+    uSpecularColor: { value: new THREE.Color(e.specularColor) },
+    uScatter: { value: e.scatter },
+    uScatterPower: { value: e.scatterPower },
+  }
+}
+
+function writeEffectUniforms(u, params) {
+  const e = resolveLeafEffects(params, params.effectSource || 'leaf', params.effectInherit !== false)
+  if (u.uInherit) u.uInherit.value = e.inherit
+  if (u.uEmissive) u.uEmissive.value = e.emissive
+  if (u.uEmissiveColor) u.uEmissiveColor.value.set(e.emissiveColor)
+  if (u.uSpecular) u.uSpecular.value = e.specular
+  if (u.uSpecularShininess) u.uSpecularShininess.value = e.specularShininess
+  if (u.uSpecularColor) u.uSpecularColor.value.set(e.specularColor)
+  if (u.uScatter) u.uScatter.value = e.scatter
+  if (u.uScatterPower) u.uScatterPower.value = e.scatterPower
+}
+
 export function buildFallingLeaves(canopyGeometry, params, sharedUniforms, map, bbox) {
   const F = params.fall || {}
   const count = Math.max(1, Math.round(F.count === undefined ? 80 : F.count))
@@ -215,6 +278,9 @@ export function buildFallingLeaves(canopyGeometry, params, sharedUniforms, map, 
       uOpacity: { value: F.opacity === undefined ? 1 : F.opacity },
       uAlphaTest: { value: F.alphaTest === undefined ? 0.35 : F.alphaTest },
       uHalf: { value: new THREE.Vector2(halfW, halfH) },
+      uSunDir: sharedUniforms.uSunDir,
+      uSunColor: sharedUniforms.uSunColor,
+      ...effectUniforms(params),
     },
     vertexShader: FALL_VERT,
     fragmentShader: FALL_FRAG,
@@ -243,4 +309,5 @@ export function updateFallingLeaves(mesh, params) {
   u.uColor.value.set(F.color || '#d9a441')
   u.uOpacity.value = F.opacity === undefined ? 1 : F.opacity
   u.uAlphaTest.value = F.alphaTest === undefined ? 0.35 : F.alphaTest
+  writeEffectUniforms(u, params)
 }

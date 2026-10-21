@@ -2,6 +2,8 @@
   <Section title="落叶堆积" hint="Leaf Litter" :default-collapsed="true">
     <ToggleRow label="启用落叶堆积" v-model="lt.enabled"
       hint="地面上铺一层落叶: 随机朝向/倾斜/层叠, UV 翻转旋转制造多形态; 合批 1 个 draw call" />
+    <ToggleRow label="继承树叶光照" v-model="lt.inheritLeafMat"
+      hint="落叶堆继承树叶的自发光/反光/散光 (默认开)" />
     <template v-if="lt.enabled">
       <div class="pick-label">堆积贴图</div>
       <div class="chips">
@@ -31,6 +33,8 @@
   <Section title="落叶" hint="Falling Leaves" :default-collapsed="true">
     <ToggleRow label="启用落叶" v-model="fl.enabled"
       hint="从树冠飘落的真实叶片卡片 (合批成一个 draw call, 翻滚/受风全在着色器里)" />
+    <ToggleRow label="继承树叶光照" v-model="fl.inheritLeafMat"
+      hint="落叶继承树叶的自发光/反光/散光 (默认开)" />
     <template v-if="fl.enabled">
       <div class="pick-label">落叶贴图</div>
       <div class="chips">

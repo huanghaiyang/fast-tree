@@ -4,7 +4,7 @@
  */
 import { buildTree, selectionRanges } from '../src/core/treeBuilder.js'
 import { buildBarkSkin } from '../src/core/barkSkin.js'
-import { defaultParams, cloneParams, normalizeParams, MAX_LEVELS, GROUP_KEYS } from '../src/core/params.js'
+import { defaultParams, cloneParams, normalizeParams, ensureFeatureDefaults, MAX_LEVELS, GROUP_KEYS } from '../src/core/params.js'
 import { ENVIRONMENTS, ENV_IDS, envById, applyEnvironment } from '../src/core/environments.js'
 import { TWIST_POINTS, normalizeTwistProfile, sampleTwistProfile, twistProfileRad } from '../src/core/twist.js'
 import { splitBarkGeometryByNodeGroups, barkGroupName, barkExportParts } from '../src/core/exportSplit.js'
@@ -1037,16 +1037,59 @@ console.log('\n[17] 落叶/堆积贴图解析')
   const m1 = buildFallingLeaves(leafGeo2, { ...composeTree('oak', 'mature', 'summer', 4242), fall: { enabled: true, cardId: c0.id } }, sh2, null, bb2)
   check('落叶卡片宽高比进入半宽计算', Math.abs(m1.material.uniforms.uHalf.value.x - 0.5 * Math.min(1.6, Math.max(0.35, c0.aspect))) < 1e-6)
 }
-check('堆积材质不再注入自定义着色器 (vMapUv 报错的根因)', (() => {
+check('堆积使用独立着色器并支持继承光照', (() => {
   const lp = composeTree('oak', 'mature', 'summer', 4242)
   const lg = buildTree(composeTree('oak', 'mature', 'summer', 4242)).leafGeometry
   const bb = lg.boundingBox || (lg.computeBoundingBox(), lg.boundingBox)
   const m = buildLeafLitter({ ...lp, litter: { ...lp.litter, enabled: true } }, null, bb)
-  console.log('      堆积材质 onBeforeCompile=' + (typeof m.material.onBeforeCompile))
-  // three 的 Material 原型上本来就有 onBeforeCompile (空实现), 所以要看实例上有没有自己的
-  const own = Object.prototype.hasOwnProperty.call(m.material, 'onBeforeCompile')
-  return !own && !!(m.material.map && m.material.map.isDataTexture)
+  return !!m.material.isShaderMaterial && !!(m.material.uniforms.uInherit && m.material.uniforms.uMap)
 })())
+
+/* 落物/落花继承叶/花材质光照 */
+{
+  const p = normalizeParams(defaultParams())
+  p.fruit.enabled = false
+  p.leaves.enabled = true
+  p.flower.enabled = true
+  p.leafMat.emissive = 0.7
+  p.leafMat.specular = 0.8
+  p.leafMat.scatter = 0.6
+  p.flower.emissive = 0.6
+  p.flower.specular = 0.7
+  p.flower.scatter = 0.5
+  const tree = buildTree(p)
+  const geo = tree.leafGeometry
+  if (!geo.boundingBox) geo.computeBoundingBox()
+  const shared = createSharedUniforms(p)
+  const fallP = { ...p, fall: { ...p.fall, enabled: true }, effectSource: 'leaf', effectInherit: true }
+  const fall = buildFallingLeaves(geo, fallP, shared, null, geo.boundingBox)
+  check('落叶继承树叶自发光/反光/散光',
+    fall.material.uniforms.uInherit.value === 1 &&
+    Math.abs(fall.material.uniforms.uEmissive.value - 0.7) < 1e-6 &&
+    Math.abs(fall.material.uniforms.uSpecular.value - 0.8) < 1e-6 &&
+    Math.abs(fall.material.uniforms.uScatter.value - 0.6) < 1e-6)
+  const noInherit = buildFallingLeaves(geo, { ...fallP, effectInherit: false }, shared, null, geo.boundingBox)
+  check('落叶关闭继承后不使用树叶光照', noInherit.material.uniforms.uInherit.value === 0)
+  const flowerFallP = { ...p, fall: { ...p.flowerFall, enabled: true }, effectSource: 'flower', effectInherit: true }
+  const flowerFall = buildFallingLeaves(geo, flowerFallP, shared, null, geo.boundingBox)
+  check('落花继承花朵自发光/反光/散光',
+    flowerFall.material.uniforms.uInherit.value === 1 &&
+    Math.abs(flowerFall.material.uniforms.uEmissive.value - 0.6) < 1e-6)
+  const litter = buildLeafLitter({ ...p, litter: { ...p.litter, enabled: true }, effectSource: 'leaf', effectInherit: true }, null, geo.boundingBox)
+  check('落叶堆继承树叶光照', litter.material.uniforms.uInherit.value === 1 &&
+    Math.abs(litter.material.uniforms.uEmissive.value - 0.7) < 1e-6)
+  const shaderSrc = internalShaderSources().snippets.LEAF_REFLECTION
+  check('叶面反光/散光使用视图空间 normal (正反面都生效)',
+    shaderSrc.includes('viewMatrix') && !shaderSrc.includes('vNormal'))
+  check('叶面高光/透光使用 abs 法线 (不再只单面生效)',
+    shaderSrc.includes('abs(dot(treeN, treeH))') && shaderSrc.includes('abs(dot(treeN, treeV))'))
+  const legacy = { ...p, fall: { enabled: true }, litter: { enabled: true }, flowerFall: { enabled: true }, flowerLitter: { enabled: true } }
+  ensureFeatureDefaults(legacy)
+  check('旧参数/旧会话补齐继承默认值', legacy.fall.inheritLeafMat === true &&
+    legacy.litter.inheritLeafMat === true &&
+    legacy.flowerFall.inheritFlowerMat === true &&
+    legacy.flowerLitter.inheritFlowerMat === true)
+}
 
 /* 18. 贴图染色模式 */
 console.log('\n[18] 贴图染色模式 (贴图原色 / 跟随季节 / 自定义)')
@@ -1811,8 +1854,8 @@ console.log('\n[34] 单枝编辑')
     geomHash(buildTree(resetP).barkGeometry) === geomHash(baseR.barkGeometry))
 }
 
-/* 35. 树干环绕式叶/花 */
-console.log('\n[35] 树干环绕式叶/花')
+/* 35. 树枝环绕式叶/花 */
+console.log('\n[35] 树枝环绕式叶/花')
 {
   const baseP = normalizeParams(defaultParams())
   baseP.fruit.enabled = false
@@ -1821,35 +1864,21 @@ console.log('\n[35] 树干环绕式叶/花')
   baseP.flower.clusterCount = 2
   const base = buildTree(baseP)
   const p = normalizeParams(baseP)
-  p.leaves.trunkWrap = true
-  p.leaves.trunkStartT = 0.2
-  p.leaves.trunkEndT = 0.75
-  p.leaves.trunkCount = 12
-  p.flower.trunkWrap = true
-  p.flower.trunkStartT = 0.25
-  p.flower.trunkEndT = 0.7
-  p.flower.trunkCount = 8
+  p.leaves.branchWrap = true
+  p.leaves.branchWrapTurns = 3
+  p.flower.branchWrap = true
+  p.flower.branchWrapTurns = 3
   const r = buildTree(p)
-  check('树干环绕叶: 叶量增加', r.stats.leaves > base.stats.leaves,
+  check('树枝环绕叶: 叶量保持 (只改分布)', r.stats.leaves === base.stats.leaves,
     `${r.stats.leaves} vs ${base.stats.leaves}`)
-  check('树干环绕花: 花朵生成', r.stats.flowers > 0 && r.stats.flowerTriangles > 0,
+  check('树枝环绕叶: 叶簇几何发生变化',
+    !!r.leafGeometry && geomHash(r.leafGeometry) !== geomHash(base.leafGeometry))
+  check('树枝环绕花: 花朵几何发生变化',
+    !!r.flowerGeometry && geomHash(r.flowerGeometry) !== geomHash(base.flowerGeometry))
+  check('树干环绕已移除: 没有 L0 叶簇节点',
+    !r.nodes.some((n) => n.type === 'leaves' && n.level === 0))
+  check('树枝环绕花: 花朵仍生成', r.stats.flowers > 0 && r.stats.flowerTriangles > 0,
     `${r.stats.flowers}`)
-  const leafNode = r.nodes.find((n) => n.type === 'leaves' && n.groupName && n.groupName.includes('L0'))
-  check('树干环绕叶: 有独立的 L0 叶簇节点', !!leafNode)
-  const g = r.leafGeometry
-  const idAttr = g && g.attributes.aNodeId
-  const pos = g && g.attributes.position
-  const sectors = new Set()
-  if (leafNode && idAttr && pos) {
-    for (let i = 0; i < idAttr.count; i++) {
-      if (idAttr.array[i] !== leafNode.id) continue
-      const x = pos.array[i * 3], z = pos.array[i * 3 + 2]
-      sectors.add(Math.floor(((Math.atan2(z, x) + Math.PI) / (Math.PI * 2)) * 4))
-    }
-  }
-  check('树干环绕叶: 绕干分布 (覆盖 >= 3 个方位扇区)', sectors.size >= 3, `${sectors.size}`)
-  const fg = r.flowerGeometry
-  check('树干环绕花: 花朵几何非空', !!fg && fg.attributes.position.count > 0)
 }
 
 /* 36. 子枝半径 <= 父枝贴合处半径的 80% */

@@ -1,6 +1,97 @@
 import * as THREE from 'three'
 import { makeRng } from './rng.js'
 import { resolveEffectTexture, resolveEffectAspect } from './leafTexture.js'
+import { resolveLeafEffects } from './leafEffects.js'
+
+const LITTER_VERT = /* glsl */`
+attribute vec3 color;
+varying vec2 vUv;
+varying vec3 vColor;
+varying vec3 vWorldNormal;
+varying vec3 vWorldPos;
+void main() {
+  vUv = uv;
+  vColor = color;
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vWorldPos = wp.xyz;
+  vWorldNormal = normalize(mat3(modelMatrix) * normal);
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}
+`
+
+const LITTER_FRAG = /* glsl */`
+uniform sampler2D uMap;
+uniform float uAlphaTest;
+uniform float uShade;
+uniform vec3 uSunDir;
+uniform vec3 uSunColor;
+uniform float uInherit;
+uniform float uEmissive;
+uniform vec3 uEmissiveColor;
+uniform float uSpecular;
+uniform float uSpecularShininess;
+uniform vec3 uSpecularColor;
+uniform float uScatter;
+uniform float uScatterPower;
+varying vec2 vUv;
+varying vec3 vColor;
+varying vec3 vWorldNormal;
+varying vec3 vWorldPos;
+void main() {
+  vec4 tex = texture2D(uMap, vUv);
+  if (tex.a < uAlphaTest) discard;
+  vec3 col = tex.rgb * vColor * uShade;
+  if (uInherit > 0.5) {
+    vec3 N = normalize(vWorldNormal);
+    if (!gl_FrontFacing) N = -N;
+    vec3 V = normalize(cameraPosition - vWorldPos);
+    vec3 L = normalize(uSunDir);
+    col += uEmissiveColor * uEmissive;
+    if (uSpecular > 0.001) {
+      vec3 H = normalize(L + V);
+      float spec = pow(max(dot(N, H), 0.0), max(1.0, uSpecularShininess));
+      float fres = 0.35 + 0.65 * pow(1.0 - max(dot(N, V), 0.0), 3.0);
+      col += uSpecularColor * (uSpecular * 3.0 * spec * fres) * uSunColor;
+    }
+    if (uScatter > 0.001) {
+      float rim = pow(1.0 - abs(dot(N, V)), max(1.0, uScatterPower));
+      float lit = 0.35 + 0.65 * max(dot(N, L), 0.0);
+      col += tex.rgb * (uScatter * rim * lit) * uSunColor;
+    }
+  }
+  gl_FragColor = vec4(col, tex.a);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}
+`
+
+function effectUniforms(params) {
+  const e = resolveLeafEffects(params, params.effectSource || 'leaf', params.effectInherit !== false)
+  return {
+    uInherit: { value: e.inherit },
+    uEmissive: { value: e.emissive },
+    uEmissiveColor: { value: new THREE.Color(e.emissiveColor) },
+    uSpecular: { value: e.specular },
+    uSpecularShininess: { value: e.specularShininess },
+    uSpecularColor: { value: new THREE.Color(e.specularColor) },
+    uScatter: { value: e.scatter },
+    uScatterPower: { value: e.scatterPower },
+  }
+}
+
+export function updateLitterEffects(mesh, params) {
+  if (!mesh || !mesh.material || !mesh.material.uniforms) return
+  const u = mesh.material.uniforms
+  const e = resolveLeafEffects(params, params.effectSource || 'leaf', params.effectInherit !== false)
+  if (u.uInherit) u.uInherit.value = e.inherit
+  if (u.uEmissive) u.uEmissive.value = e.emissive
+  if (u.uEmissiveColor) u.uEmissiveColor.value.set(e.emissiveColor)
+  if (u.uSpecular) u.uSpecular.value = e.specular
+  if (u.uSpecularShininess) u.uSpecularShininess.value = e.specularShininess
+  if (u.uSpecularColor) u.uSpecularColor.value.set(e.specularColor)
+  if (u.uScatter) u.uScatter.value = e.scatter
+  if (u.uScatterPower) u.uScatterPower.value = e.scatterPower
+}
 
 /** 堆积需要重建的判据 (同样包含"跟随的树叶贴图") */
 export function litterRebuildKey(params) {
@@ -118,17 +209,24 @@ export function buildLeafLitter(params, map, bbox) {
   geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3))
   geo.setIndex(new THREE.BufferAttribute(idx, 1))
 
-  // 地面落叶用**无光照材质**: 它们几乎总在树冠阴影里, PBR 只会渲染成一片黑。
-  // 直接"贴图颜色 × 顶点色 × 明暗系数"更稳定, 也更符合落叶层这种贴地装饰的观感。
-  // 永远给一张贴图 (自己的卡片 / 跟随树叶 / 椭圆兜底) -> 不需要注入着色器
+  // 地面落叶用无光照着色器: 贴图颜色 × 顶点色 × 明暗系数,
+  // 同时可选继承树叶/花朵的自发光、反光、散光。
   const resolved = resolveEffectTexture({ cardId: L.cardId, followMap: map })
   const shade = L.shade === undefined ? 0.78 : L.shade
-  const mat = new THREE.MeshBasicMaterial({
-    map: resolved.map,
-    alphaTest: L.alphaTest === undefined ? 0.35 : L.alphaTest,
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uMap: { value: resolved.map },
+      uAlphaTest: { value: L.alphaTest === undefined ? 0.35 : L.alphaTest },
+      uShade: { value: shade },
+      uSunDir: { value: new THREE.Vector3(0.5, 1, 0.35).normalize() },
+      uSunColor: { value: new THREE.Color(1, 0.96, 0.9) },
+      ...effectUniforms(params),
+    },
+    vertexShader: LITTER_VERT,
+    fragmentShader: LITTER_FRAG,
     side: THREE.DoubleSide,
-    vertexColors: true,
-    color: new THREE.Color(shade, shade, shade),
+    transparent: false,
+    depthWrite: true,
   })
   const mesh = new THREE.Mesh(geo, mat)
   mesh.receiveShadow = true

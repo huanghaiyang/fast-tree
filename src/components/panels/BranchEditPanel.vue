@@ -3,6 +3,23 @@
     <div class="muted" style="margin: 0 0 6px">
       选中 {{ branchName || `分支 #${branchIndex}` }}（骨架分支 #{{ branchIndex }}）
     </div>
+    <div class="row-head">
+      <label>3D 变换轴</label>
+      <button class="btn small" :class="{ active: showGizmo }" @click="showGizmo = !showGizmo">
+        {{ showGizmo ? '隐藏 XYZ 轴' : '显示 XYZ 轴' }}
+      </button>
+    </div>
+    <div class="level-tabs" style="margin: 4px 0 6px">
+      <div class="level-tab" :class="{ active: gizmoMode === 'translate' }"
+        @click="gizmoMode = 'translate'">移动</div>
+      <div class="level-tab" :class="{ active: gizmoMode === 'rotate' }"
+        @click="gizmoMode = 'rotate'">旋转</div>
+    </div>
+    <SelectRow v-if="showGizmo" label="坐标空间" v-model="gizmoSpace" :options="spaceOptions"
+      hint="世界：沿世界 XYZ；局部：沿枝条自身坐标轴" />
+    <div class="muted" style="margin: 0 0 6px" v-if="showGizmo">
+      拖动 X/Y/Z 箭头或旋转环时实时更新；松开鼠标结束。也可用下面滑杆连续调整。
+    </div>
     <SliderRow label="半径倍率" :model-value="val('radiusScale', 1)"
       @update:model-value="setVal('radiusScale', $event)"
       :min="0.2" :max="3" :step="0.01"
@@ -26,14 +43,41 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import Section from '../ui/Section.vue'
 import SliderRow from '../ui/SliderRow.vue'
-import { state } from '../../store/treeStore.js'
+import SelectRow from '../ui/SelectRow.vue'
+import { state, sceneApi } from '../../store/treeStore.js'
 
 const props = defineProps({
   branchIndex: { type: Number, default: null },
   branchName: { type: String, default: '' },
+})
+
+const showGizmo = ref(true)
+const gizmoMode = ref('translate')
+const gizmoSpace = ref('world')
+const spaceOptions = [
+  { value: 'world', label: '世界' },
+  { value: 'local', label: '局部' },
+]
+
+function syncGizmo () {
+  if (!sceneApi.setBranchTransformGizmo) return
+  if (props.branchIndex === null || !showGizmo.value) {
+    sceneApi.setBranchTransformGizmo({ show: false })
+    return
+  }
+  sceneApi.setBranchTransformGizmo({
+    index: props.branchIndex,
+    show: true,
+    mode: gizmoMode.value,
+    space: gizmoSpace.value,
+  })
+}
+watch([() => props.branchIndex, showGizmo, gizmoMode, gizmoSpace], syncGizmo, { immediate: true })
+onBeforeUnmount(() => {
+  if (sceneApi.setBranchTransformGizmo) sceneApi.setBranchTransformGizmo({ show: false })
 })
 
 const key = computed(() => String(props.branchIndex))

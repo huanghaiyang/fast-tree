@@ -1,4 +1,5 @@
 <template>
+  <MaterialPreview :kinds="['flower']" />
   <Section title="花朵" hint="Flower">
     <ToggleRow label="启用花朵" v-model="f.enabled" hint="与树叶可同时开启 (独立网格, 材质继承树叶)" />
     <SelectRow label="花朵十字交叉" v-model="f.cross" :options="crossOptions"
@@ -32,18 +33,24 @@
     <SliderRow label="每簇花朵数" v-model="f.clusterCount" :min="1" :max="12" :step="1" />
     <SliderRow label="分布起始位置" v-model="f.startT" :min="0" :max="1" :step="0.01" />
     <SliderRow label="分布结束位置" v-model="f.endT" :min="0" :max="1" :step="0.01" />
-    <ToggleRow label="树干环绕生长" v-model="f.trunkWrap"
-      hint="沿树干螺旋分布花朵，不依赖枝条；可单独开启" />
-    <template v-if="f.trunkWrap">
-      <SliderRow label="树干起始高度" v-model="f.trunkStartT" :min="0.02" :max="0.98" :step="0.01" />
-      <SliderRow label="树干结束高度" v-model="f.trunkEndT" :min="0.02" :max="0.99" :step="0.01" />
-      <SliderRow label="环绕花朵点数" v-model="f.trunkCount" :min="3" :max="100" :step="1" />
+    <ToggleRow label="树枝环绕生长" v-model="f.branchWrap"
+      hint="沿每根树枝的轴向螺旋分布花朵；不作用于树干" />
+    <template v-if="f.branchWrap">
+      <SliderRow label="每枝环绕圈数" v-model="f.branchWrapTurns" :min="0.25" :max="8" :step="0.25" />
     </template>
     <SliderRow label="花朵密度" v-model="f.density" :min="0.05" :max="1" :step="0.05" />
     <ColorRow label="花色 A" v-model="f.color" />
     <ColorRow label="花色 B" v-model="f.colorTip" />
     <SliderRow label="花色差异" v-model="f.colorVariance" :min="0" :max="1" :step="0.01" />
     <SliderRow label="花朵透光" v-model="f.translucency" :min="0" :max="1" :step="0.01" />
+    <div class="row-head"><label>花朵材质光照</label></div>
+    <ColorRow label="花朵自发光颜色" v-model="f.emissiveColor" />
+    <SliderRow label="花朵自发光强度" v-model="f.emissive" :min="0" :max="1" :step="0.01" />
+    <SliderRow label="花朵反光强度" v-model="f.specular" :min="0" :max="2" :step="0.01" />
+    <SliderRow label="花朵反光锐度" v-model="f.specularShininess" :min="2" :max="120" :step="1" />
+    <ColorRow label="花朵反光颜色" v-model="f.specularColor" />
+    <SliderRow label="花朵散光强度" v-model="f.scatter" :min="0" :max="1.5" :step="0.01" />
+    <SliderRow label="花朵散光边缘锐度" v-model="f.scatterPower" :min="0.5" :max="8" :step="0.1" />
     <SliderRow label="卡片比例 (宽/高)" v-model="f.cardAspect" :min="0.3" :max="2.5" :step="0.02" />
     <div class="fte-open">
       <button class="btn small" @click="onFitTexture">📐 适配贴图尺寸</button>
@@ -92,6 +99,8 @@
 
   <Section title="落花" hint="Falling">
     <ToggleRow label="启用落花" v-model="ff.enabled" hint="参照落叶: 从花冠飘落的花朵 (贴图跟随花朵)" />
+    <ToggleRow label="继承花朵光照" v-model="ff.inheritFlowerMat"
+      hint="落花继承花朵的自发光/反光/散光 (默认开)" />
     <SliderRow label="落花数量" v-model="ff.count" :min="10" :max="600" :step="10" />
     <SliderRow label="落花大小" v-model="ff.size" :min="0.1" :max="1.5" :step="0.05" />
     <SliderRow label="飘落速度" v-model="ff.speed" :min="0.1" :max="3" :step="0.05" />
@@ -102,6 +111,8 @@
 
   <Section title="落花堆积" hint="Litter" :default-collapsed="true">
     <ToggleRow label="启用落花堆积" v-model="fl.enabled" hint="地面上的落花 (参照落叶堆积)" />
+    <ToggleRow label="继承花朵光照" v-model="fl.inheritFlowerMat"
+      hint="落花堆继承花朵的自发光/反光/散光 (默认开)" />
     <SliderRow label="落花堆积数量" v-model="fl.count" :min="20" :max="1200" :step="20" />
     <SliderRow label="落花堆积范围" v-model="fl.radius" :min="0.2" :max="3" :step="0.05" />
     <SliderRow label="落花堆积大小" v-model="fl.size" :min="0.1" :max="1.2" :step="0.02" />
@@ -121,6 +132,7 @@ import SelectRow from '../ui/SelectRow.vue'
 import TextureRow from '../ui/TextureRow.vue'
 import TexturePad from '../ui/TexturePad.vue'
 import FlowerTextureEditor from './FlowerTextureEditor.vue'
+import MaterialPreview from './MaterialPreview.vue'
 import { state, randomFlowerCard, fitFlowerCardToTexture } from '../../store/treeStore.js'
 import { LEAF_CARDS, LEAF_CARD_BATCHES, LEAF_CARD_BATCH_NAMES, leafCardRows, leafCardsFor } from '../../core/leafCards.generated.js'
 import { LEAF_SHAPE_KEYS } from '../../core/leaf.js'

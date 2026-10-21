@@ -54,8 +54,11 @@ import ParamTip from './components/ParamTip.vue'
 import {
   state, randomizeSeed, setSeed, doAutoGenerate, sceneApi, pushUndo, toggleNodePanel,
 } from './store/treeStore.js'
+import { ensureFeatureDefaults } from './core/params.js'
 
 const p = state.params
+// 兼容 HMR/旧会话：补齐后加的继承开关（默认开启），避免页面停在旧参数结构
+ensureFeatureDefaults(p)
 const ready = computed(() => state.ready)
 
 /* 线框展示 (展示三角面): 顶栏按钮 / W 键 / 场景页下拉三处共用 */
@@ -122,6 +125,8 @@ function onKeydown(e) {
   }
 }
 
-onMounted(() => window.addEventListener('keydown', onKeydown))
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
+})
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>

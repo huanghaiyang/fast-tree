@@ -229,19 +229,19 @@ export function buildTree(params, options = {}) {
   /* ------------------------------------------------------------------ */
   /* 叶片                                                                */
   /* ------------------------------------------------------------------ */
-  const spawnLeaves = (frames, level, branchWind, parentSlot, opts = {}) => {
+  const spawnLeaves = (frames, level, branchWind, parentSlot) => {
     // 花朵独立: 即使树叶关闭, 也要跑位置采集 (否则花朵没有附着点)
     if ((!L.enabled && !FL.enabled) || leafCount >= maxLeaves) return
     // 记录这条可开花的枝条: 花朵用自己的 perBranch/clusterCount/startT/endT 采样
-    if (flowerAcc && opts.flower !== false) {
-      flowerBranches.push({ frames, level, wind1: branchWind, trunkWrap: !!opts.trunkWrap })
-    }
+    if (flowerAcc) flowerBranches.push({ frames, level, wind1: branchWind })
     const rng = leafRng
     const perBranch = Math.max(1, Math.round(L.perBranch))
     const clusterCount = Math.max(1, Math.round(L.clusterCount))
     const tA = Math.min(L.startT, L.endT)
     const tB = Math.max(L.startT, L.endT)
-    const phyllo = (L.phyllotaxis === undefined ? 137.5 : L.phyllotaxis) * DEG
+    const phyllo = L.branchWrap
+      ? (Math.max(0.1, Number(L.branchWrapTurns) || 2) * Math.PI * 2) / perBranch
+      : (L.phyllotaxis === undefined ? 137.5 : L.phyllotaxis) * DEG
     // 该枝条的叶节点 (惰性创建: 真的长出叶子才登记)
     let leafSlot = -1
     const leafStart = leafCount
@@ -669,43 +669,6 @@ export function buildTree(params, options = {}) {
   })
   branchCount++
 
-  /* ---- 树干环绕式叶/花 ------------------------------------------------ */
-  // 用树干表面的一串采样帧喂给同一个 spawnLeaves: 叶簇按
-  // i*137.5° 的叶序绕干分布, 自然形成螺旋环绕; 花朵用独立帧列表。
-  const makeWrapFrames = (startT, endT, count) => {
-    const n = Math.max(2, Math.round(count || 16))
-    const a = Math.min(0.98, Math.max(0.01, Number(startT) || 0.15))
-    const b = Math.min(0.995, Math.max(a + 0.01, Number(endT) || 0.8))
-    const out = []
-    for (let i = 0; i < n; i++) {
-      const t = n === 1 ? a : a + (b - a) * (i / (n - 1))
-      const fr = sampleFrame(trunkFrames, t)
-      if (fr) out.push({ ...fr, t: n === 1 ? 0.5 : i / (n - 1) })
-    }
-    return out
-  }
-  if (L.enabled && L.trunkWrap) {
-    const frames = makeWrapFrames(L.trunkStartT, L.trunkEndT, L.trunkCount)
-    if (frames.length >= 2) {
-      const saved = { perBranch: L.perBranch, startT: L.startT, endT: L.endT }
-      L.perBranch = frames.length
-      L.startT = 0
-      L.endT = 1
-      spawnLeaves(frames, 0, 0.16, trunkSlot, { trunkWrap: true, flower: false })
-      L.perBranch = saved.perBranch
-      L.startT = saved.startT
-      L.endT = saved.endT
-    }
-  }
-  if (flowerAcc && FL.enabled && FL.trunkWrap) {
-    const frames = makeWrapFrames(FL.trunkStartT, FL.trunkEndT, FL.trunkCount)
-    if (frames.length >= 2) {
-      flowerBranches.push({ frames, level: 0, wind1: 0.16, trunkWrap: true })
-    }
-  }
-
-
-
   /* ------------------------------------------------------------------ */
   /* 树根                                                                */
   /* ------------------------------------------------------------------ */
@@ -1074,15 +1037,11 @@ export function buildTree(params, options = {}) {
     const upVec = new THREE.Vector3(0, 1, 0)
     const fRng = makeRng(P.seed, 'flowers')
     for (const br of flowerBranches) {
-      const isWrap = !!br.trunkWrap
-      if (isWrap && !FL.trunkWrap) continue
-      if (!isWrap) {
-        const lvIdx = Math.max(0, Math.min((levelsOn ? levelsOn.length : 5) - 1, (br.level || 1) - 1))
-        if (levelsOn && levelsOn[lvIdx] === false) continue
-      }
-      const entryPer = isWrap ? Math.max(1, Math.round(FL.trunkCount || 16)) : perBranch
-      const entryTA = isWrap ? 0 : tA
-      const entryTB = isWrap ? 1 : tB
+      const lvIdx = Math.max(0, Math.min((levelsOn ? levelsOn.length : 5) - 1, (br.level || 1) - 1))
+      if (levelsOn && levelsOn[lvIdx] === false) continue
+      const entryPer = perBranch
+      const entryTA = tA
+      const entryTB = tB
       for (let i = 0; i < entryPer; i++) {
         if (!fRng.chance(density)) continue
         const u = (i + 0.5) / entryPer
@@ -1092,17 +1051,18 @@ export function buildTree(params, options = {}) {
         if (!fr) continue
         const dir = fr.dir.clone()
         const perp = anyPerp(dir)
-        const azimuthBase = i * 137.5 * DEG + fRng.range(0, Math.PI * 2) + (fr.profileRoll || 0)
+        const azimuthBase = i * (FL.branchWrap
+          ? (Math.max(0.1, Number(FL.branchWrapTurns) || 2) * Math.PI * 2) / entryPer
+          : 137.5 * DEG) + fRng.range(0, Math.PI * 2) + (fr.profileRoll || 0)
         for (let c = 0; c < perCluster; c++) {
           const tpl = fTpls[Math.floor(fRng.next() * fTpls.length) % fTpls.length]
           const jitter = 1 + fRng.signed() * (FL.colorVariance === undefined ? 0.16 : FL.colorVariance) * 0.3
           const sv = fSize * (1 + fRng.signed() * sizeVar)
           const scale = new THREE.Vector3(sv * fWidth, sv, sv * fWidth)
-          // 位置: 枝条表面 + 簇内散布; 树干环绕时从树干表面向外
+          // 位置: 枝条表面 + 簇内散布
           const az = azimuthBase + (c / perCluster) * Math.PI * 2
           const radial = perp.clone().multiplyScalar(Math.cos(az)).add(new THREE.Vector3().crossVectors(dir, perp).multiplyScalar(Math.sin(az)))
-          const surfaceR = isWrap ? fr.radius : 0
-          const pos = fr.pos.clone().add(radial.multiplyScalar(surfaceR + clusterR * fRng.range(0.2, 1)))
+          const pos = fr.pos.clone().add(radial.multiplyScalar(clusterR * fRng.range(0.2, 1)))
           // 朝向: 花轴 = 枝条方向 -> faceUp 朝上 -> 加俯仰 -> 下垂 -> 自转
           const by = dir.clone()
           if (FL.faceUp !== false) by.lerp(upVec, 0.45).normalize()
@@ -1215,7 +1175,6 @@ const NODE_GROUPS = [
   { id: 'branch-L3', name: '树枝 L3', icon: '🌿', type: 'bark', level: 3 },
   { id: 'branch-L4', name: '树枝 L4', icon: '🌿', type: 'bark', level: 4 },
   { id: 'branch-L5', name: '树枝 L5', icon: '🌿', type: 'bark', level: 5 },
-  { id: 'leaves-L0', name: '树叶 L0 (树干)', icon: '🍃', type: 'leaf', level: 0 },
   { id: 'leaves-L1', name: '树叶 L1', icon: '🍃', type: 'leaf', level: 1 },
   { id: 'leaves-L2', name: '树叶 L2', icon: '🍃', type: 'leaf', level: 2 },
   { id: 'leaves-L3', name: '树叶 L3', icon: '🍃', type: 'leaf', level: 3 },

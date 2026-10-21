@@ -3,6 +3,7 @@
  */
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { TransformControls } from 'three/addons/controls/TransformControls.js'
 import { buildTree } from './treeBuilder.js'
 import {
   createSharedUniforms, createBarkMaterial, createLeafMaterial, createFlowerMaterial,
@@ -11,7 +12,7 @@ import {
 import { exportGLB, exportOBJ, exportScreenshot } from './exporter.js'
 import { buildParticlePoints, updateParticleMaterial } from './particles.js'
 import { buildFallingLeaves, updateFallingLeaves, fallRebuildKey } from './fallingLeaves.js'
-import { buildLeafLitter, litterRebuildKey } from './litter.js'
+import { buildLeafLitter, litterRebuildKey, updateLitterEffects } from './litter.js'
 import { generateImpostor } from './impostor.js'
 import { buildFrustumChunks, hideSourceMesh } from './renderChunks.js'
 import { buildGLBPreview, buildOBJPreview, buildPNGPreview } from './exportPreview.js'
@@ -87,6 +88,45 @@ export class TreeScene {
     this.controls.maxPolarAngle = Math.PI
     this.controls.minDistance = 0.5
     this.controls.maxDistance = 400
+
+    // --- 单枝可视化变换轴 (Blender 风格) ---
+    // 变换对象是一个放在枝基的空 Object3D; 拖动箭头/旋转环时
+    // 约 80ms 节流提交到 params.branchEdits 并实时重建。
+    this.skeleton = null
+    this.branchGizmo = { show: false, index: null, mode: 'translate', space: 'world' }
+    this.branchPivot = new THREE.Object3D()
+    this.branchPivot.name = 'BranchTransformPivot'
+    this.scene.add(this.branchPivot)
+    this.transformControls = new TransformControls(this.camera, renderer.domElement)
+    this.transformControls.setSize(0.78)
+    this.transformControls.setMode('translate')
+    this.transformControls.setSpace('world')
+    this.transformHelper = this.transformControls.getHelper
+      ? this.transformControls.getHelper()
+      : this.transformControls
+    this.transformHelper.visible = false
+    this.scene.add(this.transformHelper)
+    this._gizmoSyncing = false
+    this._gizmoDirty = false
+    this._gizmoDragging = false
+    this._gizmoCommitTimer = 0
+    this._gizmoBaseQuat = new THREE.Quaternion()
+    this.transformControls.addEventListener('dragging-changed', (e) => {
+      this.controls.enabled = !e.value
+      this._gizmoDragging = !!e.value
+      if (!e.value) this._commitBranchGizmo()
+    })
+    this.transformControls.addEventListener('objectChange', () => {
+      if (this._gizmoSyncing) return
+      this._gizmoDirty = true
+      // 拖动过程中实时提交 (约 80ms 一次): 几何 watcher 会重建树，
+      // 但重建时不会重置仍处于拖动中的轴, 所以轴和鼠标可以继续跟手。
+      if (!this._gizmoDragging || this._gizmoCommitTimer) return
+      this._gizmoCommitTimer = setTimeout(() => {
+        this._gizmoCommitTimer = 0
+        if (this._gizmoDragging) this._commitBranchGizmo(false)
+      }, 80)
+    })
 
     // --- 天空穹顶 (跟随相机的渐变球; 半径远小于远裁剪面, 避免被裁出硬边) ---
     this.skyMat = new THREE.ShaderMaterial({
@@ -363,7 +403,10 @@ export class TreeScene {
     // 模型节点表 (节点树面板 + 选中高亮)
     this.nodes = result.nodes || []
     this.groups = result.groups || []
+    this.skeleton = result.skeleton || null
     this._updateSkeletonOverlay(result.skeleton)
+    // 重建后把变换轴重新贴到当前选中枝的最新枝基
+    if (this.branchGizmo.show) this._syncBranchGizmo()
 
     if (opts.frameCamera !== false) this.frameCamera()
     this.lodInfo = [{ level: 0, triangles: this._meshTriangles(this.barkMesh, this.leafMesh, this.flowerMesh), leaves: this.stats.leaves || 0 }]
@@ -458,6 +501,106 @@ export class TreeScene {
     }
     this.skeletonGroup = group
     this.treeGroup.add(group)
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 单枝可视化变换轴 (Blender 风格 XYZ 轴/旋转环)                         */
+  /* ------------------------------------------------------------------ */
+  setBranchTransformGizmo(opts = {}) {
+    if (!this.transformControls) return
+    if (opts.index !== undefined) this.branchGizmo.index = opts.index
+    if (opts.mode) this.branchGizmo.mode = opts.mode
+    if (opts.space) this.branchGizmo.space = opts.space
+    if (opts.show !== undefined) this.branchGizmo.show = !!opts.show
+    if (!this.branchGizmo.show || this.branchGizmo.index === null || this.branchGizmo.index === undefined) {
+      this._hideBranchGizmo()
+      return
+    }
+    this._syncBranchGizmo()
+  }
+
+  _hideBranchGizmo() {
+    if (!this.transformControls) return
+    this.transformControls.detach()
+    if (this.transformHelper) this.transformHelper.visible = false
+    this._gizmoDirty = false
+  }
+
+  _syncBranchGizmo() {
+    if (!this.skeleton || !this.branchGizmo.show) return
+    // 拖动期间重建树时不要重置代理/控制器, 否则拖拽会被打断。
+    if (this._gizmoDragging) return
+    const idx = this.branchGizmo.index
+    const branch = this.skeleton.branches && this.skeleton.branches[idx]
+    if (!branch || !branch.frames || !branch.frames.length) {
+      this._hideBranchGizmo()
+      return
+    }
+    const edit = (this.lastParams && this.lastParams.branchEdits && this.lastParams.branchEdits[idx]) || {}
+    const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0)
+    const move = new THREE.Vector3(num(edit.moveX), num(edit.moveY), num(edit.moveZ))
+    // 骨架里的枝基已经是"编辑后"的位置: 原始枝基 = 当前枝基 - move。
+    const finalBase = branch.frames[0].pos
+    const originalBase = finalBase.clone().sub(move)
+    const rot = new THREE.Euler(
+      num(edit.rotX) * Math.PI / 180,
+      num(edit.rotY) * Math.PI / 180,
+      num(edit.rotZ) * Math.PI / 180,
+      'XYZ',
+    )
+    const qEdit = new THREE.Quaternion().setFromEuler(rot)
+    const dir = branch.frames[0].dir
+    if (!dir || dir.lengthSq() < 1e-10) {
+      this._hideBranchGizmo()
+      return
+    }
+    // 骨架方向已经含 qEdit; 先反解出原始方向, 保证旋转轴/局部轴不会把
+    // 已有的 rotX/Y/Z 再叠一次。
+    const baseDir = dir.clone().applyQuaternion(qEdit.clone().invert()).normalize()
+    const baseQ = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), baseDir)
+    const finalQ = qEdit.clone().multiply(baseQ).normalize()
+    this._gizmoBaseQuat.copy(baseQ)
+    this._gizmoOriginalBase = originalBase
+
+    this._gizmoSyncing = true
+    this.branchPivot.position.copy(finalBase)
+    this.branchPivot.quaternion.copy(finalQ)
+    this.branchPivot.updateMatrixWorld(true)
+    this.transformControls.setMode(this.branchGizmo.mode)
+    this.transformControls.setSpace(this.branchGizmo.space)
+    this.transformControls.attach(this.branchPivot)
+    if (this.transformHelper) this.transformHelper.visible = true
+    this._gizmoSyncing = false
+    this._gizmoDirty = false
+  }
+
+  _commitBranchGizmo(final = true) {
+    if (!this._gizmoDirty || !this.skeleton || this.branchGizmo.index === null) return
+    if (final && this._gizmoCommitTimer) {
+      clearTimeout(this._gizmoCommitTimer)
+      this._gizmoCommitTimer = 0
+    }
+    const idx = this.branchGizmo.index
+    const branch = this.skeleton.branches && this.skeleton.branches[idx]
+    if (!branch) return
+    const patch = {}
+    if (this.branchGizmo.mode === 'translate') {
+      const base = this._gizmoOriginalBase || (branch.frames[0].pos.clone())
+      patch.moveX = +(this.branchPivot.position.x - base.x).toFixed(5)
+      patch.moveY = +(this.branchPivot.position.y - base.y).toFixed(5)
+      patch.moveZ = +(this.branchPivot.position.z - base.z).toFixed(5)
+    } else if (this.branchGizmo.mode === 'rotate') {
+      const qEdit = this.branchPivot.quaternion.clone()
+        .multiply(this._gizmoBaseQuat.clone().invert())
+      const e = new THREE.Euler().setFromQuaternion(qEdit, 'XYZ')
+      patch.rotX = +(e.x * 180 / Math.PI).toFixed(3)
+      patch.rotY = +(e.y * 180 / Math.PI).toFixed(3)
+      patch.rotZ = +(e.z * 180 / Math.PI).toFixed(3)
+    }
+    this._gizmoDirty = false
+    if (Object.keys(patch).length && this.callbacks.onBranchEdit) {
+      this.callbacks.onBranchEdit({ index: idx, patch })
+    }
   }
 
   /* ------------------------------------------------------------------ */
@@ -954,7 +1097,8 @@ export class TreeScene {
     const geo = this.leafMesh.geometry
     if (!geo.boundingBox) geo.computeBoundingBox()
     const followMap = params.leafMat && params.leafMat.texture ? (this.materials.leaf.map || null) : null
-    this.fallMesh = buildFallingLeaves(geo, params, this.uniforms, followMap, geo.boundingBox)
+    const adapted = { ...params, effectSource: 'leaf', effectInherit: params.fall.inheritLeafMat !== false }
+    this.fallMesh = buildFallingLeaves(geo, adapted, this.uniforms, followMap, geo.boundingBox)
     this.fallMesh.renderOrder = 2
     this.treeGroup.add(this.fallMesh)
   }
@@ -966,13 +1110,14 @@ export class TreeScene {
       return
     }
     // 贴图卡片/数量/宽高比变化时必须重建 (否则换贴图不生效 -> 看起来像"跟随树叶失效")
-    const key = fallRebuildKey(params)
+    const adapted = { ...params, effectSource: 'leaf', effectInherit: params.fall.inheritLeafMat !== false }
+    const key = fallRebuildKey(adapted)
     if (!this.fallMesh || key !== this._fallKey) {
       this._fallKey = key
       this.rebuildFall(params)
       return
     }
-    updateFallingLeaves(this.fallMesh, params)
+    updateFallingLeaves(this.fallMesh, adapted)
   }
 
   /* ------------------------------------------------------------------ */
@@ -985,6 +1130,8 @@ export class TreeScene {
     return {
       ...params,
       fall: { ...params.fall, ...FF },
+      effectSource: 'flower',
+      effectInherit: FF.inheritFlowerMat !== false,
       // 让重建键/取贴图都跟着"花朵贴图"走
       leafMat: { ...params.leafMat, texture: F.texture || '' },
     }
@@ -995,6 +1142,8 @@ export class TreeScene {
     return {
       ...params,
       litter: { ...params.litter, ...FL2 },
+      effectSource: 'flower',
+      effectInherit: FL2.inheritFlowerMat !== false,
       leafMat: { ...params.leafMat, texture: F.texture || '' },
     }
   }
@@ -1069,6 +1218,7 @@ export class TreeScene {
       return
     }
     this.flowerLitterMesh.visible = true
+    updateLitterEffects(this.flowerLitterMesh, adapted)
   }
 
   /* ------------------------------------------------------------------ */
@@ -1087,7 +1237,8 @@ export class TreeScene {
     const leafGeo = this.leafMesh ? this.leafMesh.geometry : null
     if (leafGeo && !leafGeo.boundingBox) leafGeo.computeBoundingBox()
     const followMap = params.leafMat && params.leafMat.texture ? (this.materials.leaf.map || null) : null
-    this.litterMesh = buildLeafLitter(params, followMap, leafGeo ? leafGeo.boundingBox : null)
+    const adapted = { ...params, effectSource: 'leaf', effectInherit: params.litter.inheritLeafMat !== false }
+    this.litterMesh = buildLeafLitter(adapted, followMap, leafGeo ? leafGeo.boundingBox : null)
     this.litterMesh.renderOrder = 1
     this.treeGroup.add(this.litterMesh)
   }
@@ -1098,13 +1249,15 @@ export class TreeScene {
       if (this.litterMesh) this.litterMesh.visible = false
       return
     }
-    const key = litterRebuildKey(params)
+    const adapted = { ...params, effectSource: 'leaf', effectInherit: params.litter.inheritLeafMat !== false }
+    const key = litterRebuildKey(adapted)
     if (!this.litterMesh || key !== this._litterKey) {
       this._litterKey = key
       this.rebuildLitter(params)
       return
     }
     this.litterMesh.visible = true
+    updateLitterEffects(this.litterMesh, adapted)
   }
 
   /* ------------------------------------------------------------------ */
@@ -1384,6 +1537,23 @@ export class TreeScene {
     cancelAnimationFrame(this._raf)
     this._ro.disconnect()
     this.controls.dispose()
+    if (this._gizmoCommitTimer) {
+      clearTimeout(this._gizmoCommitTimer)
+      this._gizmoCommitTimer = 0
+    }
+    if (this.transformControls) {
+      this.transformControls.detach()
+      this.transformControls.dispose()
+      this.transformControls = null
+    }
+    if (this.transformHelper) {
+      this.scene.remove(this.transformHelper)
+      this.transformHelper = null
+    }
+    if (this.branchPivot) {
+      this.scene.remove(this.branchPivot)
+      this.branchPivot = null
+    }
     this._disposeLods()
     this.barkMesh?.geometry.dispose()
     this.leafMesh?.geometry.dispose()

@@ -13,7 +13,8 @@
 import * as THREE from 'three'
 import { buildTree } from '../src/core/treeBuilder.js'
 import { defaultParams, cloneParams, GROUP_KEYS } from '../src/core/params.js'
-import { createSharedUniforms, createBarkMaterial, createLeafMaterial, updateMaterials, updateWindUniforms } from '../src/core/materials.js'
+import { createSharedUniforms, createBarkMaterial, createLeafMaterial, createFlowerMaterial, updateMaterials, updateWindUniforms } from '../src/core/materials.js'
+import { resolveLeafEffects } from '../src/core/leafEffects.js'
 
 /* ------------------------------------------------------------------ */
 /* 参数路径收集                                                        */
@@ -95,14 +96,10 @@ export const CONDITIONS = {
   'leaves.rollVariance': { 'leaves.cardMode': false },
   'leaves.faceUp': { 'leaves.cardMode': false },
   'leaves.width': { 'leaves.cardMode': false },
-  // 树干环绕叶/花: 子参数只在对应开关开启时生效
-  'leaves.trunkStartT': { 'leaves.trunkWrap': true },
-  'leaves.trunkEndT': { 'leaves.trunkWrap': true },
-  'leaves.trunkCount': { 'leaves.trunkWrap': true },
-  'flower.trunkWrap': { 'flower.enabled': true },
-  'flower.trunkStartT': { 'flower.enabled': true, 'flower.trunkWrap': true },
-  'flower.trunkEndT': { 'flower.enabled': true, 'flower.trunkWrap': true },
-  'flower.trunkCount': { 'flower.enabled': true, 'flower.trunkWrap': true },
+  // 树枝环绕: 圈数只在对应开关开启时生效
+  'leaves.branchWrapTurns': { 'leaves.branchWrap': true },
+  'flower.branchWrap': { 'flower.enabled': true },
+  'flower.branchWrapTurns': { 'flower.enabled': true, 'flower.branchWrap': true },
   'branches.level[0].starDepth': { 'branches.level[0].crossSection': 'star' },
   // 分叉子参数只有在"启用分叉"时才有意义 (默认树种没有分叉)
   'trunk.fork.count': { 'trunk.fork.enabled': true },
@@ -303,8 +300,9 @@ export function auditGeometry(baseParams = probeParams()) {
   const base = geometrySignature(baseParams)
   const results = []
   // bark.pipeline 切换的是几何管线（虽然字段放在 material 组的 bark 下）
-  const paths = collectPaths(baseParams).filter(({ path }) => path === 'bark.pipeline' ||
-    GROUP_KEYS.geometry.some((k) => path === k || path.startsWith(k + '.')))
+  const paths = collectPaths(baseParams).filter(({ path }) => !FLOWER_MATERIAL_PATHS.has(path) &&
+    (path === 'bark.pipeline' ||
+      GROUP_KEYS.geometry.some((k) => path === k || path.startsWith(k + '.'))))
   for (const { path, value } of paths) {
     const candidates = perturbations(path, value)
     let changed = false
@@ -345,6 +343,12 @@ function perturbValue(v) {
 /* 材质审计                                                            */
 /* ------------------------------------------------------------------ */
 
+const FLOWER_MATERIAL_PATHS = new Set([
+  'flower.emissive', 'flower.emissiveColor',
+  'flower.specular', 'flower.specularShininess', 'flower.specularColor',
+  'flower.scatter', 'flower.scatterPower', 'flower.translucency',
+])
+
 /** 贴图签名: 区分"有没有贴图"以及"程序化贴图内容是否变了" (浏览器环境才有 canvas) */
 function texSig(tex) {
   if (!tex) return 'none'
@@ -371,7 +375,8 @@ function materialSignature(params) {
   const shared = createSharedUniforms()
   const bark = createBarkMaterial(params, shared)
   const leaf = createLeafMaterial(params, shared)
-  updateMaterials({ bark, leaf, uniforms: shared }, params)
+  const flower = createFlowerMaterial(params, shared)
+  updateMaterials({ bark, leaf, flower, uniforms: shared }, params)
   const un = (m, k) => {
     const u = m.userData.uniforms[k]
     if (!u) return 'undefined'
@@ -411,7 +416,12 @@ function materialSignature(params) {
     typeof m.onBeforeCompile === 'function' ? 'obc' : 'none',
     typeof m.customProgramCacheKey === 'function' ? m.customProgramCacheKey() : '',
   ].join(':')
-  return [sig(bark, 'bark'), sig(leaf, 'leaf')].join('||')
+  return [sig(bark, 'bark'), sig(leaf, 'leaf'), sig(flower, 'flower'),
+    JSON.stringify(resolveLeafEffects(params, 'leaf', params.fall.inheritLeafMat !== false)),
+    JSON.stringify(resolveLeafEffects(params, 'leaf', params.litter.inheritLeafMat !== false)),
+    JSON.stringify(resolveLeafEffects(params, 'flower', params.flowerFall.inheritFlowerMat !== false)),
+    JSON.stringify(resolveLeafEffects(params, 'flower', params.flowerLitter.inheritFlowerMat !== false)),
+  ].join('||')
 }
 
 export function auditMaterial(baseParams = defaultParams()) {
@@ -420,6 +430,10 @@ export function auditMaterial(baseParams = defaultParams()) {
   // bark.pipeline 是几何管线开关, 由 auditGeometry 负责 (材质签名看不到它)
   const paths = collectPaths(baseParams).filter(({ path }) => path !== 'bark.pipeline' &&
     GROUP_KEYS.material.some((k) => path === k || path.startsWith(k + '.')))
+  // 花朵材质字段和花朵几何共用一个 flower 对象；几何审计跳过它们，材质审计补上。
+  for (const path of FLOWER_MATERIAL_PATHS) {
+    if (!paths.some((p) => p.path === path)) paths.push({ path, value: getAt(baseParams, path) })
+  }
   for (const { path, value } of paths) {
     let changed = false
     let how = ''

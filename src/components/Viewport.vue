@@ -103,6 +103,12 @@ onMounted(() => {
     onGrowth: (v) => { state.params.growth.value = v },
     onModel: (m) => setNodeModel(m),
     onLod: (m) => { state.lodLevel = m.level; state.lodInfo = m.levels },
+    onBranchEdit: ({ index, patch }) => {
+      // 3D 变换轴释放后提交: 合并到该骨架分支的 branchEdits
+      if (!state.params.branchEdits) state.params.branchEdits = {}
+      const key = String(index)
+      state.params.branchEdits[key] = { ...(state.params.branchEdits[key] || {}), ...patch }
+    },
   })
 
   sceneApi.exportGLB = (name) => scene.exportGLB(name)
@@ -115,6 +121,7 @@ onMounted(() => {
   sceneApi.getWindScreenBasis = () => scene.getWindScreenBasis()
   sceneApi.getTwistScreen = (target, level) => (scene ? scene.projectTwistGuide(target, level) : null)
   sceneApi.setControlsEnabled = (v) => { if (scene) scene.controls.enabled = !!v }
+  sceneApi.setBranchTransformGizmo = (opts) => { if (scene) scene.setBranchTransformGizmo(opts) }
 sceneApi.makeImpostor = (opts) => scene.makeImpostor(opts)
 sceneApi.setImpostorModel = (res) => scene.setImpostorPreview(res)
   // 验证/脚本用的同步重建 (应用内重建走 rAF, 后台标签页会被节流)
