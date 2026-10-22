@@ -6,11 +6,63 @@
  *   geometry 变更 -> 重建几何体
  *   material 变更 -> 只更新材质 / uniform (无需重建)
  *   wind     变更 -> 只更新风场 uniform
+ *
+ * 作用: 定义整棵树的"参数树"形状 (defaultParams), 以及围绕它的三个基本操作:
+ *   cloneParams   深拷贝 (参数树是纯 JSON, 用 JSON 往返实现)
+ *   mergeParams   深合并一个"补丁" (预设/导入用), 只覆盖目标里已存在的键
+ *   normalizeParams 补齐结构 (导入旧版本 JSON 时保证字段齐全、数组长度对)
+ * 输入 / 输出: 全是纯数据对象, 没有副作用; 三个函数都**返回新对象**, 不修改入参。
+ * 与其他模块的关系:
+ *   species.js / presets.js 用 mergeParams 把"物种形态补丁"盖到 defaultParams 上
+ *   store/treeStore.js      持有唯一一份 params, 改动后按 serializeGroup 分组派发重建
+ *   各生成器 (treeBuilder / leaf / fruit / materials / sceneManager) 只读不写
+ * 单位约定 (整套参数统一):
+ *   长度 = 米; 角度参数在参数树里**多数是度** (pitch/leanDirection/fork.angle…),
+ *   少数明确标注为弧度的 (curve/gravity/twist/lean/knotAngle) 是弧度;
+ *   比例类参数是 0..1 归一化或"相对父级"的倍率 (如 lengthRatio / radiusRatio)。
+ * 确定性约定: 参数树里没有随机量, 随机全靠 seed 在生成器内部由 rng.js 推导,
+ *   因此同一份 params + 同一 seed 必然生成同一棵树。
  */
 
+/** 树枝最大层级数 (树干算第 0 层, 所以最多 5 级枝条 = L1..L5)。多处硬编码夹取都用它 */
 export const MAX_LEVELS = 5
 
-/** 枝条层级默认值 (按层级递增: 越细碎、越柔) */
+/**
+ * 枝条层级默认值 (按层级递增: 越细碎、越柔)。
+ *
+ * 返回的是 L(i) 这一层"一根枝条"的完整配置。字段含义 (逐级递增的规律见下方表):
+ *   enabled        该层是否参与生成 (false = 整层跳过, 但 level 数组长度仍保持 MAX_LEVELS)
+ *   count          每根父枝上生成几根; 总枝量是各层连乘, 所以这一项最危险
+ *   pitch          与父枝轴线的夹角 (度); 越深层越接近 40°, 枝条越平展
+ *   pitchVariance  夹角随机幅度 (度, ±)
+ *   lengthRatio    长度 = 父枝长度 × 该值 (相对值, 不是米)
+ *   lengthVariance 各枝长度的随机偏差 (0..1 的比例)
+ *   radiusRatio    基部半径 = 父枝在该处的半径 × 该值 (相对值)
+ *   radiusVariance 各枝半径的随机偏差 (比例)
+ *   startT/endT    在父枝上的分布区间, 0 = 父枝基部, 1 = 父枝梢部
+ *   startJitter    每个枝条起始位置的随机偏移量 (避免整齐的梳齿状排列)
+ *   taper          锥度 = 梢部半径 ÷ 基部半径
+ *   radiusCurve    半径沿枝长的衰减曲线指数 (>1 = 基部更粗、梢部骤细)
+ *   curve          枝条自身的弯曲弧度 (弧度制)
+ *   curveVariance  弯曲量的随机幅度
+ *   gravity        重力弯曲 (弧度, 负值下垂); 深层为负 = 末梢自然下垂
+ *   twist          沿枝长的截面扭转量 (弧度)
+ *   phyllotaxis    相邻枝条绕父枝的方位角差 (度); 137.5 = 黄金角
+ *   spread         方位角的随机离散程度 (0 = 严格按叶序角)
+ *   upBias         额外向上 (趋光) 偏置, 度
+ *   segments       沿长度的分段数 (越多越平滑, 顶点也越多)
+ *   radialSegments 截面周向边数 (受 LOD 的 barkDetail 整体缩放)
+ *   crossSection   截面形状: 'round' 圆 / 星形 / 方形 (省面数)
+ *   starDepth      星形截面的棱深 (只在 crossSection 为星形时生效)
+ *   windGain       该级枝条的柔度增益, 累加成顶点的 aWind (越大摆得越凶)
+ *
+ * 消费方: treeBuilder.js 递归生长时读取 (几何骨架);
+ *         barkSkin / speedtreeBark 读取 segments / radialSegments / crossSection 定拓扑;
+ *         materials 的风场着色器读取 windGain。
+ *
+ * @param {number} i 层下标 (0 = L1 主枝); 越界时夹到最后一层, 不会返回 undefined
+ * @returns {object} 该层的默认配置, **深拷贝** (调用方可随意修改, 不会污染这张表)
+ */
 export function defaultLevel(i) {
   const table = [
     // L1 主枝
@@ -70,6 +122,20 @@ export function defaultLevel(i) {
 /**
  * 兼容旧会话/旧 JSON：补齐后加的功能开关默认值。
  * HMR 不会重新执行 normalizeParams，已打开的页面需要主动调用一次。
+ *
+ * 为什么需要单独一个函数: localStorage 里的会话与用户导出的 JSON 都是"当时那一刻"
+ * 的参数树, 后加的分组 (落叶/落叶堆积/落花/落花堆积) 在这些旧数据里根本不存在,
+ * 直接读 params.fall.count 会抛 TypeError。normalizeParams 能补全整棵树,
+ * 但它必须走 mergeParams 的深合并 (较慢), 而 HMR 场景下参数对象已经在内存里,
+ * 只需要把"缺的顶层键"补上, 所以提供一个轻量版。
+ *
+ * 行为:
+ *   - 只补**顶层缺失键** (undefined), 已存在的值一律不动 (包括用户显式设成 null 的)
+ *   - 就地修改 params 并返回同一个引用 (与 deep merge 返回新对象不同)
+ *   - 只覆盖 6 个后来新增的分组; 更早的字段由参数树天然保证存在
+ *
+ * @param {object} params 参数树 (可为 null/undefined, 此时原样返回)
+ * @returns {object} 同一个 params 引用
  */
 export function ensureFeatureDefaults(params) {
   if (!params) return params
@@ -89,15 +155,46 @@ export function ensureFeatureDefaults(params) {
   return params
 }
 
+/**
+ * 全量默认参数树 (即 schema 定义 + 出厂默认值, 两者合一)。
+ *
+ * 顶层分组一览 (按重建代价从高到低):
+ *   seed / auto / classify   元数据: 种子、混乱度、树种/阶段/季节标签 (不直接参与几何)
+ *   trunk                    树干: 高度/半径/锥度/弯曲/节瘤/分叉 (含 fork 子对象)
+ *   roots                    树根
+ *   branches                 树枝: levels(层级数) + level[5] 每层配置 + 全局修正
+ *   leaves / flower / fruit  植被: 叶片 / 花朵 / 果实
+ *   fall / litter            落叶与地面落叶堆 (纯特效, 不改几何拓扑)
+ *   flowerFall / flowerLitter 落花与落花堆 (与落叶同构)
+ *   particles                从叶片位置发射的粒子
+ *   branchEdits              单枝手工编辑 (key = 骨架分支下标)
+ *   bark / leafMat / custom  材质: 树皮 / 树叶 / 自定义 GLSL
+ *   wind / growth            动画: 风场与生长 (纯 uniform, 不重建几何)
+ *   exportOptions / scene    导出开关 / 场景灯光
+ *   lod / ao                 性能 (动态 LOD) 与顶点色环境光遮蔽
+ *
+ * 约定: 每次调用都新建整棵树 (包括嵌套对象与数组), 所以调用方可以放心改返回值;
+ * 不要把它缓存成模块级常量, 否则会被 mergeParams / 面板就地改坏。
+ *
+ * @returns {object} 一份全新的、可自由修改的完整参数树
+ */
 export function defaultParams() {
   return {
+    // 出厂种子: 决定"打开页面第一眼看到的那棵树"; 换种子 = 换同种群的另一个个体
     seed: 20240607,
+    // auto 只是"自动生成面板的状态记忆" (混乱度滑杆上次停在哪), 不直接影响几何
     auto: { chaos: 0.6 },
 
     // ---------------- 分类 (树种 / 生长阶段 / 季节) ----------------
-    // 这三个只作为"预设元数据"记录在参数里 (方便 JSON 复现), 由 store 组合出实际参数
+    // 这三个只作为"预设元数据"记录在参数里 (方便 JSON 复现), 由 store 组合出实际参数。
+    // 也就是说: 改这里**不会**改变已经展开进各分组的形态, 真正生效的是 species.composeTree()。
     classify: { species: 'oak', stage: 'mature', season: 'summer' },
 
+    /* 树干 = 第 0 层, 也是所有长度/半径的基准:
+     * 树枝长度按 lengthRatio 相对它缩放, 半径按 radiusRatio 相对父枝半径缩放。
+     * 单位: height / baseRadius / flareHeight 相关的是米; curve / lean / twist /
+     *       knotAngle 是弧度; leanDirection 是度; twistProfile 的 5 个点是度。
+     * 几何由 treeBuilder.js 生成; segments / radialSegments 直接决定顶点数。 */
     // ---------------- 树干 ----------------
     trunk: {
       height: 9.0,
@@ -138,6 +235,9 @@ export function defaultParams() {
       },
     },
 
+    /* 树根: 从树干基部向外下方生长的锥形管, 独立于树干几何 (单独节点)。
+     * pitch > 90° 表示向下扎; sink 控制沿长度继续下弯的量;
+     * autoStagger 用来解决"多根方位重叠时窗口挤在同一高度"的观感问题。 */
     // ---------------- 树根 ----------------
     roots: {
       enabled: false,
@@ -155,6 +255,10 @@ export function defaultParams() {
       autoStagger: true,   // 自动把方位重叠的根错开到不同高度, 避免窗口挤在一起
     },
 
+    /* 树枝: levels 是有效层数 (1..MAX_LEVELS), level[i] 是第 i+1 层的配置 (字段见 defaultLevel)。
+     * 下面几个 *Scale 是全局乘算修正 —— 想整体压一下形状时改这里, 不必逐层调;
+     * twistProfile 是视口句柄编辑出来的 5 控制点扭转曲线 (度), 叠加在每层 twist 之上。
+     * 注意: level 数组长度恒为 MAX_LEVELS, 即使某层 enabled=false 也保留占位。 */
     // ---------------- 树枝 ----------------
     branches: {
       levels: 3,                              // 有效层级数 1..5
@@ -169,6 +273,13 @@ export function defaultParams() {
       twistProfile: [0, 0, 0, 0, 0],
     },
 
+    /* 树叶: 按"叶簇"挂在 branches.levels 指定的层上。
+     * 叶片总数 ≈ 每枝叶簇位置数 × 每簇叶片数 × 枝条数 —— 面数压力主要来自这里,
+     * 所以 species.js / presets.js 都有预算回缩逻辑来压这两个密度参数。
+     * levels[5] 是"每层枝条是否长叶"的开关, 与 branches.level[i].enabled 是两件事:
+     *   前者说"这层的枝上有没有叶子", 后者说"这层枝存不存在"。
+     * cardMode=true 时叶形轮廓来自贴图 alpha (照片级); shape 只在程序化模式下使用。
+     * 单位: size/叶柄 相关的长度是米; pitch/pitchVariance/rollVariance/modelRotation 是度。 */
     // ---------------- 树叶 ----------------
     leaves: {
       enabled: true,
@@ -210,6 +321,9 @@ export function defaultParams() {
       cardFold: 0.12,      // 卡片沿中脉的折叠
     },
 
+    /* 落叶: 每片都是真实叶片卡片, 全部合批成一个几何体, 翻滚/打旋/受风在顶点着色器里算,
+     * 所以改变 count 只影响一次绘制, 不增加 draw call。
+     * 纯特效: 不改树的几何; inheritLeafMat 决定是否跟随树叶材质的光照/自发光参数。 */
     // ---------------- 落叶 (从树冠落下的叶片) ----------------
     fall: {
       enabled: false,
@@ -228,6 +342,8 @@ export function defaultParams() {
       alphaTest: 0.35,
     },
 
+    /* 地面落叶堆积: 随机朝向/倾斜/层叠铺在树冠投影圆盘内, 中心更厚。
+     * 用无光照材质渲染 (不吃灯光), 所以亮度只能靠 shade 控制, 也不参与 AO 计算。 */
     // ---------------- 地面落叶堆积 ----------------
     litter: {
       enabled: false,
@@ -243,6 +359,8 @@ export function defaultParams() {
       shade: 0.78,         // 明暗系数 (地面落叶用无光照渲染, 这个是唯一的亮度控制)
     },
 
+    /* 粒子发射: 从叶片位置采样发射, 纯顶点着色器动画 (CPU 不更新)。
+     * windFollow 让粒子与树木共用同一套风向/强度/阵风, 叶子与光点才会同步飘。 */
     // ---------------- 粒子发射 (从叶片位置发射) ----------------
     particles: {
       enabled: false,
@@ -259,6 +377,9 @@ export function defaultParams() {
       windFollow: 1.0,     // 受风影响倍率 (与树木同一套风向/强度/阵风)
     },
 
+    /* 果实: 旋转体建模 (坚果 + 粗糙壳斗帽 + 果柄), 顶点色区分坚果与壳斗两部分。
+     * maxCount / chance 是面数保护 (每个果实约 200~300 面): 只有一部分枝条结果才自然。
+     * 单位: size / clusterRadius 米; droop 0..1 无量纲。 */
     // ---------------- 果实 ----------------
     fruit: {
       enabled: false,
@@ -282,6 +403,12 @@ export function defaultParams() {
     // { radiusScale, moveX, moveY, moveZ, rotX, rotY, rotZ, twist }
     branchEdits: {},
 
+    /* 树皮材质: pipeline 决定走哪条几何管线 ——
+     *   'speedtree' = 分枝管 + 领口 (默认, 多闭合分量)
+     *   'skin'      = 单张连续蒙皮 (boundary = 0 的单连通面)
+     * 程序化花纹由 color (深色端) / color2 (浅色端) 生成; uvScaleU 是周向重复次数,
+     * uvScaleV 是沿树高"每米"的重复次数 (所以树越高纹路越多, 天然不会拉伸)。
+     * texture / normalTexture 是用户上传的 dataURL: 一旦有值就替换程序化花纹。 */
     // ---------------- 树皮材质 ----------------
     bark: {
       pipeline: 'speedtree',    // 'skin' = 单张连续蒙皮; 'speedtree' = 分枝管+领口 (默认)
@@ -303,6 +430,10 @@ export function defaultParams() {
       procedural: { enabled: true, style: 'rough', scale: 1.0, contrast: 0.5 },
     },
 
+    /* 花朵: 独立于树叶的第二套植被系统 (复用同一套生成代码, 但参数完全独立)。
+     * cardMode=true 时是平面花卡, 轮廓由贴图 alpha 决定; useShape=true 才改用程序化叶形。
+     * 光照三件套 (emissive 自发光 / specular 反光 / scatter 散光) 与 leafMat 同构,
+     * 但两边互不影响 —— 调花不会动叶子。 */
     // ---------------- 花朵 (独立于树叶, 但基础功能继承树叶) ----------------
     flower: {
       enabled: false,        // 与树叶可同时开启
@@ -362,6 +493,8 @@ export function defaultParams() {
       cardMode: true,        // 花朵 = 平面花卡 (无 3D 模型)
     },
 
+    /* 落花 / 落花堆积: 与落叶、落叶堆积结构一一对应 (字段含义参考 fall / litter),
+     * 区别只在于贴图与材质继承的是"花朵"而不是"树叶"。 */
     // ---------------- 落花 / 落花堆积 (参照落叶实现) ----------------
     flowerFall: {
       enabled: false,
@@ -393,6 +526,10 @@ export function defaultParams() {
       shade: 0.82,
     },
 
+    /* 树叶材质: 颜色主要来自顶点色 (烘焙了季节叶色与 AO), 这里控制 PBR、贴图与光照响应。
+     * tintMode 决定贴图与叶色的三种关系: texture 原色 / season 跟随季节 / custom 自定义强度。
+     * 反光 specular、散光 scatter、自发光 emissive 是三个独立的物理项, 互不替代:
+     *   反光 = 湿叶/蜡质叶面的高光; 散光 = 逆光时叶肉透亮; 自发光 = 暗部不发黑。 */
     // ---------------- 树叶材质 ----------------
     leafMat: {
       tint: '#ffffff',
@@ -430,6 +567,10 @@ export function defaultParams() {
       normalTexture: '',
     },
 
+    /* 自定义 GLSL: 注入到标准 PBR 材质的顶点/片元阶段。
+     * 执行时机 (materials.js 里的注入点): 顶点代码在风场与生长位移**之后**,
+     * 片元代码在顶点色与色调相乘**之后** —— 所以能改到最终颜色。
+     * 编译失败不会黑屏, 而是把编译日志抛到视口顶部 (由 sceneManager 处理)。 */
     // ---------------- 自定义 GLSL ----------------
     custom: {
       enabled: true,
@@ -437,6 +578,11 @@ export function defaultParams() {
       fragment: '// 可用: diffuseColor / vTreeUv / vColor(需用 .rgb) / uTime / uSeed\n// diffuseColor.rgb *= 0.9 + 0.1 * sin(uTime + vTreeUv.y * 10.0);',
     },
 
+    /* 风场: 全部在顶点着色器里算, 这里的参数只是 uniform, 改动**不重建几何**。
+     * auto=true 时整组参数由 autoWind(seed, intensity) 重新推导 (见 autowind.js);
+     * 手改任意细节参数会让面板关掉自动模式 (那是 UI 的约定, 不是这里的逻辑)。
+     * 相位沿枝条累积 → 梢部摆幅最大; flexFalloff 控制"只有梢部在动"的程度。
+     * 单位: strength 米; direction 度 (0° = +X, 90° = +Z); 其余多为无量纲倍率。 */
     // ---------------- 风场 ----------------
     wind: {
       enabled: true,
@@ -458,6 +604,8 @@ export function defaultParams() {
       timeScale: 1.0,
     },
 
+    /* 生长动画: 用进度值控制枝条长度与叶片弹出, 纯顶点着色器实现 (不重建几何)。
+     * value 是手动进度, auto=true 时由动画循环推进到 1。 */
     // ---------------- 生长动画 ----------------
     growth: { enabled: true, value: 1.0, auto: true, speed: 0.35 },
 
@@ -468,6 +616,9 @@ export function defaultParams() {
       mergeBark: false,
     },
 
+    /* 场景: 灯光/天空/地面/雾/后处理。与树的形态无关, 换树种时由 preserveUserBits 保留。
+     * 角度单位是度; 方位角约定与风向一致 (0° = +X, 90° = +Z);
+     * 颜色一律是 CSS hex ('#rrggbb'), 由 sceneManager 转成 THREE.Color。 */
     // ---------------- 场景 ----------------
     scene: {
       env: 'custom',       // 最近一次应用的环境预设 (daylight/forest/...), 手动微调后保留名字
@@ -495,6 +646,11 @@ export function defaultParams() {
       autoRotate: false,
     },
 
+    /* LOD: 细节倍率 + SpeedTree 式动态降级（相机拉远自动换低模, 拉近再切回）。
+     * distance1/distance2 的单位是"树高"（相对值）, 这样同一套参数换大树/小树都不用重调;
+     * keep1/keep2 是相对全模的叶片保留比例。
+     * 纪律: 远景 LOD 只抽稀叶片, 绝不改变树干/树枝/果实/花朵几何 —— 否则拉远时
+     * 看起来像换了一棵树。force 仅供调试/截图强制某一档。 */
     // ---------------- 细节 / LOD ----------------
     lod: {
       barkDetail: 1.0,   // 周向分段倍率
@@ -511,6 +667,8 @@ export function defaultParams() {
       // (否则相机拉远时看起来像换了一棵树); 低模骨架与全模保持完全一致
     },
 
+    /* 顶点色 AO: 用叶片/花朵点云近似互相遮挡, 把结果乘进 COLOR_0（导出的 GLB 也会带上）。
+     * radius 是米（世界尺度）, 所以树越大越需要调大, 否则只有紧贴的叶簇才互相压暗。 */
     // ---------------- 程序化环境光遮蔽 (烘焙进顶点色) ----------------
     // 参考 SpeedTree 的顶点色 AO: 用叶片点云近似互相遮挡, 树冠内部/枝条根部更暗。
     ao: {
@@ -521,11 +679,41 @@ export function defaultParams() {
   }
 }
 
+/**
+ * 参数树深拷贝。
+ *
+ * 参数树约定为纯 JSON 结构 (object/array/number/string/boolean/null), 没有函数、
+ * Date、Map 或循环引用, 所以 JSON 往返就是最简便且够用的深拷贝。它比
+ * structuredClone 弱的地方 (丢失 undefined 键、无法处理循环) 对本参数树都不成立。
+ *
+ * 用途: 撤销栈快照、把参数交给生成器前先复制一份 (防止生成过程顺手改到 UI 状态)。
+ * 注意: 传入 undefined 会抛异常 (JSON.parse 收到空串), 调用方需保证参数存在。
+ *
+ * @param {object} p 参数树
+ * @returns {object} 完全独立的新对象
+ */
 export function cloneParams(p) {
   return JSON.parse(JSON.stringify(p))
 }
 
-/** 深合并 (用于预设 / 导入): 只覆盖目标对象里已存在的键 */
+/**
+ * 深合并 (用于预设 / 导入): 把 patch 盖到 base 上, 返回新对象。
+ *
+ * 合并规则 (按 patch 的键遍历):
+ *   对象 -> 递归合并, 目标缺失时补一个空对象;
+ *   数组 -> 若目标也是数组则**按下标逐项**合并 (下标上是对象就递归, 否则直接替换),
+ *           否则整体深拷贝; 注意 patch 数组更短时, base 里多出来的尾部元素会保留;
+ *   标量 -> 直接覆盖 (包括 null / false / 0)。
+ * 所以严格说它不是"只覆盖已有键": base 里没有的键也会被加上。
+ * 正因为如此, 用 defaultParams() 当 base、物种 patch 当 patch 时,
+ * patch 里写什么就改什么, 没写的保持默认 —— 这正是物种/预设系统想要的语义。
+ *
+ * 参数树因此不会被就地修改: 内部先 cloneParams(base) 再改副本。
+ *
+ * @param {object} base 基准参数树 (通常来自 defaultParams)
+ * @param {object} patch 补丁 (可以是完整参数树, 也可以是局部片段)
+ * @returns {object} 合并后的新对象; base 与 patch 都不被修改
+ */
 export function mergeParams(base, patch) {
   const out = cloneParams(base)
   const walk = (dst, src) => {
@@ -550,7 +738,22 @@ export function mergeParams(base, patch) {
   return out
 }
 
-/** 保证结构完整 (导入旧版本 JSON 时用) */
+/**
+ * 保证结构完整 (导入旧版本 JSON 时用)。
+ *
+ * 做四件事:
+ *   ① 用 defaultParams() 当骨架深合并, 补齐旧 JSON 里缺失的字段;
+ *   ② 校验 seed 是有限数 (NaN/字符串会一路污染所有 Rng, 直接回退成 1);
+ *   ③ branches.level 补齐到恰好 MAX_LEVELS 项 (缺的用 defaultLevel(i) 填, 多的截掉);
+ *   ④ leaves.levels 同理 (但它补的是 true, 因为多长一层叶子比少长更保险)。
+ *
+ * 为什么必须保证长度恒为 MAX_LEVELS: 生成器与面板都直接按
+ * branches.level[i] 下标访问, 不检查存在性; 长度不足会静默少一层枝,
+ * 长度过多则会让 MAX_LEVELS 的上限失效 (枝量连乘爆炸)。
+ *
+ * @param {object|null} p 可能是旧版本/残缺的参数树 (null 也接受)
+ * @returns {object} 结构完整的新参数树 (p 不被修改)
+ */
 export function normalizeParams(p) {
   const out = mergeParams(defaultParams(), p || {})
   out.seed = Number.isFinite(out.seed) ? out.seed : 1
@@ -563,15 +766,49 @@ export function normalizeParams(p) {
   return out
 }
 
+/* ---------------- 变更分组: 决定"改一个参数要重建到哪一步" ----------------
+ * 分组是**互斥且完备**的: 每个顶层键只出现在一组里, store 只需比较各自序列化后的
+ * 字符串是否变化, 再决定调用哪条重建链路 (这是本文件里性能上最重要的约定):
+ *   geometry -> 重新生长骨架 + 蒙皮 + 叶片/果实实例化 (最贵, 几十毫秒级)
+ *   material -> 只重建材质与 uniform (几毫秒, 不碰几何)
+ *   wind     -> 只更新 uniform (近乎免费)
+ *   scene    -> 灯光/天空/雾/生长 (不动几何与材质)
+ * 放错组的代价: 把纯 uniform 参数放进 geometry 会导致拖滑杆时反复重建几何 (卡顿);
+ * 反之把几何参数放进 material 则会出现"改了没反应"的 bug。 */
+// 影响几何拓扑/顶点数据的键 (seed 改变会整体换个体, 所以也在几何组)
 const GEOMETRY_KEYS = ['seed', 'auto', 'trunk', 'roots', 'branches', 'leaves', 'flower', 'fruit', 'lod', 'ao', 'branchEdits']
+// 只影响材质/着色器/合批实例的键 (落叶/粒子等是"另一个几何体", 重建代价低, 归到材质组)
 const MATERIAL_KEYS = ['bark', 'leafMat', 'custom', 'particles', 'fall', 'litter', 'flowerFall', 'flowerLitter']
+// 只进顶点着色器 uniform 的键
 const WIND_KEYS = ['wind']
+// 场景与动画: growth 只改 uniform, 但和场景一起归在"轻量刷新"链路里
 const SCENE_KEYS = ['scene', 'growth']
 
+/**
+ * 把指定分组序列化成可比较的字符串。
+ *
+ * 用 [键, 值] 数组而不是直接拼 JSON: 保留"哪个键属于哪一组"的边界, 即使某个键名
+ * 里出现分隔符也不会把两组序列化成一模一样, 而且键顺序固定 (由分组常量决定),
+ * 对象内部属性顺序变化不会产生假变更。
+ *
+ * @param {object} params 参数树
+ * @param {Array<string>} keys 分组键列表
+ * @returns {string} 该分组的稳定序列化结果
+ */
 function pickStringify(params, keys) {
   return JSON.stringify(keys.map((k) => [k, params[k]]))
 }
 
+/**
+ * 按分组序列化参数, 供 store 做"变更检测"。
+ *
+ * 典型用法: 每次生成后缓存 serialized[group]; 下次改动后重新序列化,
+ * 字符串不同才触发对应链路的重建。未知分组退化成整个参数树的序列化 (全量比较)。
+ *
+ * @param {object} params 参数树
+ * @param {'geometry'|'material'|'wind'|'scene'|string} group 分组名
+ * @returns {string} 序列化结果 (同参数 + 同分组必定得到同一字符串)
+ */
 export function serializeGroup(params, group) {
   switch (group) {
     case 'geometry': return pickStringify(params, GEOMETRY_KEYS)
@@ -582,7 +819,14 @@ export function serializeGroup(params, group) {
   }
 }
 
-/** 仅重建几何时需要的子集 (材质代码不参与) */
+/**
+ * 分组键清单的对外出口 (供 store / 生成器遍历某一组)。
+ *
+ * 语义: 拿到 'geometry' 就等于拿到"所有会影响几何的顶层键", 可以据此做差异导出、
+ * 重置某一组、或把参数拆成"几何部分 + 材质部分"分别缓存。
+ * 注意: 这里导出的是与内部**同一个数组实例** (没有拷贝), 调用方只读, 不要 push/splice,
+ * 否则会改掉分组定义本身。
+ */
 export const GROUP_KEYS = { geometry: GEOMETRY_KEYS, material: MATERIAL_KEYS, wind: WIND_KEYS, scene: SCENE_KEYS }
 
 

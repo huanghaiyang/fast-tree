@@ -13,6 +13,26 @@
  *   - 低位大枝: 长、粗, 先外展再趋于平伸 (拱形)
  *   - 树冠比高度**宽** (活橡树尤其夸张), 末梢细枝密集, 叶片成簇挂在枝梢
  *   - 叶形为羽状裂叶 (用 maple 轮廓近似), 秋色红/橙/黄, 冬季仍有枯叶残留 (marcescence)
+ *
+ * 三个维度各自负责什么 (正交 = 互不覆盖):
+ *   树种  -> 形态基因: 树干高矮胖瘦、分叉方式、每层枝条角度、叶形、树皮花纹、调色板基底
+ *   阶段  -> 个体发育: 对成熟形态做**乘性缩放** (size/radius) + 结构与密度修正
+ *   季节  -> 物候: 只改叶色/叶量/透光/树皮色调, 以及"落叶期叶片集中到枝梢"
+ * 流水线 (composeTree 的顺序, 顺序本身是语义的一部分):
+ *   defaultParams() --merge--> 物种 patch --applyVariation--> 个体差异
+ *   --applyStage--> 发育缩放 --applySeason--> 物候 --预算回缩--> 最终参数
+ *
+ * 确定性与不变量 (scripts/selftest.mjs 的 [11] 会逐条验):
+ *   1. 个体形态只由"树种 + 种子"决定: applyVariation 用的子流标签是 `compose:${sp.id}`,
+ *      **不含阶段与季节** —— 所以换季节不会挪动树干 (树皮几何哈希必须完全一致),
+ *      换阶段只是同一棵树的等比长大 (主干高度严格递增)。
+ *   2. 季节子流标签是 `season:${sp.id}:${stage.id}:${seasonId}`, 含阶段与季节,
+ *      所以不同阶段/季节的叶色抽样互不相同 (这是有意的: 让每个组合都有自己的色调)。
+ *   3. 叶量顺序 夏 > 秋 > 冬 必须成立; 冬季仍需 >0 片 (橡树的枯叶残留);
+ *      常绿树种冬季不得低于夏季的 70%。
+ *   4. 同一组合 + 同一种子 = 完全相同的几何; 不同种子 = 不同个体; 7 个树种两两不同。
+ * 注意: 各 apply 系列函数都是**就地修改**传入的 p (p 已是 mergeParams 产出的新对象,
+ * 不会污染 defaultParams 或物种表)。
  */
 import { defaultParams, cloneParams, mergeParams, MAX_LEVELS, defaultLevel } from './params.js'
 import { makeRng } from './rng.js'
@@ -23,6 +43,17 @@ import { autoWind } from './autowind.js'
 /* 基础工具                                                            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 生成一份"5 层枝条配置", 每层在 defaultLevel(i) 之上叠加一个补丁。
+ *
+ * 用法: levels({...L1}, {...L2}, {...L3}, {...L4}, {...L5}) —— 参数按层下标对应,
+ * 少写的层直接沿用 defaultLevel(i) 的默认值 (所以物种 patch 里只写"与默认不同"的字段即可)。
+ * 合并是**浅合并** ({...base, ...patch}): 每层都是扁平字段, 不存在嵌套对象,
+ * 所以浅合并足够; 若将来给某层加了嵌套对象, 这里会整体替换而不是深合并, 需留意。
+ *
+ * @param {...object} patches 各层的字段补丁 (可为空/缺省)
+ * @returns {Array<object>} 长度恒为 MAX_LEVELS 的层配置数组
+ */
 function levels(...patches) {
   const arr = []
   for (let i = 0; i < MAX_LEVELS; i++) {
@@ -46,6 +77,17 @@ function levels(...patches) {
  *  - apicalAdd    顶端优势加成 (小树更"笔直向上")
  *  - radiusCurveAdd / taperScale 树干胖瘦与锥度 (小树更细更锥)
  *  - rootMul      根系强度
+ *
+ * 其余字段说明: id 稳定标识 (会写进 classify.stage 与存档) / name+icon 面板显示 /
+ * years 树龄区间文字 / desc 一句话形态说明 (两者都会被 classificationDesc 拼进说明里)。
+ *
+ * 表本身是**有序的**: 从 seedling 到 ancient 必须严格递增, 因为
+ *   ① 自检 [11] 要求主干高度严格递增 (applyStage 里 size 直接相乘);
+ *   ② presets.js 的 STAGE_WEIGHTS 按这个下标分配权重 ([0.1,0.16,0.24,0.36,0.14]);
+ *   ③ stageById() 的默认回退用 GROWTH_STAGES[3] (= mature)。
+ * 调换顺序会同时破坏这三处, 属于破坏性改动。
+ *
+ * 消费方: applyStage() 与 composeTree(); 面板的"生长阶段"选择器直接遍历本表。
  */
 export const GROWTH_STAGES = [
   {
@@ -89,6 +131,25 @@ export const GROWTH_STAGES = [
 /* 季节 (物候)                                                         */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 四个季节的物候参数 (全局默认值, 可被 SPECIES[i].seasonal 覆盖)。
+ *
+ * 字段语义:
+ *   leafDensity    叶量系数 (0..1.1): 不是最终叶量, 而是先记成 leaves.seasonDensity,
+ *                  等预算回缩压完"基础密度"后再乘上去 —— 这样物候顺序不会被预算打乱
+ *   leafScale      叶片尺寸倍率 (春叶小、夏叶大)
+ *   colorVariance  单片叶色差 (秋色最大 = 层林尽染的感觉)
+ *   translucency   叶肉透光度 (嫩叶/秋叶更透光, 冬枯叶几乎不透)
+ *   palette        叶基色候选池 (处理时随机挑一个, 所以同一季节也有个体色差)
+ *   tipPalette     叶尖色候选池 (与基色渐变混合)
+ *   barkTint       乘到树皮上的色调 (冬季偏冷、秋季偏暖)
+ *
+ * 自检 [11] 对这些值有硬约束, 改之前先看:
+ *   - 叶量必须 夏 > 秋 > 冬; 冬季仍 > 0 且 < 夏季的 30% (橡树枯叶残留)
+ *   - 常绿树种冬季由 applySeason 夹到 >= 0.88, 不会跟着掉光
+ *   - 色相目标: 夏 70~160° (绿), 秋 < 50° (红橙), 樱花春 > 300° (粉)
+ * 顺序固定为 spring / summer / autumn / winter: presets.js 的 SEASON_WEIGHTS 按下标分配权重。
+ */
 export const SEASONS = [
   {
     id: 'spring', name: '春', icon: '🌸', desc: '新芽初展: 叶小而稀、嫩绿透光',
@@ -120,8 +181,34 @@ export const SEASONS = [
 /* 树种                                                                */
 /* ------------------------------------------------------------------ */
 
+/* 橡树的主干分叉基线, 同时被 oak.patch() 与"灌木/枯树"用不同覆盖值复用。
+ * 字段与 params.js 的 trunk.fork 同名同义: height 是"占树干高度的比例",
+ * angle 是度, 其余是无量纲倍率/弧度。 */
 const OAK_FORK = { count: 3, height: 0.33, angle: 27, spread: 0.85, radiusScale: 0.66, lengthScale: 1.0, taper: 0.3, curve: 0.45, gravity: 0.03 }
 
+/**
+ * 树种表 (形态基因库)。每个条目的字段:
+ *   id / name / icon / desc  标识与显示 (id 会写进 classify.species, 属于存档格式, 不可随意改)
+ *   evergreen                常绿标记: 冬季叶量由 applySeason 兜底到 >= 0.88 (松树)
+ *   bare                     光秃标记: 该树种"天然无叶", 季节不得让它长出叶子 (枯树)
+ *   fork                     分叉参数基线 (供 patch 复用; 真正生效的是 patch().trunk.fork)
+ *   variation                个体差异幅度表, 每项是"最大相对偏移"(0..1), 由 applyVariation 消费:
+ *                            height 高度 / radius 粗细 / curve 弯曲 / lean 倾斜 / gnarl 不规则 /
+ *                            crown 树冠开张度 (影响枝角与枝长) / count 每层枝数 /
+ *                            leaf 叶片大小 / fork 分叉主枝数 / trunkShare 分叉高度
+ *   seasonal                 季节覆盖表 { 季节id: {...} }: 浅合并到全局 SEASONS 之上,
+ *                            可以只覆盖 palette, 也可以额外改 name/desc (樱花的春季)
+ *   patch()                  返回一份"参数子集", 由 mergeParams 深合并到 defaultParams 之上;
+ *                            **只写与默认不同的字段**, 没写的自动继承默认值
+ *
+ * 为什么 patch 是函数而不是常量对象: levels() / fork 这类字段每次都要生成**全新的**
+ * 数组与对象。如果直接写成常量, 所有树会共享同一份 branches.level 引用,
+ * 而 applyVariation / applyStage / presets 的扰动都是就地修改 —— 一棵树的扰动
+ * 会顺着共享引用污染下一棵树 (表现为"越生成越歪")。函数保证每次调用都是干净副本。
+ *
+ * 新增树种时请注意: id 全局唯一、patch 里不要写 seed/classify(由 composeTree 负责)、
+ * 并且要能通过 selftest [11] 的全部约束 (高度单调、面数预算、几何两两不同)。
+ */
 export const SPECIES = [
   {
     /* 参考图: 白橡/红橡的树形 + 活橡树的开张 + 羽状裂叶 + 秋色红橙 + 冬留枯叶 */
@@ -204,6 +291,9 @@ export const SPECIES = [
     }),
   },
   {
+    /* 塔形针叶树: L1 每轮 14 根 (轮生) 且较长较平, 之后每层迅速变短;
+     * apicalDominance 0.8 = 强顶端优势, 所以越靠梢部枝越短, 形成尖塔轮廓;
+     * phototropism -0.08 (轻微下压) 让侧枝平展而不是全部上翘。 */
     id: 'pine', name: '松树', icon: '🌲',
     desc: '轮生侧枝 + 针叶, 常绿, 塔形',
     evergreen: true,
@@ -236,6 +326,8 @@ export const SPECIES = [
     }),
   },
   {
+    /* 细高白干: height 12m 而 baseRadius 只有 0.22 (高径比 ≈ 27, 常见乔木里最瘦),
+     * taper 0.3 说明梢部收得很快; 树冠稀疏靠 perBranch 11 的小叶摊开, 秋季转金黄 (见 seasonal)。 */
     id: 'birch', name: '白桦', icon: '🌿',
     desc: '细高白干、稀疏透光的树冠, 秋色金黄',
     evergreen: false,
@@ -260,6 +352,8 @@ export const SPECIES = [
     }),
   },
   {
+    /* 垂柳: 形态几乎全靠重力塑造 —— gravityScale 1.6 (全局重力乘子) 叠加深层
+     * L2/L3 的 gravity -0.34 / -0.42, 枝条先扬起再垂下; 叶片用披针形 lance、droop 0.55。 */
     id: 'willow', name: '垂柳', icon: '🍃',
     desc: '强下垂的细长枝条 + 披针叶',
     evergreen: false,
@@ -315,6 +409,8 @@ export const SPECIES = [
     }),
   },
   {
+    /* 灌木: 没有"主枝"概念 —— trunk 只有 1.6m 且 taper 0.35, 在 16% 高度就分叉;
+     * 各层 startT 从 0.0 (基部) 起分枝, 所以看起来是丛生而不是单干。 */
     id: 'shrub', name: '灌木', icon: '🪴',
     desc: '无明显主干, 从基部分出多枝',
     evergreen: false,
@@ -338,6 +434,9 @@ export const SPECIES = [
     }),
   },
   {
+    /* 枯树: bare=true —— applySeason 会走"无叶"分支直接返回, 所以什么季节都不长叶
+     * (presets.js 里"枯树随机长几片残叶"是它自己的额外扰动, 与季节无关);
+     * 形态靠 gnarl 0.85 + knots 5 + twist 0.4 + 大 curveVariance 撑出枯朽感。 */
     id: 'dead', name: '枯树', icon: '🪵',
     desc: '无叶的枯朽老树: 强烈扭曲与节瘤',
     evergreen: false,
@@ -362,19 +461,54 @@ export const SPECIES = [
   },
 ]
 
+/**
+ * 按 id 查树种。
+ *
+ * 用线性 find 而不是建 Map: 表只有 7 条, 而"树生成"是毫秒级的低频操作,
+ * 这里省下的初始化复杂度比查找性能更值钱。
+ *
+ * @param {string} id 树种 id
+ * @returns {object|null} 树种条目; 未知 id 返回 null (composeTree 会兜底到 SPECIES[0])
+ */
 export function speciesById(id) {
   return SPECIES.find((s) => s.id === id) || null
 }
 
+/**
+ * 按 id 查生长阶段。
+ * @param {string} id 阶段 id (seedling/sapling/young/mature/ancient)
+ * @returns {object|null} 阶段条目; 未知 id 返回 null (composeTree 兜底到 mature)
+ */
 export function stageById(id) {
   return GROWTH_STAGES.find((s) => s.id === id) || null
 }
 
+/**
+ * 按 id 查季节。
+ * @param {string} id 季节 id (spring/summer/autumn/winter)
+ * @returns {object|null} 季节条目; 未知 id 返回 null
+ */
 export function seasonById(id) {
   return SEASONS.find((s) => s.id === id) || null
 }
 
-/** 某个树种在某个季节的物候 (树种可覆盖全局季节设定) */
+/**
+ * 某个树种在某个季节的物候 (树种可覆盖全局季节设定)。
+ *
+ * 合并顺序: 全局 SEASONS 条目 < species.seasonal[季节id] (浅合并)。
+ * 覆盖项可以只补一两个字段 (例如白桦冬季只把 leafDensity 改成 0.04),
+ * 也可以整体换掉文案 (樱花春季改 name/desc 为"春 (花)")。
+ *
+ * 两个细节:
+ *   - 未知季节回退到 SEASONS[1] (= summer) 而不是第一个: 夏天是该系统的
+ *     "完全展开"基准态, 用它兜底比用春天更不容易出现"叶子几乎掉光"的意外。
+ *   - 返回值是**新对象**: 调用方 (applySeason / classificationName) 可以随便读改,
+ *     不会污染全局季节表。
+ *
+ * @param {object|null} species 树种条目 (可为 null)
+ * @param {string} seasonId 季节 id
+ * @returns {object} 合并后的季节参数
+ */
 export function seasonProfile(species, seasonId) {
   const base = seasonById(seasonId) || SEASONS[1]
   const over = (species && species.seasonal && species.seasonal[seasonId]) || null
@@ -385,20 +519,51 @@ export function seasonProfile(species, seasonId) {
 /* 组合                                                                */
 /* ------------------------------------------------------------------ */
 
+/* ---------------- 组合用的数值小工具 ----------------
+ * clampNum: 区间夹取。参数经过"物种 patch → 个体扰动 → 阶段缩放 → 预算回缩"
+ *           四轮乘算后极易越界, 所以几乎每个会被乘的字段都夹一次。
+ * r4:       四舍五入到 4 位小数。目的是"让参数可比较": 不做这一步, 浮点尾数会让
+ *           两次看似相同的组合序列化出不同 JSON, 从而破坏缓存与撤销栈的判重。 */
 const clampNum = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
 const r4 = (v) => +v.toFixed(4)
 
+/**
+ * ① 个体差异: 在"该物种标准形态"上叠加种子决定的随机偏移。
+ *
+ * 输入 p 是 mergeParams(defaultParams, 物种 patch) 的结果 (已被就地修改),
+ * rng 必须是 `compose:${sp.id}` 子流 —— 标签里**故意不含阶段与季节**,
+ * 这样"换季节"不会挪动树干 (树皮几何哈希必须逐字节相同)。
+ *
+ * 几个设计要点:
+ *   - v (sp.variation) 每项是"最大相对偏移" 0..1, 缺省 = 0 = 该维度不做个体差异;
+ *     所以枯树表里没有 leaf 项, 树叶就不会被扰动。
+ *   - 树干尺寸用**乘性**扰动 rng.range(1-v, 1+v): 对高矮不同的树等比生效。
+ *   - lean 是直接重新采样 (rng.signed()*v.lean) 而不是叠加到设计值上:
+ *     每个个体都该有自己独立的倾斜方向与幅度。
+ *   - crown 是一个 **-1..1 的共享随机量**, 代表"这棵树是直立型还是开张型"。
+ *     所有层级共用同一个 crown (乘以层级权), 所以整棵树风格统一,
+ *     而不是每层各自乱 —— 这是"个体差异"与"畸变"的分界线。
+ *   - damp = 1/(1+i*0.6): 越深层的扰动越收敛。4 层枝条的枝量是连乘的,
+ *     若每层都按同样幅度抖, 深层误差会被放大成畸形树。
+ *
+ * @param {object} p 参数树 (就地修改)
+ * @param {object} sp 树种条目 (读 sp.variation)
+ * @param {object} rng 该树种专属的个体差异随机流
+ */
 function applyVariation(p, sp, rng) {
   const v = sp.variation || {}
   const t = p.trunk
   t.height = r4(t.height * rng.range(1 - (v.height || 0), 1 + (v.height || 0)))
   t.baseRadius = r4(t.baseRadius * rng.range(1 - (v.radius || 0), 1 + (v.radius || 0)))
   t.curve = r4(Math.max(0, t.curve + rng.signed() * (v.curve || 0) * 0.5))
+  // 倾斜是"重新采样"而不是叠加到设计值上: 每个个体都有自己独立的倾斜幅度与方位
   t.lean = r4(rng.signed() * (v.lean || 0))
   t.leanDirection = Math.round(rng.range(0, 360))
   t.gnarl = r4(Math.max(0, t.gnarl * rng.range(1 - (v.gnarl || 0) * 0.5, 1 + (v.gnarl || 0) * 0.6)))
   t.twist = r4(t.twist + rng.signed() * 0.2)
   t.knots = Math.max(0, Math.round(t.knots + rng.signed() * 3))
+  // 分叉也参与个体差异, 但每一项都硬夹在"生物合理区间"内:
+  // 主枝数 2~6、分叉高度 0.12~0.6 (占树高)、夹角 ±20% —— 出了这个范围就不像树了
   if (t.fork && t.fork.enabled) {
     t.fork.count = Math.round(clampNum(t.fork.count * rng.range(1 - (v.fork || 0), 1 + (v.fork || 0)), 2, 6))
     t.fork.height = r4(clampNum(t.fork.height * rng.range(1 - (v.trunkShare || 0), 1 + (v.trunkShare || 0)), 0.12, 0.6))
@@ -417,6 +582,8 @@ function applyVariation(p, sp, rng) {
     o.lengthVariance = r4(clampNum(L.lengthVariance + rng.signed() * 0.12, 0, 0.75))
     o.radiusRatio = r4(clampNum(L.radiusRatio * rng.range(0.9, 1.12), 0.1, 0.9))
     o.curve = r4(Math.max(0, L.curve + rng.signed() * 0.25))
+    // 开张型个体 (crown>0) 的主枝更下垂、更不向上翘; 深层用 0.03 (主枝 0.08) 减半,
+    // 因为末梢本来就靠自身 gravity 下垂, 再叠加开张度会卷成一团
     o.gravity = r4(clampNum(L.gravity + rng.signed() * 0.16 * damp - crown * (i === 0 ? 0.08 : 0.03), -0.7, 0.5))
     o.upBias = r4(L.upBias - crown * 0.06 * damp)
     o.segments = Math.max(3, Math.round(L.segments))
@@ -425,6 +592,8 @@ function applyVariation(p, sp, rng) {
   p.branches.apicalDominance = r4(clampNum(p.branches.apicalDominance + rng.signed() * 0.12, 0, 0.95))
   p.branches.phototropism = r4(clampNum(p.branches.phototropism + rng.signed() * 0.05, -0.4, 0.4))
   const lf = p.leaves
+  // 叶片只做温和扰动 (尺寸 ±v.leaf、宽长比 ±12%): 叶形是识别树种的关键特征,
+  // 抖太狠会让"橡树看着像白桦", 所以这里刻意比枝条保守
   lf.size = r4(Math.max(0.04, lf.size * rng.range(1 - (v.leaf || 0), 1 + (v.leaf || 0))))
   lf.width = r4(clampNum(lf.width * rng.range(0.9, 1.12), 0.08, 1.4))
   lf.clusterCount = Math.max(1, Math.round(lf.clusterCount * rng.range(0.85, 1.2)))
@@ -433,6 +602,31 @@ function applyVariation(p, sp, rng) {
   lf.droop = r4(clampNum(lf.droop + rng.signed() * 0.15, 0, 1))
 }
 
+/**
+ * ② 个体发育: 把"该物种的成熟形态"按阶段缩放成树苗 / 幼树 / 小树 / 古树。
+ *
+ * 与 applyVariation 的分工: variation 决定"这是哪个个体", stage 决定"它几岁了"。
+ * 因此这里几乎全是**乘性缩放**, 只有少数结构项需要按阶段改写:
+ *   - 主干 height × stage.size、baseRadius × stage.radius, 附带 ±4~5% 抖动;
+ *     抖动幅度远小于相邻阶段的 size 差 (0.13→0.3→0.55→1→1.32), 所以
+ *     "主干高度严格递增"这条自检约束不会被抖动破坏;
+ *   - 锥度/半径曲线/不规则度/根部外扩: 小树更细更锥、更光滑、根部外扩更弱;
+ *   - 分叉: forkMul=0 时直接关闭 (树苗/幼树不分叉); 高度按 (1.35 - 0.35*size)
+ *     反比修正, 即"小树的分叉点更高更靠梢部, 大树分叉更低";
+ *   - 层级数 (levelOffset) 与每层枝数 (countScale);
+ *   - 叶片尺寸/密度; 树苗额外 ×1.15, 因为"幼苗只有几片大叶";
+ *   - 叶片层级兜底: 层级变少后可能出现"没有任何一层长叶", 这里保证最深一层长叶。
+ *
+ * 与 applyVariation 共用同一条随机流 (同一 seed 下仍然完全可复现)。注意分叉分支
+ * 只在 forkMul>0 时才抽 3 次随机数, 所以不同阶段后续的抽样点会错开 —— 这是预期的:
+ * 阶段本来就该改变形态, 不需要与其它阶段"抖动一致"。
+ *
+ * @param {object} p 参数树 (就地修改)
+ * @param {object} stage 生长阶段条目 (GROWTH_STAGES 之一)
+ * @param {object} rng 个体差异随机流 (与 applyVariation 同一条)
+ * @returns {number} 缩放**前**的成熟高度 (米)。当前调用方未使用, 保留是为了将来
+ *          把某些尺寸改成"相对成熟树高"的归一化参数时能直接取用
+ */
 function applyStage(p, stage, rng) {
   const t = p.trunk
   const matureHeight = t.height
@@ -442,7 +636,10 @@ function applyStage(p, stage, rng) {
   t.radiusCurve = r4(clampNum(t.radiusCurve + stage.radiusCurveAdd, 0.8, 2.4))
   t.gnarl = r4(Math.max(0, t.gnarl * stage.gnarlScale))
   t.knots = Math.max(0, Math.round(t.knots * (0.4 + 0.6 * stage.gnarlScale)))
+  // 根部外扩随年龄增强 (0.55 + 0.45*size): 幼苗几乎没有板根, 古树最夸张
   t.flare = r4(clampNum(t.flare * (0.55 + 0.45 * stage.size), 0.1, 3))
+  // forkMul = 0 时只把开关关掉, fork 对象本身保留 (面板上的值还在,
+  // 用户切回大树时能立刻恢复之前调好的分叉参数)
   if (t.fork) t.fork.enabled = !!t.fork.enabled && stage.forkMul > 0
   if (t.fork && t.fork.enabled) {
     t.fork.count = Math.round(clampNum(t.fork.count * stage.forkMul, 2, 6))
@@ -479,6 +676,32 @@ function applyStage(p, stage, rng) {
   return matureHeight
 }
 
+/**
+ * ③ 物候: 只改叶色 / 叶量 / 透光 / 树皮色调, **绝不碰树干与树枝几何**。
+ *
+ * 这条"季节不改几何"是硬约束而不是风格偏好: 自检 [11c] 会比对同一棵树在
+ * 夏/秋/冬 三个季节的树皮几何哈希, 要求逐字节相同 —— 用户的心理模型是
+ * "同一棵树换物候", 换季顺手把树形换掉会一眼被看出来。往这个函数里加
+ * trunk / branches 的修改之前请先想清楚这一点。
+ *
+ * 处理流程:
+ *   - baseLeaves=false (枯树 bare, 或物种 patch 里本身就关了叶) -> 直接关叶返回,
+ *     连叶色都不设, 避免"枯树到了冬天突然有颜色";
+ *   - 常绿树种: 把冬季 leafDensity 抬到 >= 0.88 (松树冬天不能掉光);
+ *   - 叶色从 palette / tipPalette 里随机挑 (用 seasonRng 子流, 标签含阶段与季节);
+ *   - 叶量**只记录不应用**: 存进 leaves.seasonDensity, 等 composeTree 压完面数预算
+ *     再乘上去, 否则预算回缩会把"夏 > 秋 > 冬"的物候顺序压乱;
+ *   - 落叶期 (leafDensity < 0.4) 把 startT 往梢部推, 让残叶集中挂在枝梢;
+ *   - 透光度与树皮色调直接写回材质参数。
+ *
+ * @param {object} p 参数树 (就地修改)
+ * @param {object} sp 树种条目 (读 evergreen / bare)
+ * @param {object} season seasonProfile() 合并后的季节参数
+ * @param {object} rng 季节子流 `season:${sp.id}:${stage.id}:${seasonId}`
+ * @param {boolean} baseLeaves 该组合原本是否长叶 (false = 枯树 / 无叶物种)
+ * @returns {object|undefined} 实际生效的季节参数 (常绿已夹取过);
+ *          无叶分支返回 undefined。当前调用方未使用返回值, 保留便于调试与扩展
+ */
 function applySeason(p, sp, season, rng, baseLeaves) {
   const leaf = p.leaves
   // 枯树 (baseline 无叶) 不因季节长叶
@@ -490,6 +713,7 @@ function applySeason(p, sp, season, rng, baseLeaves) {
     return
   }
   leaf.enabled = true
+  // 常绿: 冬季不能跟着落叶树种掉光, 把密度底限抬到 0.88 (其余季节沿用原值)
   const everScaled = sp.evergreen
     ? { ...season, leafDensity: Math.max(season.leafDensity, season.id === 'winter' ? 0.88 : season.leafDensity) }
     : season
@@ -505,16 +729,39 @@ function applySeason(p, sp, season, rng, baseLeaves) {
     leaf.startT = r4(clampNum(leaf.startT + 0.18, 0, 0.92))
   }
   p.leafMat.translucency = r4(clampNum(everScaled.translucency, 0, 1))
+  // 树皮色调: 冬季偏冷、秋季偏暖 —— 这是"季节感"在树干上的唯一体现 (不改几何)
   p.bark.tint = everScaled.barkTint || '#ffffff'
   return everScaled
 }
 
 /**
- * 组合出完整参数
- * @param {string} speciesId 树种
- * @param {string} stageId 生长阶段
- * @param {string} seasonId 季节
- * @param {number} seed 种子 (决定个体差异)
+ * 组合出完整参数 (本模块唯一的对外主入口)。
+ *
+ * 流水线 (顺序是语义的一部分, 不要重排):
+ *   ① 查表 + 兜底: 未知树种 -> SPECIES[0] (橡树), 未知阶段 -> GROWTH_STAGES[3] (大树);
+ *   ② mergeParams(defaultParams, sp.patch()) 得到该物种的标准形态 (全新对象);
+ *   ③ applyVariation 叠加个体差异 (子流 `compose:${sp.id}`, **不含阶段/季节**);
+ *   ④ applyStage 按年龄缩放;
+ *   ⑤ applySeason 改物候 (子流 `season:${sp.id}:${stage.id}:${seasonId}`);
+ *   ⑥ 写回 classify / seed / chaos / 风场 (风场用 autoWind(seed, intensity) 推导);
+ *   ⑦ 面数预算: 先压"枝条总数"(从最深一层开始减 count), 再压"叶片总数";
+ *   ⑧ 最后才乘季节叶量系数, 保证 夏 > 秋 > 冬 的物候顺序不被预算破坏;
+ *   ⑨ 删掉内部中间量 leaves.seasonDensity, 保证输出参数与 params.js 的 schema 一致。
+ *
+ * ⑤ 与 ③ 的子流标签差异是刻意设计: 换季节不动树干 (只有叶色/叶量变),
+ * 换阶段让整棵树等比长大; 而叶色的抽样又随阶段/季节变化, 使每个组合都有自己的色调。
+ *
+ * @param {string} speciesId 树种 id (未知则用橡树)
+ * @param {string} [stageId='mature'] 生长阶段 id (未知则用大树)
+ * @param {string} [seasonId='summer'] 季节 id
+ * @param {number} [seed=1] 种子, 决定个体差异 (同 seed + 同组合 = 完全相同)
+ * @param {object} [opts={}] 可选覆盖:
+ *   chaos         混乱度 (写进 auto.chaos, 默认 0.55)
+ *   windIntensity 风力强度 (传给 autoWind, 默认 0.3)
+ *   windSway      树干/树枝摆幅 (覆盖 wind.barkSway)
+ *   branchBudget  枝条总数预算 (默认 900)
+ *   leafBudget    叶片总数预算 (默认 14000)
+ * @returns {object} 完整参数树 (结构与 defaultParams 一致, 可直接交给生成器或存 JSON)
  */
 export function composeTree(speciesId, stageId = 'mature', seasonId = 'summer', seed = 1, opts = {}) {
   const sp = speciesById(speciesId) || SPECIES[0]
@@ -540,13 +787,19 @@ export function composeTree(speciesId, stageId = 'mature', seasonId = 'summer', 
   // 规模预算: 枝条数先压住 (层级越深越先回缩), 再把叶片数压进预算
   const branchBudget = opts.branchBudget === undefined ? 900 : opts.branchBudget
   let est = estimateScale(p)
+  // 从**最深一层**开始减: 深层枝数量最多, 减掉一根省下的总枝数最多, 而它对树冠
+  // 轮廓的影响又最小 (末梢细枝本来就密)。减到 count=1 仍超标就换上一层。
   for (let i = p.branches.levels - 1; i >= 0 && est.branches > branchBudget; i--) {
+    // guard 是死循环保护: estimateScale 只是估算, 且 count 最小只到 1,
+    // 极端参数下来可能永远降不到预算内 —— 那就放弃, 宁可超一点也不能卡住主线程
     let guard = 60
     while (est.branches > branchBudget && p.branches.level[i].count > 1 && guard-- > 0) {
       p.branches.level[i].count -= 1
       est = estimateScale(p)
     }
   }
+  // 减层级是最后手段 (会改变树冠轮廓), 所以最多做 3 次; 缩层级后要同步修正
+  // leaves.levels 的开关, 否则可能出现"最深层没叶"的空树冠
   let levelGuard = 3
   while (est.branches > branchBudget * 1.3 && p.branches.levels > 2 && levelGuard-- > 0) {
     p.branches.levels -= 1
@@ -573,14 +826,30 @@ export function composeTree(speciesId, stageId = 'mature', seasonId = 'summer', 
     p.leaves.clusterCount = 1
   } else {
     p.leaves.perBranch = Math.max(1, Math.round(p.leaves.perBranch * Math.min(1, dens)))
-    if (dens < 0.5) p.leaves.clusterCount = Math.max(1, Math.round(p.leaves.clusterCount * 0.55))
+    // 密度分档处理 (而不是简单乘一个系数):
+  //   dens < 0.5 (落叶期) -> 叶簇缩小 45%, 让残叶更"稀碎"而不是均匀变薄;
+  //   dens > 1 (春季樱花等超额密度) -> 允许叶簇变大来吃掉这部分增量。
+  if (dens < 0.5) p.leaves.clusterCount = Math.max(1, Math.round(p.leaves.clusterCount * 0.55))
     else if (dens > 1) p.leaves.clusterCount = Math.max(1, Math.round(p.leaves.clusterCount * dens))
   }
+  // seasonDensity 是流程内部的中间量, 不在 params.js 的 schema 里;
+  // 留着会被导出进 JSON / 被 mergeParams 当成正式字段, 所以收尾必须删掉
   delete p.leaves.seasonDensity
   return p
 }
 
-/** 组合名, 例如 "🌳 橡树 · 大树 · 秋" */
+/**
+ * 组合名, 例如 "🌳 橡树 · 大树 · 秋"。
+ *
+ * 季节名走 seasonProfile() 而不是直接读 SEASONS: 这样樱花春季会显示成
+ * 物种覆盖后的 "春 (花)"。未知 id 时原样显示 id (不让 UI 出现空白或 undefined)。
+ *
+ * @param {string} speciesId 树种 id
+ * @param {string} stageId 生长阶段 id
+ * @param {string} seasonId 季节 id
+ * @param {boolean} [withIcon=true] 是否带树种 emoji (导出文件名/标题等场景可关掉)
+ * @returns {string} 形如 "🌳 橡树 · 大树 · 秋" 的一行文本
+ */
 export function classificationName(speciesId, stageId, seasonId, withIcon = true) {
   const sp = speciesById(speciesId)
   const st = stageById(stageId)
@@ -590,7 +859,17 @@ export function classificationName(speciesId, stageId, seasonId, withIcon = true
   return `${head}${sp ? sp.name : speciesId} · ${st ? st.name : stageId} · ${prof ? prof.name : seasonId}`
 }
 
-/** 该组合的一句话说明 */
+/**
+ * 该组合的一句话说明 (用于自动生成面板的副标题)。
+ *
+ * 拼接顺序: 树种 desc · "阶段名(树龄): 阶段说明" · "季节名: 季节说明",
+ * 中间用 " · " 连接; 查不到的维度自动跳过 (所以未知 id 也能得到半句话而不是报错)。
+ *
+ * @param {string} speciesId 树种 id
+ * @param {string} stageId 生长阶段 id
+ * @param {string} seasonId 季节 id
+ * @returns {string} 拼接后的说明文字
+ */
 export function classificationDesc(speciesId, stageId, seasonId) {
   const sp = speciesById(speciesId)
   const st = stageById(stageId)
@@ -602,7 +881,15 @@ export function classificationDesc(speciesId, stageId, seasonId) {
   return parts.join(' · ')
 }
 
-/** 全部组合 (树种 × 阶段 × 季节) */
+/**
+ * 全部组合 (树种 × 阶段 × 季节), 顺序为 树种 > 阶段 > 季节 的字典序三重循环。
+ *
+ * 用于自检 [11] 验证"组合矩阵完整"(数量必须等于三者长度之积), 也可供 UI
+ * 做组合画廊。每项只含 id 与显示名, 不生成任何几何 (生成一次要几十毫秒, 这里不能做)。
+ *
+ * @returns {Array<{species: string, stage: string, season: string, name: string}>}
+ *          长度 = SPECIES.length × GROWTH_STAGES.length × SEASONS.length (当前 7×5×4 = 140)
+ */
 export function allCombinations() {
   const out = []
   for (const sp of SPECIES) {

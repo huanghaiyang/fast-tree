@@ -41,6 +41,17 @@
 import * as THREE from 'three'
 import { normalFromLuminance } from './normalFromAlbedo.js'
 
+/**
+ * 角色 -> 文件名后缀。
+ *
+ * 命名约定（资源管线按这个顺序识别一整套贴图）：
+ *   diff  -> `_diff`     baseColor / albedo，**sRGB** 颜色贴图
+ *   alpha -> `_alpha`    由漫反射图的 A 通道烘出的黑白蒙版（白 = 不透明）
+ *   normal-> `_nor_gl`   切空间法线，OpenGL 约定（+Y 朝上），**线性**数据
+ *   rough -> `_rough`    灰度粗糙度（不是 glTF 默认的 G/B 合并图）
+ * 用 `_nor_gl` 而不是 `_nor`：DCC 里 DirectX 与 OpenGL 的法线绿通道相反，
+ * 后缀写全可以避免美术把图拖进引擎后"光照反了"。
+ */
 const ROLE_SUFFIX = {
   diff: '_diff',
   alpha: '_alpha',
@@ -48,6 +59,13 @@ const ROLE_SUFFIX = {
   rough: '_rough',
 }
 
+/**
+ * 长边像素 -> 分辨率档位（写进文件名后缀）。
+ *
+ * 只有 1024 / 2048 / 4096 三个"标准档"才配后缀，其它尺寸一律 0（不写后缀）——
+ * 因为 `_1k/_2k/_4k` 在资源管线里是"质量等级"的含义，给 512 或 3000 硬标一个
+ * 档位会让下游按错误的尺寸做预算/降采样。用 Map 而不是 if 链，便于将来加档位。
+ */
 const SIZE_TO_K = new Map([
   [1024, 1],
   [2048, 2],
@@ -83,6 +101,17 @@ export function textureResolutionK(texture) {
   return SIZE_TO_K.get(max) || 0
 }
 
+/**
+ * 把材质名/kind 规整成"安全的资源名基名"。
+ *
+ * 文件名要能跨平台（Windows 不允许 `<>:"/\|?*`）、能在 URL 里直接使用、
+ * 又不能以 `_` 或 `.` 开头（隐藏文件 / 被误认为扩展名）。
+ * 规则：非法字符统一换成 `_` → 去掉首尾的 `_` → 空串回落到 'texture'。
+ * 注意 `-` 与 `.` 是保留的：`leaf-01.preview` 这类名字本来就是允许的。
+ *
+ * @param {string} base 原始基名（通常是材质的 userData.kind）
+ * @returns {string} 可安全写入文件名/URL 的基名，永不为空
+ */
 function safeBase(base) {
   return String(base || 'texture').replace(/[^A-Za-z0-9_.-]+/g, '_').replace(/^_+|_+$/g, '') || 'texture'
 }
@@ -336,6 +365,19 @@ export function applyExportTextureNames(root) {
   const seen = new Set()
   if (!root || typeof root.traverse !== 'function') return { manifest, alphaAliases }
 
+  /**
+   * 给一张贴图写资源名，并把它的尺寸信息记进 manifest（同名只记一次）。
+   *
+   * 写的是 `tex.name`：GLTFExporter 只把这个字段写进 `textures[].name`，
+   * `images[].name` 的补全在后面 `patchGlbTextureNames()` 里按 source 反查。
+   * 去重是必要的：树皮/叶片材质被多个 mesh 共享时，同一张贴图会被访问多次，
+   * 不去重 manifest 里会出现大量重复条目。
+   *
+   * @param {string} kind 材质类型（bark / leaf / flower / fruit），作为资源名前缀
+   * @param {string} role 资源角色（diff / alpha / normal / rough）
+   * @param {THREE.Texture|null} tex 目标贴图；为空直接跳过
+   * @returns {string|null} 写好的资源名（供 alpha 关联时引用）
+   */
   const add = (kind, role, tex) => {
     if (!tex) return null
     const name = textureAssetName(kind, role, tex)
@@ -381,15 +423,43 @@ export function applyExportTextureNames(root) {
 /* GLB 内部 image 名称修补                                              */
 /* ------------------------------------------------------------------ */
 
+/**
+ * GLB 容器常量（均为**小端** uint32 的字节序列解读）。
+ *
+ *   GLB_MAGIC  = 0x46546C67  文件魔数，实际字节是 ASCII "glTF"
+ *   CHUNK_JSON = 0x4E4F534A  JSON 块类型，实际字节是 ASCII "JSON"
+ * （BIN 块类型是 0x004E4942 = "BIN"，本文件不需要单独比对，只原样搬运。）
+ */
 const GLB_MAGIC = 0x46546c67
 const CHUNK_JSON = 0x4e4f534a
 
+/**
+ * 解析 GLB 二进制头与所有 chunk，返回 `[{type, data}]`。
+ *
+ * GLB 二进制布局（规范 2.0，全部小端）：
+ *   [0..3]   magic  = "glTF"
+ *   [4..7]   version（本项目恒为 2，这里不校验）
+ *   [8..11]  totalLength = 整个文件字节数
+ *   [12..]   若干 chunk，每个 = 4 字节长度 + 4 字节类型 + 数据（数据长度已 4 字节对齐）
+ * `total` 用文件头声明的总长而不是 `buffer.byteLength`：GLTFExporter 偶尔会在
+ * 末尾留未对齐的填充，按声明长度截断可以避免把填充误当成一个 chunk。
+ *
+ * `data` 是 `Uint8Array` **视图**而不是拷贝（`new Uint8Array(buffer, off+8, len)`），
+ * 这样解析 4K 贴图的 BIN 块时不会额外复制几十 MB；代价是调用方不能持有视图后
+ * 再改写原 buffer —— 本文件的用法都是"读完立即重新拼装"，满足这个前提。
+ *
+ * @param {ArrayBuffer} buffer GLB 文件内容
+ * @returns {Array<{type:number, data:Uint8Array}>} chunk 列表（含 JSON 与 BIN）
+ * @throws {Error} 魔数不匹配（不是 GLB）
+ */
 function readGlb(buffer) {
   const dv = new DataView(buffer)
   if (dv.getUint32(0, true) !== GLB_MAGIC) throw new Error('not GLB')
   const total = dv.getUint32(8, true)
   const chunks = []
   let off = 12
+  // `off + 8 <= total`：至少要有"长度 + 类型"8 字节才算一个 chunk 头，
+  // 用 <= 而不是 < 是为了容忍最后一个 chunk 数据为空（长度 0）的合法情况。
   while (off + 8 <= total) {
     const len = dv.getUint32(off, true)
     const type = dv.getUint32(off + 4, true)
@@ -400,12 +470,22 @@ function readGlb(buffer) {
   return chunks
 }
 
+/**
+ * 按 chunk 列表重新拼装 GLB：写魔数、版本 2、总长，再逐个写"长度 + 类型 + 数据"。
+ *
+ * 调用方（`patchGlbTextureNames`）已保证 JSON chunk 被补齐到 4 字节对齐，
+ * 所以这里**不再做二次对齐** —— 若传入未对齐的数据，产出的文件会被严格读取器拒绝。
+ *
+ * @param {Array<{type:number, data:Uint8Array}>} chunks chunk 列表
+ * @returns {ArrayBuffer} 新的 GLB 二进制
+ */
 function writeGlb(chunks) {
+  // 总长 = 12 字节头 + 每个 chunk 的 (8 字节头 + 数据)
   const total = 12 + chunks.reduce((n, c) => n + 8 + c.data.length, 0)
   const out = new Uint8Array(total)
   const dv = new DataView(out.buffer)
   dv.setUint32(0, GLB_MAGIC, true)
-  dv.setUint32(4, 2, true)
+  dv.setUint32(4, 2, true)          // version 恒为 2
   dv.setUint32(8, total, true)
   let off = 12
   for (const c of chunks) {
@@ -417,12 +497,23 @@ function writeGlb(chunks) {
   return out.buffer
 }
 
+/**
+ * 把 JSON 块的字节补齐到 4 字节对齐。
+ *
+ * glTF 规范要求每个 chunk 的数据长度是 4 的倍数：
+ *   - **JSON 块用空格 0x20 填充**（这样某些解析器可以直接当 JSON 文本读尾随空白）；
+ *   - BIN 块才用 0x00 填充。
+ * 已经对齐时**原样返回同一个引用**（省掉一次按 MB 计的拷贝）。
+ *
+ * @param {Uint8Array} bytes JSON 的 UTF-8 字节
+ * @returns {Uint8Array} 对齐后的字节（可能是原引用）
+ */
 function padJson(bytes) {
   const pad = (4 - (bytes.length % 4)) % 4
   if (!pad) return bytes
   const out = new Uint8Array(bytes.length + pad)
   out.set(bytes)
-  out.fill(0x20, bytes.length)
+  out.fill(0x20, bytes.length)      // 0x20 = 空格，不是 0
   return out
 }
 
@@ -499,12 +590,28 @@ export function patchGlbTextureNames(buffer, alphaAliases = []) {
   return writeGlb(chunks)
 }
 
+/**
+ * 对外暴露的角色后缀表（供 UI/自检显示"这次导出会产出哪些后缀"）。
+ * 与内部 ROLE_SUFFIX 是**同一个对象引用**，只读使用，不要修改。
+ */
 export const TEXTURE_ROLE_SUFFIX = ROLE_SUFFIX
 
 /* ------------------------------------------------------------------ */
 /* 导出材质补全: 没有 normal/rough 贴图时生成中性贴图资源               */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 用绘制回调造一张离屏 CanvasTexture（导出期的临时贴图工厂）。
+ *
+ * `colorSpace = NoColorSpace` 是刻意的：这个工厂只用于**法线/粗糙度**这类线性数据，
+ * 若标成 sRGB，导出器会按颜色做一次编码，图里的 128/255 就会被改成别的值。
+ * 没有 `document`（Node 自检）时返回 null，调用方会跳过补槽。
+ *
+ * @param {number} width 宽（px）
+ * @param {number} height 高（px）
+ * @param {(ctx: CanvasRenderingContext2D, w: number, h: number) => void} paint 绘制回调
+ * @returns {THREE.CanvasTexture|null}
+ */
 function makeCanvasTexture(width, height, paint) {
   if (typeof document === 'undefined') return null
   const c = document.createElement('canvas')
@@ -569,7 +676,7 @@ function fallbackSize(material) {
  */
 export function ensureExportMaterialMaps(root) {
   const restore = []
-  const seen = new Set()
+  const seen = new Set()   // 材质去重：同一材质被多个 mesh 共享时只处理一次
   if (!root || typeof root.traverse !== 'function') return () => {}
   root.traverse((obj) => {
     if (!obj || !obj.isMesh) return
@@ -579,15 +686,19 @@ export function ensureExportMaterialMaps(root) {
       seen.add(m)
       const { width, height } = fallbackSize(m)
       if (!m.normalMap) {
+        // 花朵的法线强度取 1.5：花瓣起伏比叶脉细密，1.0 在远处会看不出形。
         const strength = (m.userData && m.userData.kind) === 'flower' ? 1.5 : 1
         let tex = m.map ? makeNormalTextureFromTexture(m.map, width, height, strength) : null
         if (!tex) tex = makeFlatNormalTexture(width, height)
         if (tex) {
           m.normalMap = tex
+          // previous 记 null（因为进入分支的前提就是没有 normalMap），
+          // restore 里据此把槽位还原成"空"。
           restore.push({ material: m, key: 'normalMap', previous: null, texture: tex })
         }
       }
       if (!m.roughnessMap) {
+        // 用材质标量 roughness 当亮度偏移基准，导出图的平均粗糙度才和视口一致。
         let tex = m.map ? makeRoughnessTextureFromTexture(m.map, width, height, m.roughness) : null
         if (!tex) tex = makeFlatRoughnessTexture(m.roughness, width, height)
         if (tex) {
@@ -599,6 +710,12 @@ export function ensureExportMaterialMaps(root) {
   })
   return () => {
     for (const r of restore) {
+      // 两个条件都要判断：
+      //   - 槽位仍是"我们挂的那张" -> 还原（正常情况）；
+      //   - 槽位被后续阶段置成 null（例如 ensureExportTextureAlignment 换图失败）-> 也还原，
+      //     否则材质会永久处于"没有法线"的状态。
+      // 若槽位已被别的代码换成第三张图，则**不动**它（避免覆盖别人的结果）；
+      // 但无论走哪条分支，临时贴图都必须 dispose，否则每次导出都泄漏。
       if (r.material[r.key] === r.texture) r.material[r.key] = r.previous
       else if (r.material[r.key] === null) r.material[r.key] = r.previous
       r.texture.dispose()
@@ -634,14 +751,20 @@ export function ensureExportRoughnessGrayscale(root) {
     for (const m of mats) {
       if (!m || seen.has(m)) continue
       seen.add(m)
+      // 三个条件：有粗糙度图、没有显式金属度图、金属度确实为 0。
+      // 阈值用 1e-6 而不是 === 0：metalness 来自滑杆/存档，可能是 0.0000001 这种
+      // 浮点残差，直接比 0 会漏掉"实际上就是非金属"的材质。
       if (m.roughnessMap && !m.metalnessMap && Math.abs(Number(m.metalness) || 0) < 1e-6) {
         m.metalnessMap = m.roughnessMap
+        // previous 记 null：进入分支的前提就是没有 metalnessMap。
         restore.push({ material: m, previous: null })
       }
     }
   })
   return () => {
     for (const r of restore) {
+      // 仍然指向同一张 roughnessMap 才还原 —— 若导出期间有别的阶段换了图，
+      // 说明 metalnessMap 已不属于我们，盲目置空会破坏别人的设置。
       if (r.material.metalnessMap && r.material.metalnessMap === r.material.roughnessMap) {
         r.material.metalnessMap = r.previous
       }

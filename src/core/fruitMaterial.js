@@ -36,6 +36,8 @@ import {
 const SIZE = 1024
 
 /** 建一张离屏 canvas；无 DOM（Node 自检）时返回 null，调用方据此降级 */
+// 说明: 所有果皮贴图都在这张 canvas 上画, 再交给 CanvasTexture。
+// 调用方必须处理 null —— 自检环境没有 canvas, 返回值会一路传成空贴图。
 function makeCanvas(w, h) {
   if (typeof document === 'undefined') return null
   const c = document.createElement('canvas')
@@ -74,12 +76,16 @@ function makeDetailPixels(fruit, seed) {
 
   const type = fruit.type || 'acorn'
   // 高频小凸起/凹坑: 法线贴图能看到明确的果皮细节
+  // 数量按类型区分: 松果鳞片最多 (5200), 浆果其次 (3200), 橡果/坚果 (3800)
   const count = type === 'cone' ? 5200 : type === 'berry' ? 3200 : 3800
   for (let i = 0; i < count; i++) {
     const x = rng.range(0, SIZE)
     const y = rng.range(0, SIZE)
+    // 半径: 松果鳞片更大 (上限 8px), 其余 5px; 下限 0.8px 防止小到被 mipmap 抹平
     const r = rng.range(0.8, type === 'cone' ? 8 : 5)
+    // 一半画暗坑 (40..100)、一半画亮凸 (170..235): 两极分化 -> 高度梯度更强, 法线更明显
     const v = rng.chance(0.5) ? rng.range(40, 100) : rng.range(170, 235)
+    // globalAlpha 随机 0.35..0.9: 斑点深浅不一, 避免看起来像规则点阵
     ctx.globalAlpha = rng.range(0.35, 0.9)
     ctx.fillStyle = `rgb(${v}, ${v}, ${v})`
     ctx.beginPath()
@@ -88,17 +94,22 @@ function makeDetailPixels(fruit, seed) {
   }
 
   // 松果鳞片 / 橡果帽的交叉纹理
+  // step = 横纹的行距 (像素): 松果 46 更密, 其它 74 更疏; 线宽同理 (5 / 3)。
+  // x += 8 是采样步长, 配合 sin(x*0.025)*9 让每条横线轻微起伏, 避免机械的直线感。
   ctx.globalAlpha = 0.55
   ctx.strokeStyle = '#3c3c3c'
   ctx.lineWidth = type === 'cone' ? 5 : 3
   const step = type === 'cone' ? 46 : 74
   for (let y = 20; y < SIZE; y += step) {
     ctx.beginPath()
+    // y+20 起画: 避开贴图上边缘, 否则平铺时顶部会出现半条线
     for (let x = 0; x <= SIZE; x += 8) ctx.lineTo(x, y + Math.sin(x * 0.025) * 9)
     ctx.stroke()
   }
   if (type === 'acorn' || type === 'nut') {
     // 帽沿的纵向棱
+    // 每 58px 一条, 并向右倾斜 16px (从 (x,0) 到 (x+16,SIZE)) -> 呈放射状而非完全垂直,
+    // 更像壳斗帽上一圈圈叠起来的鳞片棱。
     for (let x = 0; x < SIZE; x += 58) {
       ctx.beginPath()
       ctx.moveTo(x, 0)
