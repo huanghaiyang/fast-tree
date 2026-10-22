@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><title>export-map-consistency: booting</title></head>
+<body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+<iframe id="f" src="/" style="width:1200px;height:840px;border:0"></iframe>
+<pre id="out">…</pre>
+<script type="module">
+/* 导出贴图一致性复核: 树叶 / 花朵 / 果实的 diff / nor / rough / alpha
+ * 必须 ① 同尺寸 ② 同朝向 ③ 同 UV 变换 (KHR_texture_transform)
+ * 判据全部在导出的 GLB 内部图上测量 (引擎拿到的就是这些像素)。
+ */
+const f = document.getElementById('f')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const R = []
+let fail = 0
+const line = (s) => { R.push(s); document.getElementById('out').textContent = R.join('\n') }
+const check = (name, cond, detail = '') => {
+  if (!cond) fail++
+  line((cond ? '✔ ' : '✘ ') + name + (detail ? ' — ' + detail : ''))
+}
+async function waitFor(fn, timeout = 30000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeout) { try { if (fn()) return true } catch { } await sleep(100) }
+  return false
+}
+
+/* ---------------- GLB 解析 ---------------- */
+function parseGLB(buf) {
+  const dv = new DataView(buf)
+  if (dv.getUint32(0, true) !== 0x46546c67) throw new Error('不是 GLB')
+  let off = 12, json = null, bin = null
+  while (off < buf.byteLength) {
+    const len = dv.getUint32(off, true)
+    const type = dv.getUint32(off + 4, true)
+    const data = new Uint8Array(buf, off + 8, len)
+    if (type === 0x4e4f534a) json = JSON.parse(new TextDecoder().decode(data))
+    else if (type === 0x004e4942) bin = data
+    off += 8 + len
+  }
+  return { json, bin }
+}
+function materialOfNode(json, name) {
+  const node = (json.nodes || []).find((n) => n.name === name)
+  if (!node || node.mesh === undefined) return null
+  const mesh = (json.meshes || [])[node.mesh]
+  const prim = mesh && mesh.primitives && mesh.primitives[0]
+  return prim && prim.material !== undefined ? (json.materials || [])[prim.material] : null
+}
+async function imagePixels(json, bin, imgIndex) {
+  const img = (json.images || [])[imgIndex]
+  if (!img) return null
+  let src = img.uri
+  let objectUrl = ''
+  if (!src) {
+    const bv = (json.bufferViews || [])[img.bufferView]
+    if (!bv) return null
+    const bytes = bin.subarray(bv.byteOffset || 0, (bv.byteOffset || 0) + bv.byteLength)
+    objectUrl = URL.createObjectURL(new Blob([bytes], { type: img.mimeType || 'image/png' }))
+    src = objectUrl
+  }
+  const im = new Image()
+  im.src = src
+  await im.decode().catch(() => new Promise((res) => { im.onload = res; im.onerror = res }))
+  const c = document.createElement('canvas')
+  c.width = im.naturalWidth || im.width || 1
+  c.height = im.naturalHeight || im.height || 1
+  const ctx = c.getContext('2d')
+  ctx.drawImage(im, 0, 0)
+  const data = ctx.getImageData(0, 0, c.width, c.height).data
+  if (objectUrl) URL.revokeObjectURL(objectUrl)
+  return { data, width: c.width, height: c.height }
+}
+function texturePixels(json, bin, index) {
+  const t = (json.textures || [])[index]
+  if (!t || t.source === undefined) return null
+  return imagePixels(json, bin, t.source)
+}
+
+/* ---------------- 像素工具 (都在"导出后的图像朝向"里算) ---------------- */
+const lumAt = (px, x, y) => {
+  const i = (y * px.width + x) * 4
+  const d = px.data
+  return (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) / 255
+}
+const alphaAt = (px, x, y) => px.data[(y * px.width + x) * 4 + 3] / 255
+const norActivity = (px, x, y) => {
+  const i = (y * px.width + x) * 4
+  return (Math.abs(px.data[i] - 128) + Math.abs(px.data[i + 1] - 128)) / 255
+}
+function rowProfile(px, fn) {
+  const p = new Float64Array(px.height)
+  for (let y = 0; y < px.height; y++) {
+    let s = 0
+    for (let x = 0; x < px.width; x++) s += fn(px, x, y)
+    p[y] = s / px.width
+  }
+  return p
+}
+const corr = (a, b) => {
+  const n = Math.min(a.length, b.length)
+  let ma = 0, mb = 0
+  for (let i = 0; i < n; i++) { ma += a[i]; mb += b[i] }
+  ma /= n; mb /= n
+  let sab = 0, sa = 0, sb = 0
+  for (let i = 0; i < n; i++) {
+    const da = a[i] - ma, db = b[i] - mb
+    sab += da * db; sa += da * da; sb += db * db
+  }
+  return sa > 0 && sb > 0 ? sab / Math.sqrt(sa * sb) : 0
+}
+const reversed = (p) => Array.from(p).reverse()
+
+/** alpha 蒙版 IoU (diff 的 alpha 通道 vs alpha 贴图灰度) */
+function maskIoU(maskPx, alphaPx) {
+  let inter = 0, uni = 0
+  for (let y = 0; y < Math.min(maskPx.height, alphaPx.height); y++) {
+    for (let x = 0; x < Math.min(maskPx.width, alphaPx.width); x++) {
+      const a = alphaAt(maskPx, x, y) > 0.5
+      const b = lumAt(alphaPx, x, y) > 0.5
+      if (a && b) inter++
+      if (a || b) uni++
+    }
+  }
+  return uni ? inter / uni : 0
+}
+/** 把一张图上下翻转 (行序反转) */
+function flipV(px) {
+  const out = { data: new Uint8ClampedArray(px.data.length), width: px.width, height: px.height }
+  const rowBytes = px.width * 4
+  for (let y = 0; y < px.height; y++) {
+    const src = y * rowBytes
+    const dst = (px.height - 1 - y) * rowBytes
+    out.data.set(px.data.subarray(src, src + rowBytes), dst)
+  }
+  return out
+}
+
+/* ---------------- 测试素材: 上下极不对称的卡片 ---------------- */
+function makeAsymmetricCard() {
+  const w = 128, h = 128
+  const c = document.createElement('canvas')
+  c.width = w; c.height = h
+  const ctx = c.getContext('2d')
+  ctx.clearRect(0, 0, w, h)
+  ctx.beginPath()
+  ctx.ellipse(w / 2, h / 2, w * 0.38, h * 0.46, 0, 0, Math.PI * 2)
+  ctx.closePath()
+  ctx.save()
+  ctx.clip()
+  ctx.fillStyle = '#303030'
+  ctx.fillRect(0, 0, w, h)
+  // 上半部很亮的横带 + 下半部暗纹 -> 上下方向一眼可辨
+  ctx.fillStyle = '#f2f2f2'
+  ctx.fillRect(0, h * 0.08, w, h * 0.14)
+  ctx.fillStyle = '#8d8d8d'
+  ctx.fillRect(0, h * 0.30, w, h * 0.04)
+  ctx.fillStyle = '#1a1a1a'
+  ctx.fillRect(0, h * 0.62, w, h * 0.06)
+  ctx.fillStyle = '#d0d0d0'
+  ctx.fillRect(0, h * 0.82, w, h * 0.03)
+  ctx.restore()
+  // 顶部切一个缺口 -> alpha 轮廓上下不对称 (能测出 alpha 是否被上下镜像)
+  ctx.globalCompositeOperation = 'destination-out'
+  ctx.beginPath()
+  ctx.ellipse(w / 2, h * 0.10, w * 0.16, h * 0.11, 0, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.globalCompositeOperation = 'source-over'
+  return c.toDataURL('image/png')
+}
+
+let win
+f.addEventListener('load', () => { win = f.contentWindow })
+
+setTimeout(async () => {
+  try {
+    for (let i = 0; i < 150 && !win; i++) await sleep(100)
+    await waitFor(() => win.__fastTree && win.__fastTree.ready && win.__fastTreeScene && win.__fastTreeSceneApi, 30000)
+    const state = win.__fastTree
+    const scene = win.__fastTreeScene
+    const api = win.__fastTreeSceneApi
+    await sleep(600)
+
+    /* ---------- 场景: 叶 + 花 + 果都开; 叶片给非对称卡 + 非零 UV 变换 ---------- */
+    const card = makeAsymmetricCard()
+    const p = state.params
+    p.flower.enabled = true
+    p.flower.levels = [false, true, true, true, true]
+    p.flower.texture = '/leaves/fl_batch1/flower1_r01_c01.png'
+    p.flower.normalFromAlbedo = 1.5
+    p.fruit.enabled = true
+    p.fruit.levels = [false, true, true, true, true]
+    p.leaves.enabled = true
+    p.leafMat.texture = card
+    p.leafMat.normalTexture = ''
+    p.leafMat.normalFromAlbedo = 1.2
+    p.leafMat.alphaTest = 0.3
+    p.leafMat.textureU = 0.18
+    p.leafMat.textureV = -0.12
+    p.leafMat.textureRepeatU = 1.5
+    p.leafMat.textureRepeatV = 1.25
+    p.leafMat.textureRotation = 0.25
+    api.rebuildNow(true)
+    await sleep(1600)
+
+    const preview = await scene.prepareExport('glb', 'map-consistency.glb')
+    const { json, bin } = parseGLB(await preview.payload.blob.arrayBuffer())
+    const names = (json.textures || []).map((t) => t.name || '')
+
+    async function inspect(nodeName, kind) {
+      const mat = materialOfNode(json, nodeName)
+      if (!mat) { check(`${kind}: 找到节点 ${nodeName}`, false); return null }
+      const pbr = mat.pbrMetallicRoughness || {}
+      const idx = {
+        diff: pbr.baseColorTexture && pbr.baseColorTexture.index,
+        nor: mat.normalTexture && mat.normalTexture.index,
+        rough: pbr.metallicRoughnessTexture && pbr.metallicRoughnessTexture.index,
+      }
+      // alpha 资源是 patchGlbTextureNames 补的独立图片, 按名字找
+      const alphaName = names.find((n) => new RegExp(`^${kind}_alpha(_\\d+k)?$`).test(n))
+      const alphaIdx = alphaName ? names.indexOf(alphaName) : -1
+      const px = {}
+      const sizeReport = []
+      for (const role of ['diff', 'nor', 'rough']) px[role] = idx[role] === undefined ? null : await texturePixels(json, bin, idx[role])
+      px.alpha = alphaIdx >= 0 ? await texturePixels(json, bin, alphaIdx) : null
+
+      line(`\n===== ${kind} (${nodeName}) =====`)
+      const sizes = Object.fromEntries(Object.entries(px).map(([k, v]) => [k, v ? `${v.width}x${v.height}` : 'missing']))
+      line('  尺寸: ' + Object.entries(sizes).map(([k, v]) => `${k}=${v}`).join('  '))
+      check(`${kind}: diff/nor/rough/alpha 都存在`, !!(px.diff && px.nor && px.rough && px.alpha), JSON.stringify(sizes))
+      if (!px.diff || !px.nor || !px.rough || !px.alpha) return null
+      const sameSize = px.diff.width === px.nor.width && px.diff.width === px.rough.width && px.diff.width === px.alpha.width &&
+        px.diff.height === px.nor.height && px.diff.height === px.rough.height && px.diff.height === px.alpha.height
+      check(`${kind}: 四张贴图尺寸一致`, sameSize, JSON.stringify(sizes))
+
+      const tr = (i) => {
+        const t = (json.textures || [])[i]
+        const ext = t && t.extensions && t.extensions.KHR_texture_transform
+        return ext ? { offset: ext.offset || [0, 0], rotation: ext.rotation || 0, scale: ext.scale || [1, 1] } : null
+      }
+      const sameTransform = JSON.stringify(tr(idx.diff)) === JSON.stringify(tr(idx.nor)) &&
+        JSON.stringify(tr(idx.diff)) === JSON.stringify(tr(idx.rough))
+      check(`${kind}: diff/nor/rough 的 UV 变换一致`, sameTransform,
+        `diff=${JSON.stringify(tr(idx.diff))} nor=${JSON.stringify(tr(idx.nor))} rough=${JSON.stringify(tr(idx.rough))}`)
+      return { px, idx, sizes }
+    }
+
+    const leaf = await inspect('Leaves', 'leaf')
+    const flower = await inspect('Flowers', 'flower')
+    const fruit = await inspect('Bark_Fruit', 'fruit')
+
+    /* ---------- 朝向: alpha 与 diff 同朝向 ---------- */
+    // 树叶/花朵: alpha 是叶形镂空蒙版 -> 与 diff 的 alpha 通道比 IoU
+    // 果实: diff 是不透明果皮 (alpha 全 255), alpha 是沟槽蒙版 -> 与 nor 的细节强度比行相关
+    for (const [kind, info] of [['leaf', leaf], ['flower', flower], ['fruit', fruit]]) {
+      if (!info) continue
+      const { px } = info
+      if (kind !== 'fruit') {
+        const aligned = maskIoU(px.diff, px.alpha)
+        const flipped = maskIoU(px.diff, flipV(px.alpha))
+        line(`  ${kind} alpha IoU: 对齐=${aligned.toFixed(3)} 翻转=${flipped.toFixed(3)}`)
+        check(`${kind}: alpha 与 diff 同朝向`, aligned > 0.9 && aligned > flipped + 0.05,
+          `aligned=${aligned.toFixed(3)} flipped=${flipped.toFixed(3)}`)
+      } else {
+        const alphaProf = rowProfile(px.alpha, (q, x, y) => 1 - lumAt(q, x, y))
+        const norProf = rowProfile(px.nor, norActivity)
+        const aligned = corr(alphaProf, norProf)
+        const flipped = corr(alphaProf, reversed(norProf))
+        line(`  fruit alpha/nor 行相关: 对齐=${aligned.toFixed(3)} 翻转=${flipped.toFixed(3)}`)
+        check('fruit: alpha 与 nor 同朝向', aligned >= flipped,
+          `aligned=${aligned.toFixed(3)} flipped=${flipped.toFixed(3)}`)
+      }
+    }
+
+    /* ---------- 朝向: nor / rough 与 diff 同朝向 (非对称卡判上下) ---------- */
+    if (leaf) {
+      const { px } = leaf
+      const lumProf = rowProfile(px.diff, lumAt)
+      // rough: 越亮越光滑 -> 与亮度负相关
+      const roughProf = rowProfile(px.rough, (q, x, y) => 1 - lumAt(q, x, y))
+      const roughAligned = corr(lumProf, roughProf)
+      const roughFlipped = corr(lumProf, reversed(roughProf))
+      line(`  leaf rough 行相关: 对齐=${roughAligned.toFixed(3)} 翻转=${roughFlipped.toFixed(3)}`)
+      check('leaf: rough 与 diff 同朝向', roughAligned > 0.5 && roughAligned > roughFlipped + 0.1,
+        `aligned=${roughAligned.toFixed(3)} flipped=${roughFlipped.toFixed(3)}`)
+
+      // nor: 细节强度集中在明暗交界处 -> 与 |dL/dy| 正相关
+      const gradProf = rowProfile(px.diff, (q, x, y) => {
+        const a = lumAt(q, x, Math.max(0, y - 1))
+        const b = lumAt(q, x, Math.min(q.height - 1, y + 1))
+        return Math.abs(b - a)
+      })
+      const norProf = rowProfile(px.nor, norActivity)
+      const norAligned = corr(gradProf, norProf)
+      const norFlipped = corr(gradProf, reversed(norProf))
+      line(`  leaf nor 行相关: 对齐=${norAligned.toFixed(3)} 翻转=${norFlipped.toFixed(3)}`)
+      check('leaf: nor 与 diff 同朝向', norAligned > 0.3 && norAligned > norFlipped + 0.1,
+        `aligned=${norAligned.toFixed(3)} flipped=${norFlipped.toFixed(3)}`)
+
+      // 视口自动法线也必须和 diffuse 同 flipY, 否则视口里法线细节就是镜像的
+      const leafMat = scene.materials.leaf
+      if (leafMat && leafMat.userData && leafMat.userData.autoNormal && leafMat.normalMap) {
+        check('leaf: 视口自动法线 flipY 与 diff 一致', leafMat.normalMap.flipY === leafMat.map.flipY,
+          `nor.flipY=${leafMat.normalMap.flipY} diff.flipY=${leafMat.map.flipY}`)
+      }
+    }
+
+    /* ---------- 用户自带法线贴图 (分辨率与卡片不同) 也要被对齐 ---------- */
+    {
+      const nc = document.createElement('canvas')
+      nc.width = 64
+      nc.height = 64
+      const nx = nc.getContext('2d')
+      nx.fillStyle = 'rgb(128,128,255)'
+      nx.fillRect(0, 0, 64, 64)
+      const normalUrl = nc.toDataURL('image/png')
+      p.leafMat.normalTexture = normalUrl
+      p.leafMat.normalFromAlbedo = 0
+      api.rebuildNow(false)
+      await sleep(900)
+      const preview2 = await scene.prepareExport('glb', 'map-consistency-2.glb')
+      const g2 = parseGLB(await preview2.payload.blob.arrayBuffer())
+      const mat2 = materialOfNode(g2.json, 'Leaves')
+      const pbr2 = (mat2 && mat2.pbrMetallicRoughness) || {}
+      const d2 = pbr2.baseColorTexture ? await texturePixels(g2.json, g2.bin, pbr2.baseColorTexture.index) : null
+      const n2 = mat2 && mat2.normalTexture ? await texturePixels(g2.json, g2.bin, mat2.normalTexture.index) : null
+      line('\n===== leaf 自带法线贴图 (64x64) =====')
+      const sizeOf = (px) => (px ? px.width + 'x' + px.height : 'missing')
+      line('  尺寸: ' + JSON.stringify({ diff: sizeOf(d2), nor: sizeOf(n2) }))
+      check('leaf: 自带法线贴图被重采样到 diff 尺寸',
+        !!(d2 && n2) && d2.width === n2.width && d2.height === n2.height,
+        sizeOf(d2) + ' vs ' + sizeOf(n2))
+    }
+    line('\n结果: ' + (fail ? 'EXPORT-MAP-FAIL ' + fail : 'EXPORT-MAP-OK'))
+    const summary = [leaf, flower, fruit].filter(Boolean).map((i) => Object.entries(i.sizes).map(([k, v]) => k + '=' + v).join('/')).join(' | ')
+    document.title = (fail ? 'EXPORT-MAP-FAIL(' + fail + ')' : 'EXPORT-MAP-OK') + ' :: ' + summary
+  } catch (e) {
+    document.title = 'EXPORT-MAP-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 900)
+    line('EX: ' + (e && e.stack ? e.stack : e))
+  }
+}, 2200)
+</script></body></html>

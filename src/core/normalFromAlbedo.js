@@ -97,7 +97,10 @@ export function albedoNormalTexture(texture, strength, key) {
   } catch (e) {
     return null // 跨域/未加载完成
   }
-  const rgb = normalFromLuminance(pixels, nw, nh, strength, true)
+  // 关键: flipY 必须和 diffuse 一致。之前生成时固定 flipY=true、贴图却设成 flipY=false,
+  // 结果法线细节相对叶脉上下镜像 (导出后同理, 与 diff/nor/rough/alpha 成套要求冲突)。
+  const flipY = texture.flipY !== false
+  const rgb = normalFromLuminance(pixels, nw, nh, strength, flipY)
   const cv = document.createElement('canvas')
   cv.width = nw
   cv.height = nh
@@ -111,8 +114,8 @@ export function albedoNormalTexture(texture, strength, key) {
   }
   cx.putImageData(idata, 0, 0)
   const tex = new THREE.CanvasTexture(cv)
-  // 与 DataTexture 默认采样保持一致 (DataTexture 默认 nearest / 无 mipmap / flipY=false)
-  tex.flipY = false
+  // 采样参数沿用原来的 nearest / 无 mipmap, 朝向改成与 diffuse 相同
+  tex.flipY = flipY
   tex.generateMipmaps = false
   tex.magFilter = THREE.NearestFilter
   tex.minFilter = THREE.NearestFilter

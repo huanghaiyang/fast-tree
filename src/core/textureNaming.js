@@ -62,12 +62,17 @@ function drawTextureToCanvas(texture, width, height) {
   return { canvas: c, ctx, width: w, height: h }
 }
 
-/** 从 RGBA 像素生成全尺寸法线纹理 (Sobel) */
-export function makeNormalTextureFromPixels(pixels, width, height, strength = 1) {
+/**
+ * 从 RGBA 像素生成全尺寸法线纹理 (Sobel)
+ * @param {boolean} [textureFlipY] 生成结果的 flipY: 必须和配套的 diffuse 一致,
+ *        否则法线图与颜色图会上下镜像 (导出后也是镜像的)
+ */
+export function makeNormalTextureFromPixels(pixels, width, height, strength = 1, textureFlipY = true) {
   if (typeof document === 'undefined' || !pixels) return null
   const w = Math.max(1, Math.round(width))
   const h = Math.max(1, Math.round(height))
-  const rgb = normalFromLuminance(pixels, w, h, strength, true)
+  const flipY = textureFlipY !== false
+  const rgb = normalFromLuminance(pixels, w, h, strength, flipY)
   const c = document.createElement('canvas')
   c.width = w
   c.height = h
@@ -81,6 +86,7 @@ export function makeNormalTextureFromPixels(pixels, width, height, strength = 1)
   }
   ctx.putImageData(out, 0, 0)
   const tex = new THREE.CanvasTexture(c)
+  tex.flipY = flipY
   tex.colorSpace = THREE.NoColorSpace
   tex.needsUpdate = true
   return tex
@@ -96,7 +102,7 @@ export function makeNormalTextureFromTexture(texture, width, height, strength = 
   } catch {
     return null
   }
-  return makeNormalTextureFromPixels(pixels, src.width, src.height, strength)
+  return makeNormalTextureFromPixels(pixels, src.width, src.height, strength, texture.flipY !== false)
 }
 
 /**
@@ -168,6 +174,19 @@ export function makeAlphaDataUrl(texture, width, height) {
   }
   ctx.putImageData(out, 0, 0)
   try {
+    // 方向必须和导出的 diffuse 一致: GLTFExporter 对 flipY=true 的贴图会上下翻转后再写入,
+    // 而 alpha 资源是独立 data URI (不走导出器), 所以这里要自己做同样的翻转。
+    // 否则引擎里 leaf_alpha 与 leaf_diff 上下镜像。
+    if (texture.flipY !== false) {
+      const flipped = document.createElement('canvas')
+      flipped.width = w
+      flipped.height = h
+      const fctx = flipped.getContext('2d')
+      fctx.translate(0, h)
+      fctx.scale(1, -1)
+      fctx.drawImage(src.canvas, 0, 0)
+      return flipped.toDataURL('image/png')
+    }
     return src.canvas.toDataURL('image/png')
   } catch {
     return null
@@ -463,3 +482,121 @@ export function ensureExportRoughnessGrayscale(root) {
     }
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* 导出贴图成套对齐: 同尺寸 + 同朝向 + 同 UV 变换                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 叶片 / 花朵 / 果实这些"卡片类"材质, 导出的 diff / nor / rough / alpha
+ * 必须成套一致 (美术拿去进引擎时四张图要能直接叠在一起):
+ *   - 尺寸: 四张图必须同分辨率 (否则 _xk 后缀不同、引擎里采样比例也不同)
+ *   - 朝向: 四张图必须同 flipY (否则上下镜像, 法线细节和叶脉错位)
+ *   - UV:   offset / repeat / rotation 必须和 diffuse 一致 (否则图案缩放/旋转错位)
+ *
+ * 典型问题来源:
+ *   1. 视口自动法线是按"长边 256 上限 + flipY=false"生成的 -> 导出既小又镜像;
+ *   2. 用户自带法线贴图的分辨率和卡片不一致;
+ *   3. alpha 资源是独立 data URI, 不经过 GLTFExporter 的 flipY 翻转 -> 和 diffuse 镜像;
+ *   4. 生成的法线/粗糙度没有复制 diffuse 的 UV 变换。
+ *
+ * 只在导出期间生效, 返回 restore() 恢复原材质并释放临时贴图。
+ */
+export const EXPORT_ALIGNED_KINDS = ['leaf', 'flower', 'fruit']
+const ALIGNED_KINDS = new Set(EXPORT_ALIGNED_KINDS)
+
+/** 把一张贴图重采样到目标尺寸 (内容朝向保持不变), 返回新的 CanvasTexture */
+function resampleExportMap(texture, width, height, flipY) {
+  const src = drawTextureToCanvas(texture, width, height)
+  if (!src) return null
+  const tex = new THREE.CanvasTexture(src.canvas)
+  tex.flipY = flipY !== false
+  tex.colorSpace = THREE.NoColorSpace
+  tex.needsUpdate = true
+  return tex
+}
+
+export function ensureExportTextureAlignment(root) {
+  if (typeof document === 'undefined' || !root || typeof root.traverse !== 'function') return () => {}
+  const swap = []        // { material, key, previous, texture }
+  const transforms = []  // { texture, key, center, offset, repeat, rotation, flipY }
+  const seen = new Set()
+
+  root.traverse((obj) => {
+    if (!obj || !obj.isMesh) return
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material]
+    for (const m of mats) {
+      if (!m || seen.has(m)) continue
+      seen.add(m)
+      const kind = (m.userData && m.userData.kind) || ''
+      if (!ALIGNED_KINDS.has(kind)) continue
+      const diff = m.map
+      const size = imageSize(diff)
+      if (!diff || size.width < 2 || size.height < 2) continue
+      const flipY = diff.flipY !== false
+      const target = { width: size.width, height: size.height }
+      const sameSize = (tex) => {
+        const s = imageSize(tex)
+        return s.width === target.width && s.height === target.height
+      }
+      const put = (key, texture) => {
+        if (!texture) return
+        texture.flipY = flipY
+        texture.wrapS = diff.wrapS
+        texture.wrapT = diff.wrapT
+        swap.push({ material: m, key, previous: m[key], texture })
+        m[key] = texture
+        m.needsUpdate = true
+      }
+
+      // ---- 法线: 自动法线(小尺寸/镜像)直接按当前 diffuse 全尺寸重做 ----
+      const autoStrength = Number((m.userData && m.userData.autoNormalStrength) || 0)
+      const isAuto = !!(m.userData && m.userData.autoNormal) && autoStrength > 0
+      if (isAuto || !m.normalMap) {
+        put('normalMap', makeNormalTextureFromTexture(diff, target.width, target.height, isAuto ? autoStrength : 1))
+      } else if (!sameSize(m.normalMap) || m.normalMap.flipY !== flipY) {
+        put('normalMap', resampleExportMap(m.normalMap, target.width, target.height, flipY))
+      }
+
+      // ---- 粗糙度: 尺寸/朝向不一致的重采样 ----
+      if (!m.roughnessMap) {
+        put('roughnessMap', makeRoughnessTextureFromTexture(diff, target.width, target.height, m.roughness))
+      } else if (!sameSize(m.roughnessMap) || m.roughnessMap.flipY !== flipY) {
+        put('roughnessMap', resampleExportMap(m.roughnessMap, target.width, target.height, flipY))
+      }
+
+      // ---- UV 变换: 以 diffuse 为基准 (导出器会写成 KHR_texture_transform) ----
+      for (const key of ['normalMap', 'roughnessMap', 'alphaMap']) {
+        const tex = m[key]
+        if (!tex || tex === diff) continue
+        transforms.push({
+          texture: tex,
+          key,
+          center: tex.center.clone(),
+          offset: tex.offset.clone(),
+          repeat: tex.repeat.clone(),
+          rotation: tex.rotation,
+        })
+        tex.center.copy(diff.center)
+        tex.offset.copy(diff.offset)
+        tex.repeat.copy(diff.repeat)
+        tex.rotation = diff.rotation
+      }
+    }
+  })
+
+  return () => {
+    for (const t of transforms) {
+      const tex = t.texture
+      tex.center.copy(t.center)
+      tex.offset.copy(t.offset)
+      tex.repeat.copy(t.repeat)
+      tex.rotation = t.rotation
+    }
+    for (const s of swap.reverse()) {
+      if (s.material[s.key] === s.texture) s.material[s.key] = s.previous
+      s.texture.dispose()
+    }
+  }
+}
+

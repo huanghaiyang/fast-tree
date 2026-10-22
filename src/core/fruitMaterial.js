@@ -137,7 +137,15 @@ function makeAlphaMaskDataUrl(detailPixels) {
   }
   ctx.putImageData(out, 0, 0)
   try {
-    return cv.toDataURL('image/png')
+    // 方向必须和导出的 diff / nor 一致: 这两张是 CanvasTexture (flipY=true),
+    // GLTFExporter 写进 GLB 时会上下翻转, 而 alpha 资源是独立 data URI 不走导出器,
+    // 所以这里先自己翻转一次, 否则引擎里 fruit_alpha 与 fruit_diff 上下镜像。
+    const flipped = makeCanvas(SIZE, SIZE)
+    const fctx = flipped.getContext('2d')
+    fctx.translate(0, SIZE)
+    fctx.scale(1, -1)
+    fctx.drawImage(cv, 0, 0)
+    return flipped.toDataURL('image/png')
   } catch {
     return null
   }

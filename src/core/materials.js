@@ -314,6 +314,7 @@ function applyAutoNormal(mat, p, flagKey = 'autoNormal') {
     if (mat.normalMap && mat.userData[flagKey]) {
       mat.normalMap = null
       mat.userData[flagKey] = false
+      mat.userData.autoNormalStrength = 0
       mat.needsUpdate = true
     }
     return
@@ -331,6 +332,7 @@ function applyAutoNormal(mat, p, flagKey = 'autoNormal') {
         if (t && !mat.normalMap) {
           mat.normalMap = t
           mat.userData[flagKey] = true
+          mat.userData.autoNormalStrength = strength
           mat.needsUpdate = true
         }
       }
@@ -342,6 +344,7 @@ function applyAutoNormal(mat, p, flagKey = 'autoNormal') {
   if (mat.userData[flagKey] && mat.normalMap) disposeTexture(mat.normalMap)
   mat.normalMap = tex
   mat.userData[flagKey] = true
+  mat.userData.autoNormalStrength = strength
   mat.needsUpdate = true
 }
 

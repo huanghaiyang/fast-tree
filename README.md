@@ -209,6 +209,9 @@ GLB 内贴图资源按 `_diff` / `_alpha` / `_nor_gl` / `_rough` 命名；贴图
 roughness 也从颜色贴图亮度/梯度推导（不是随机噪声）；glTF 默认会把 roughness/metalness 合并成绿蓝图，
 导出时对 metalness=0 的材质让两者共用同一张灰度贴图，所以 `_rough` 资源保持灰白。
 叶片/花朵/果实的 alpha 生成真正的黑白 PNG 资源；叶片/花朵仍以 baseColor alpha 通道 + `alphaMode: MASK` 表达裁切。
+**叶/花/果的四套贴图保证同尺寸、同朝向、同 UV 变换**：导出前会以该材质的 `diff` 为基准，把 `nor` / `rough` / `alpha` 对齐到同一分辨率、同一 `flipY`、同一 `offset/repeat/rotation`（`KHR_texture_transform`），
+这样美术拿到的四张图可以直接叠在一起用。视口里的"自动法线"是按长边 256 上限、`flipY=false` 生成的，导出时会按当前颜色贴图**全尺寸重新生成**；
+用户自带法线贴图若分辨率不同会被重采样；alpha 资源也会按 `diff` 的 `flipY` 翻转（独立 data URI 不走 GLTFExporter 的翻转）。
 果实导出使用独立的 `Fruit` 材质，带 `fruit_diff_1k` / `fruit_alpha_1k` / `fruit_nor_gl_1k` / `fruit_rough_1k`；
 果实 normal/alpha 来自果皮高度场（有壳斗帽棱线/鳞片细节），颜色细节由 `COLOR_0` 顶点色提供。
 
@@ -281,7 +284,7 @@ src/
    ├─ modelStats.js    全模三角面/顶点统计 (树皮+叶+花, 视口与导出共用)
    ├─ environments.js  环境预设 (白昼/黄昏/森林/雨林/沙漠/雪地/高原/黑夜/群星)
    ├─ textures.js      程序化树皮/叶片贴图 (颜色+法线+粗糙度)
-   ├─ textureNaming.js 导出贴图资源命名/补全 (diff/alpha/nor_gl/rough + 1K/2K/4K 后缀, 法线/粗糙度从贴图亮度推导, alpha 生成黑白 PNG)
+   ├─ textureNaming.js 导出贴图资源命名/补全/成套对齐 (diff/alpha/nor_gl/rough + 1K/2K/4K 后缀, 法线/粗糙度从贴图亮度推导, alpha 生成黑白 PNG, 叶/花/果四张图统一尺寸/朝向/UV 变换)
    ├─ fruitMaterial.js 果实导出材质 (独立 Fruit 材质 + fruit_diff/alpha/nor_gl/rough 贴图)
    ├─ exportPreview.js 导出预览数据 (GLB 产物/内嵌贴图/节点列表, OBJ 节点列表, PNG dataURL)
    ├─ materials.js     PBR + 风场/生长/自定义 GLSL + 节点选中高亮

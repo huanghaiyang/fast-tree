@@ -21,7 +21,7 @@ import { sampleEmitPositions, buildParticleSeeds, createParticleMaterial, PARTIC
 import { buildFallingLeaves, fallRebuildKey, FALL_FRAG } from '../src/core/fallingLeaves.js'
 import { buildLeafLitter, litterRebuildKey } from '../src/core/litter.js'
 import { normalFromLuminance } from '../src/core/normalFromAlbedo.js'
-import { textureAssetName, applyExportTextureNames } from '../src/core/textureNaming.js'
+import { textureAssetName, applyExportTextureNames, ensureExportTextureAlignment, EXPORT_ALIGNED_KINDS } from '../src/core/textureNaming.js'
 import { buildOcclusionGrid, occlusionAt, bakeOcclusion, bakeOcclusionByRanges } from '../src/core/ambientOcclusion.js'
 import { viewAngles, atlasLayout, crossCardQuads, alphaCoverage, elevationAngles } from '../src/core/impostor.js'
 import { ellipseLeafTexture, resolveEffectTexture, resolveEffectAspect } from '../src/core/leafTexture.js'
@@ -1754,6 +1754,53 @@ console.log('\n[31] 导出贴图资源命名')
     map.name === 'leaf_diff_2k' && normal.name === 'leaf_nor_gl_1k' &&
     naming.alphaAliases.some((a) => a.name === 'leaf_alpha_2k' && a.from === 'leaf_diff_2k'),
     `${map.name},${normal.name},${naming.alphaAliases.map((a) => a.name).join(',')}`)
+}
+
+/* 31.1 导出贴图成套一致性 (diff/nor/rough/alpha 同尺寸 + 同朝向 + 同 UV 变换) */
+console.log('\n[31.1] 导出贴图成套一致性')
+{
+  check('叶/花/果都属于需要成套对齐的材质',
+    ['leaf', 'flower', 'fruit'].every((k) => EXPORT_ALIGNED_KINDS.includes(k)),
+    EXPORT_ALIGNED_KINDS.join(','))
+  check('无 root / 无 DOM 时对齐函数安全返回空恢复函数',
+    typeof ensureExportTextureAlignment(null) === 'function' && typeof ensureExportTextureAlignment({}) === 'function')
+
+  // flipY 语义: 同一张"上暗下亮"的梯度图, 两种 flipY 得到的法线绿通道应互为反号
+  const w = 8, h = 8
+  const rgba = new Uint8ClampedArray(w * h * 4)
+  for (let y = 0; y < h; y++) {
+    const v = Math.round((y / (h - 1)) * 255)
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4
+      rgba[i] = v; rgba[i + 1] = v; rgba[i + 2] = v; rgba[i + 3] = 255
+    }
+  }
+  const mid = (3 * w + 4) * 3
+  const nFlip = normalFromLuminance(rgba, w, h, 1, true)
+  const nPlain = normalFromLuminance(rgba, w, h, 1, false)
+  check('法线绿通道随 flipY 反号 (朝向参数真的生效)',
+    nFlip[mid + 1] > 128 && nPlain[mid + 1] < 128,
+    `flipY=true g=${nFlip[mid + 1]} / false g=${nPlain[mid + 1]}`)
+
+  // 导出链路: 先补槽 -> 再对齐 -> 再命名
+  const exporterSrc = readFileSync(join('src', 'core', 'exporter.js'), 'utf8')
+  const iMaps = exporterSrc.indexOf('ensureExportMaterialMaps(root)')
+  const iAlign = exporterSrc.indexOf('ensureExportTextureAlignment(root)')
+  const iNames = exporterSrc.indexOf('applyExportTextureNames(root)')
+  check('导出顺序: 补全贴图槽 -> 成套对齐 -> 资源命名',
+    iMaps > 0 && iAlign > iMaps && iNames > iAlign, `maps=${iMaps} align=${iAlign} names=${iNames}`)
+  check('导出结束会恢复材质 (restoreAll 覆盖成功/失败两条路径)',
+    exporterSrc.includes('restoreAlign()') && (exporterSrc.match(/restoreAll\(\)/g) || []).length >= 3)
+
+  const alignSrc = readFileSync(join('src', 'core', 'textureNaming.js'), 'utf8')
+  check('对齐逻辑覆盖尺寸 + 朝向 + UV 变换',
+    alignSrc.includes('sameSize(') && alignSrc.includes('flipY !== false') &&
+    alignSrc.includes('tex.rotation = diff.rotation'))
+  check('alpha 资源按 diffuse 的 flipY 翻转 (与导出的 diff 同朝向)',
+    alignSrc.includes('texture.flipY !== false') && alignSrc.includes('ctx.scale(1, -1)'))
+  const autoSrc = readFileSync(join('src', 'core', 'normalFromAlbedo.js'), 'utf8')
+  check('视口自动法线的 flipY 跟随源贴图 (不再固定 false)',
+    autoSrc.includes('const flipY = texture.flipY !== false') && autoSrc.includes('tex.flipY = flipY'))
 }
 
 /* 32. 分叉开口对中 + 粗树枝根部圆度 */
