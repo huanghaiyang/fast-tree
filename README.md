@@ -19,6 +19,8 @@ npm run dev          # 打开 http://127.0.0.1:5273 (同时自动启动应用桥
 npm run build        # 产物在 dist/
 npm run preview      # 预览构建产物
 npm run selftest     # 无浏览器自检 (确定性/参数隔离/几何合法性/规模预算/导出格式)
+npm run leaf-cards   # 叶片素材入库 (AABB 切空白背景 + 量真实宽高比, 产物落在 public/leaves)
+npm run bark-textures # 树皮贴图入库 (切掉圆角/留白成整块不透明矩形, 产物落在 public/bark)
 ```
 
 > `npm run dev` 已内置 Vite 的沙箱兼容入口（受限环境也不会因 `net use` 探测报 `EPERM`），
@@ -123,6 +125,15 @@ SpeedTree 模式的验收是：`boundary=0 / nonManifold=0 / nonManifoldVertices
 LOD：树皮细节倍率、叶片保留比例、叶片数上限。
 贴图卡片模式、内置叶片卡片库、树叶材质、落叶 / 落叶堆积 / 叶片粒子发射全部位于「树叶」面板；
 「材质」面板只保留树皮材质与自定义 GLSL。
+
+**叶片卡片库现有 17 个批次**：①秋色系 ②绿色系 ③④桦树 ⑤–⑩樱花（6 批）⑪柳叶 B ⑫柳絮 ⑬柳花穗 ⑭灌木枝叶 ⑮灌木叶 ⑯松针 A ⑰松针 B（后 7 批为 v4/v5/v7 新素材，宽高比走实测值）。
+新素材入库走 `npm run leaf-cards`（`scripts/prepare-leaf-cards.mjs`）：它按 **alpha 外接矩形切掉空白背景**
+（若遇到白底不透明的旧式图，会先自动识别底色并漫水抠成透明），量出每张卡**裁边后的真实宽高比**
+写进 `leafCardAspects.generated.js`，并把要粘进 `leafCards.generated.js` 的批次条目打印出来。
+卡片库是**路径枚举式**的：批次表只写「目录/前缀/行数/列数」，空号自动跳过，删图不必改代码。
+
+**树皮贴图库现有 8 个批次 / 160 张**：batch1–4 是老的四套（灰褐裂隙 / 红褐块状 / 黑白桦皮 / 白桦），batch5–8 是 v6/v7 新素材（灌木 褐裂 / 灌木 霜裂 / 松树 赤裂 / 松树 鳞片）。树皮源图是**圆角矩形**，拼到树干上会在接缝处露出透明缺角，所以入库走 
+pm run bark-textures（scripts/prepare-bark-textures.mjs）：先取 alpha 外接矩形去掉四周留白，再**四边等量内缩**直到「裁切框最外 3px 一圈全部不透明」——圆角被完全切掉，且实测只丢 3~6% 面积（按圆角半径公式内缩会丢一半以上）。
 
 ### 5. 风场 + 生长动画 (Wind / Growth)
 - **自动风场**：勾选后由种子推导 **风向 / 强度 / 阵风 / 湍流 / 相位空间尺度 / 柔度衰减 / 叶扇动量**；也可以随时 🎲 重新随机风向风场
@@ -296,6 +307,8 @@ scripts/
 ├─ selftest.mjs        无浏览器自检 (含导出格式/节点拆分、骨架-蒙皮拓扑校验 (边界边/非流形边/连通分量/分支覆盖)、一体建模导出合并、贴图命名、AO、LOD、模型旋转、环境预设、扭曲曲线、站点图标、面数统计、双面叶片、模板卫生)
 ├─ paramAudit.mjs      参数有效性审计核心 (几何/材质/风场三路签名比对)
 ├─ audit-params.mjs    npm run audit 入口
+├─ prepare-leaf-cards.mjs  叶片素材入库 (AABB 切掉空白背景 / 白底自动抠图 / 量裁边后宽高比)
+├─ prepare-bark-textures.mjs  树皮贴图入库 (切圆角: 验证式内缩到整块不透明矩形)
 ├─ app-bridge-server.mjs  本地应用桥 / MCP 服务器 / 大模型代理 (Key 只在服务端)
 ├─ mcp-selfcheck.mjs   MCP 桥链自检
 ├─ chat-selfcheck.mjs  大模型对话链路自检 (文本/图片/工具/流式/联网搜索)

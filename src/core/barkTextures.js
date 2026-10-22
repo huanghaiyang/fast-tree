@@ -4,9 +4,9 @@
  * 作用: 把 public/bark/ 下"按目录 + 文件名约定"摆放的树皮 PNG, 一次性展开成扁平
  *       贴图表 (BARK_TEXTURES), 并提供 id / 批次 / 款式行 三种检索入口。
  * 输入 / 输出:
- *   输入 = BARK_SETS 登记的 4 个批次 (每批次 = 一个目录 + 一个文件名前缀 + 行数 + 列数);
+ *   输入 = BARK_SETS 登记的 8 个批次 (每批次 = 一个目录 + 一个文件名前缀 + 行数 + 列数);
  *   输出 = 每个 (批次, row, col) 三元组一条记录
- *          { id, batch, row, col, name, url }, 共 4 × 4 × 5 = 80 条。
+ *          { id, batch, row, col, name, url }, 条数 = Σ(rows × cols), 当前 8 × 4 × 5 = 160 条。
  * 与其他模块的关系:
  *   - 消费者一: components/panels/MaterialPanel.vue (内置树皮选择面板: 批次 tab + 款式行 chip + 缩略图网格);
  *   - 消费者二: core/appApi.js 的 app.list_bark_textures / app.set_bark_texture 两条对外命令;
@@ -41,6 +41,11 @@ export const BARK_SETS = [
   { id: 'batch2', dir: 'bark_batch2', prefix: 'bark2', rows: 4, cols: 5, name: '红褐块状' },
   { id: 'batch3', dir: 'bark_batch3', prefix: 'bark3', rows: 4, cols: 5, name: '黑白桦皮' },
   { id: 'batch4', dir: 'bark_batch4', prefix: 'bark4', rows: 4, cols: 5, name: '白桦' },
+  // ---- 灌木 / 松树 (v6 / v7 素材; 入库时已按"切成整块不透明矩形"切掉圆角, 见 scripts/prepare-bark-textures.mjs) ----
+  { id: 'batch5', dir: 'bark_batch5', prefix: 'bark5', rows: 4, cols: 5, name: '灌木 褐裂' }, // 源 v6_batch1_bark1
+  { id: 'batch6', dir: 'bark_batch6', prefix: 'bark6', rows: 4, cols: 5, name: '灌木 霜裂' }, // 源 v6_batch2_bark2
+  { id: 'batch7', dir: 'bark_batch7', prefix: 'bark7', rows: 4, cols: 5, name: '松树 赤裂' }, // 源 v7_batch1_bark1
+  { id: 'batch8', dir: 'bark_batch8', prefix: 'bark8', rows: 4, cols: 5, name: '松树 鳞片' }, // 源 v7_batch2_bark2
 ]
 
 /**

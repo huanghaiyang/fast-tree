@@ -21,7 +21,12 @@
  *   行/列取该批次的最大值, 缺失位置自然被跳过。
  * 注意: 本文件是**构建生成**的数据文件, 注释只写到「结构与用法」层面,
  *       不要给每条卡片逐行加注释 (几百条会淹没源码)。改批次请改生成脚本, 不要手改数据。
+ *
+ * 素材入库流程 (外部 PNG -> public/leaves):
+ *   跑 `npm run leaf-cards` (scripts/prepare-leaf-cards.mjs): 它按 alpha 外接矩形**切掉空白背景**,
+ *   量出裁边后的真实宽高比写进 leafCardAspects.generated.js, 并把下面要粘的批次条目打印出来。
  */
+import { LEAF_CARD_ASPECTS } from './leafCardAspects.generated.js'
 
 /* ---------------- ① 批次元数据 (唯一手写数据源) ---------------- */
 
@@ -47,7 +52,26 @@ export const LEAF_CARD_SETS = [
   { id: 'fl_v2_batch2', dir: 'fl_v2_batch2', prefix: 'leafyflower2', rows: 6, cols: 9, name: '⑧ 樱花 V2B' },
   { id: 'fl_v3_batch1', dir: 'fl_v3_batch1', prefix: 'bunch1', rows: 6, cols: 11, name: '⑨ 樱花 V3A' },
   { id: 'fl_v3_batch2', dir: 'fl_v3_batch2', prefix: 'bunch2', rows: 6, cols: 9, name: '⑩ 樱花 V3B' },
+  // ---- 柳树 (v4 第四轮素材: 柳叶 / 柳絮 / 花穗; 入库时已按 alpha 外接矩形切掉空白背景) ----
+  // 这三批的 aspect 走 leafCardAspects.generated.js 的实测值 (柳絮实测 1.6~4.2, 用 0.72 会压成竖条)
+  { id: 'v4_batch4_leafB', dir: 'v4_batch4_leafB', prefix: 'leafB', rows: 7, cols: 13, name: '⑪ 柳叶 B' },
+  { id: 'v4_batch2_catkin', dir: 'v4_batch2_catkin', prefix: 'catkin', rows: 7, cols: 6, name: '⑫ 柳絮' },
+  { id: 'v4_batch1_plume', dir: 'v4_batch1_plume', prefix: 'plume', rows: 6, cols: 13, name: '⑬ 柳花穗' },
+  // ---- 灌木 (v5 素材: 带叶小枝簇 / 单片阔叶; 同样按 alpha 外接矩形入库并取实测宽高比) ----
+  { id: 'v5_batch1_plant1', dir: 'v5_batch1_plant1', prefix: 'plant1', rows: 6, cols: 12, name: '⑭ 灌木枝叶' },
+  { id: 'v5_batch2_plant2', dir: 'v5_batch2_plant2', prefix: 'plant2', rows: 6, cols: 9, name: '⑮ 灌木叶' },
+  // ---- 松针 (v7 素材: 成簇针叶小枝, 一卡就是一束松针; 同样入库时取 AABB 实测宽高比) ----
+  { id: 'v7_batch3_pine1', dir: 'v7_batch3_pine1', prefix: 'pine1', rows: 6, cols: 8, name: '⑯ 松针 A' },
+  { id: 'v7_batch4_pine2', dir: 'v7_batch4_pine2', prefix: 'pine2', rows: 6, cols: 10, name: '⑰ 松针 B' },
 ]
+
+/**
+ * 老批次的通用叶形宽高比估值。
+ * 历史原因: 卡片库最初只有桦树两批 (实测均值 0.69), 于是全库写死 0.72。
+ * 现在新批次一律用实测值 (见 LEAF_CARD_ASPECTS), 老批次保持 0.72 以**不改动既有外观**;
+ * 要让老批次也用真值, 在 prepare-leaf-cards.mjs 的 BATCHES 里登记它们并重跑即可。
+ */
+const DEFAULT_CARD_ASPECT = 0.72
 
 /* ---------------- ② URL 拼装 ---------------- */
 
@@ -69,20 +93,24 @@ export function leafCardUrl(set, row, col) {
  *   - id     全局唯一, 形如 `batch1-r01-c01`
  *   - batch  所属批次 id (用于按批次分组过滤)
  *   - row / col  1 起算的行号/列号
- *   - aspect 裁剪后 宽/高。这里是通用叶形估值 0.72; 应用时以实际贴图宽高为准
+ *   - aspect 裁边后 宽/高。优先用 leafCardAspects.generated.js 的实测值,
+ *            该批次没进表时回退 DEFAULT_CARD_ASPECT (老批次沿用 0.72, 外观不变)
  *   - url    贴图地址 (见 leafCardUrl)
  * 展开顺序 = 批次顺序 → 行 → 列, 因此数组下标本身就是一种稳定排序。
  */
 export const LEAF_CARDS = LEAF_CARD_SETS.flatMap((set) => {
+  // 实测表按「行-1 / 列-1」二维索引; 空号位是 null, 一起被 || 兜到默认值
+  const table = LEAF_CARD_ASPECTS[set.id]
   const out = []
   for (let r = 1; r <= set.rows; r++) {
     for (let c = 1; c <= set.cols; c++) {
+      const measured = table && table[r - 1] ? table[r - 1][c - 1] : null
       out.push({
         id: `${set.id}-r${pad2(r)}-c${pad2(c)}`,
         batch: set.id,
         row: r,
         col: c,
-        aspect: 0.72, // 通用叶形比例; 应用时以实际贴图宽高为准
+        aspect: measured || DEFAULT_CARD_ASPECT, // 实测值优先; 空号/缺表 -> 通用估值
         url: leafCardUrl(set, r, c),
       })
     }

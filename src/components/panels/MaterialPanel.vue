@@ -28,7 +28,7 @@
     <TextureRow label="自定义树皮贴图" v-model="b.texture" />
     <TextureRow label="自定义法线贴图" v-model="b.normalTexture" />
 
-    <!-- 内置树皮贴图库 (来自 bark_batch1 / bark_batch2) -->
+    <!-- 内置树皮贴图库 (public/bark/bark_batchN, 批次表见 core/barkTextures.js) -->
     <div class="pick-label">内置树皮贴图 ({{ barkTotalReal === null ? BARK_TEXTURES.length + '…' : barkTotalReal }} 张)</div>
     <div class="chips">
       <button class="chip nowrap" :class="{ active: !b.texture }" @click="b.texture = ''">程序化花纹</button>
@@ -117,12 +117,16 @@ const barkRow = ref(1)
 function useBark(bt) {
   if (!bt) return
   // 只改材质贴图: 属于 material 变更组 -> 由材质 watcher 更新 map, 不重建树、不重新取景
-  b.texture = bt.url
+  // 注意: `b` 是 computed ref, 在 <script> 里必须写 `b.value.xxx` 或直接写 state.params.bark;
+  // 写成 `b.texture = ...` 只是给 ref 对象挂了个无用属性 —— 参数没变, 树皮当然不会换
+  // (这就是"点缩略图没反应"的根因; 模板里能用 `b.xxx` 是因为模板会自动解包 ref)。
+  const bark = state.params.bark
+  bark.texture = bt.url
   // 照片树皮是 1m 左右的局部采样, 直接贴到几十米高的树干上会严重拉伸
   // -> 给一组"接近真实树皮尺度"的平铺默认值 (之后可用 UV 重复滑杆微调)
-  if (b.uvScaleU === 1 && b.uvScaleV === 1) {
-    b.uvScaleU = 3
-    b.uvScaleV = 1.5
+  if (bark.uvScaleU === 1 && bark.uvScaleV === 1) {
+    bark.uvScaleU = 3
+    bark.uvScaleV = 1.5
   }
 }
 const barkChoices = computed(() => alive(barkTexturesFor(barkBatch.value, barkRow.value)))

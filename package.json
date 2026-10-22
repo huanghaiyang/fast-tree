@@ -11,6 +11,8 @@
     "preview": "vite preview --port 4173",
     "selftest": "node scripts/selftest.mjs",
     "audit": "node scripts/audit-params.mjs",
+    "leaf-cards": "node scripts/prepare-leaf-cards.mjs",
+    "bark-textures": "node scripts/prepare-bark-textures.mjs",
     "sandbox:dev": "node scripts/vite-sandbox.mjs dev",
     "sandbox:build": "node scripts/vite-sandbox.mjs build",
     "mcp": "node scripts/app-bridge-server.mjs",

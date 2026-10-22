@@ -7,6 +7,7 @@
  *   [E3] .vue 组件用了 ref/computed/watch/... 却没从 vue 导入 (上次踩过)
  *   [E4] this.treeGroup.add(x) 类调用里 x 可能为 null (上次踩过)
  *   [E5] throw / console.error 的字符串里含未使用的占位
+ *   [E6] .vue 脚本里把 computed ref 当普通对象读写 (X.foo 而非 X.value.foo) -> 静默失效
  *   [W1] 导入但从未使用的符号 (警告)
  *   [W2] 文件里出现 NaN 风险: += 一个可能是 undefined 的字段之外, 简单报告 parseInt(x) 无基数
  * 退出码: 有 E* 时报 1
@@ -168,6 +169,38 @@ for (const file of files) {
     })
   }
 
+  /* E6: .vue 的 <script> 里把 computed ref 当普通对象读写 (X.foo 而不是 X.value.foo)
+     模板里 X.foo 没问题 (模板自动解包 ref), 脚本里必须写 X.value.foo;
+     写成 X.foo = ... 只是给 ref 对象挂了个无用属性 —— 参数没变, 表现为"点了没反应"。
+     (上次踩过: 树皮缩略图点击不换贴图) */
+  if (file.endsWith('.vue')) {
+    const script = src.split('<script setup>')[1]?.split('</script>')[0] || ''
+    if (script) {
+      const computedNames = [...script.matchAll(/(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*computed\s*\(/g)].map((m) => m[1])
+      if (computedNames.length) {
+        const lines = script.split('\n')
+        const baseLine = src.slice(0, src.indexOf(script)).split('\n').length
+        lines.forEach((line, i) => {
+          if (/^\s*(\/\/|\*|\/\*|-)/.test(line)) return
+          for (const name of computedNames) {
+            const esc = name.replace(/[$]/g, '\\$')
+            const re = new RegExp(`(?<![\\w$.])${esc}\\s*\\.\\s*([A-Za-z_$][\\w$]*)`, 'g')
+            let m
+            while ((m = re.exec(line))) {
+              if (m[1] === 'value') continue
+              problems.push({
+                code: 'E6',
+                file,
+                line: baseLine + i,
+                msg: `${name} 是 computed ref, 脚本里要写 ${name}.value.${m[1]} (直接写 ${name}.${m[1]} 会静默失效)`,
+              })
+            }
+          }
+        })
+      }
+    }
+  }
+
   /* W2: parseInt 未指定进制 (潜在八进制/十六进制误解析) */
   for (const m of src.matchAll(/parseInt\(([^)]*)\)/g)) {
     if (!m[1].includes(',')) warnings.push({ code: 'W2', file, line: src.slice(0, m.index).split('\n').length, msg: `parseInt 未指定进制: ${m[0].slice(0, 40)}` })
@@ -183,7 +216,7 @@ if (E.length) {
   console.log(`❌ 错误 ${E.length}:`)
   for (const p of E.slice(0, 40)) console.log(`  [${p.code}] ${rel(p.file)}${p.line ? ':' + p.line : ''} — ${p.msg}`)
   if (E.length > 40) console.log(`  … 还有 ${E.length - 40} 条`)
-} else console.log('✅ 未发现机器可判定的错误 (E1 导入不存在 / E2 重复声明 / E3 vue API 未导入 / E4 add(null))')
+} else console.log('✅ 未发现机器可判定的错误 (E1 导入不存在 / E2 重复声明 / E3 vue API 未导入 / E4 add(null) / E6 computed ref 误用)')
 if (W.length) {
   console.log(`\n⚠️  警告 ${W.length} (前 15):`)
   for (const p of W.slice(0, 15)) console.log(`  [${p.code}] ${rel(p.file)}:${p.line} — ${p.msg}`)
