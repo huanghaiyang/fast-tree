@@ -20,14 +20,41 @@ export function downloadText(text, filename, mime = 'text/plain') {
   downloadBlob(new Blob([text], { type: mime }), filename)
 }
 
+/**
+ * 导出 GLB（glTF 二进制，内嵌贴图）。
+ *
+ * 导出不是"直接 parse 一下"，而是先把材质临时补成一套完整资源再写文件，
+ * 结束后**必须**恢复原材质（否则视口材质会被临时贴图污染，临时贴图也会泄漏显存）：
+ *
+ *   1. `ensureExportMaterialMaps`     补全缺失的 normalMap / roughnessMap
+ *   2. `ensureExportTextureAlignment` 叶/花/果四张图对齐（同尺寸 + 同朝向 + 同 UV）
+ *   3. `ensureExportRoughnessGrayscale` metalness=0 时让 `_rough` 保持灰白
+ *   4. `applyExportTextureNames`      写入 `leaf_diff_1k` 这类资源名，收集 alpha 资源
+ *   5. `GLTFExporter.parse`           真正写 GLB
+ *   6. `patchGlbTextureNames`         字节层补 `images[].name` 与 `<kind>_alpha` 图
+ *
+ * 顺序约束（改动前先读这段）：
+ *   - 对齐必须在"补槽"之后：补槽会新建 normal/rough，对齐要基于它们的最终尺寸；
+ *   - 对齐必须在"命名"之前：命名按贴图尺寸决定 `_xk` 后缀，尺寸没对齐后缀就会错；
+ *   - grayscale 必须在"对齐"之后：它复用 roughnessMap，若之后对齐再换图就会指向旧图；
+ *   - 恢复必须**逆序**（3 → 2 → 1），否则 metalnessMap 可能指回一张已 dispose 的图。
+ *
+ * 失败路径（parse 报错 / 同步异常）同样执行 `restoreAll()`，保证异常时材质干净。
+ *
+ * @param {THREE.Object3D} root 导出组（只含 Bark / Leaves / Flowers）
+ * @param {string} [filename]   下载文件名
+ * @param {{download?: boolean}} [opts] `download: false` 时只返回 Blob（导出预览用）
+ * @returns {Promise<Blob>} 生成的 GLB
+ */
 export function exportGLB(root, filename = 'fasttree.glb', opts = {}) {
   return new Promise((resolve, reject) => {
-    // 先补全每材质的 normal/roughness 槽 (仅导出期间生效), 再对齐叶/花/果的四套贴图
-    // (同尺寸 + 同朝向 + 同 UV 变换), 最后按规范命名
+    // 各阶段返回自己的 restore()；这些临时贴图只在本次导出期间存在
     const restoreMaps = ensureExportMaterialMaps(root)
     const restoreAlign = ensureExportTextureAlignment(root)
     const restoreGrayscale = ensureExportRoughnessGrayscale(root)
     const naming = applyExportTextureNames(root)
+    // 逆序恢复：先撤销 grayscale 借用的 metalnessMap，再撤销对齐的贴图替换，
+    // 最后撤销补槽（此时补槽产生的临时贴图已经没有人引用）
     const restoreAll = () => {
       restoreGrayscale()
       restoreAlign()

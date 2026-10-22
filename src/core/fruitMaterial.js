@@ -1,11 +1,24 @@
 /**
- * 导出专用的果实材质。
- * 视口里的果实与树皮共用材质 (靠顶点色区分坚果/壳斗帽); 导出时给 Bark_Fruit
- * 单独一个 fruit 材质, 这样 GLB 里会有完整的 fruit_diff / fruit_alpha /
- * fruit_nor_gl / fruit_rough 资源, 而不是复用 bark 贴图。
+ * 导出专用的果实材质（GLB 里对应 `Bark_Fruit` 节点 + 独立的 `Fruit` 材质）。
+ * ============================================================================
+ * 为什么视口里不用这套材质？
+ *   视口中果实与树皮共用同一张 bark 材质（靠顶点色区分坚果/壳斗帽），这样渲染
+ *   只有 2 个 draw call。但导出时若继续复用 bark 贴图，美术拿到 GLB 后无法单独
+ *   调果实 —— 所以导出组会挂一个独立材质，产出完整的四张图：
+ *     fruit_diff_1k / fruit_alpha_1k / fruit_nor_gl_1k / fruit_rough_1k
  *
- * 注意: 果实几何带 COLOR_0 (坚果色/帽色/实例色差), 所以 diffuse 只做
- * 中性果皮细节; 最终颜色仍由顶点色乘出来, 不会丢掉每颗果实的颜色变化。
+ * 四张图必须**同尺寸 + 同朝向**（由 `textureNaming.ensureExportTextureAlignment`
+ * 再兜底校验一次）。这里生成时就统一用 `SIZE`，并且：
+ *   - diff / rough：来自同一段随机纹理（rough 由 diff 亮度场推导，天然同朝向）；
+ *   - nor / alpha：来自同一张果皮**高度场** `detailPixels`（壳斗帽棱线/鳞片），
+ *     所以法线凸起与 alpha 沟槽指向同一处；
+ *   - alpha 是"沟槽蒙版"（黑色=沟），不是叶卡那种轮廓镂空 —— 所以它放在
+ *     `userData.exportAlphaDataUrl` 里由导出管线直接采用，而不是从 diff 的 alpha
+ *     通道反推（果实的 diffuse 是全不透明的）。
+ *
+ * 颜色说明：果实几何自带 COLOR_0（坚果色/帽色/每实例色差），所以 diffuse 只画
+ * **中性果皮细节**（不染色）；最终颜色 = 顶点色 × 这张中性 diffuse，不会丢掉
+ * 每颗果实的颜色变化。
  */
 import * as THREE from 'three'
 import { makeRng } from './rng.js'
@@ -14,8 +27,15 @@ import {
   makeRoughnessTextureFromTexture,
 } from './textureNaming.js'
 
+/**
+ * 果皮贴图的统一边长。
+ * 取 1024：果皮细节（鳞片/棱线/凹坑）在高频处需要足够像素，且 1024 正好命中
+ * `_1k` 命名档位，四张图的资源名后缀一致。
+ * 改这个值要同步检查 `dev/export-material-check.html` 里的 `fruit_*_1k` 断言。
+ */
 const SIZE = 1024
 
+/** 建一张离屏 canvas；无 DOM（Node 自检）时返回 null，调用方据此降级 */
 function makeCanvas(w, h) {
   if (typeof document === 'undefined') return null
   const c = document.createElement('canvas')
@@ -24,7 +44,26 @@ function makeCanvas(w, h) {
   return c
 }
 
-/** 果实表面的高对比高度场: 供法线/alpha 使用, 保证不是纯色 */
+/**
+ * 生成果皮表面的高对比**高度场**（灰度图），法线与 alpha 都从它派生。
+ *
+ * 为什么需要单独的"高度场"而不是直接用 diffuse？
+ *   - 法线需要的是梯度（凹凸），不是颜色；从高度场求梯度比从彩色图亮度求更干净；
+ *   - alpha 需要的是"沟槽在哪里"（黑色=沟），同样来自高度场；
+ *   - 两者共用同一张高度场 ⇒ 法线凸起与 alpha 沟槽**必然对齐**。
+ *
+ * 图案按果实类型区分（`fruit.type`）：
+ *   - cone  松果：更多、更小的鳞片 + 更强的横向波纹；
+ *   - berry 浆果：小而密的凹坑；
+ *   - acorn / nut 橡果：少量凸起 + 壳斗帽的纵向棱线。
+ *
+ * 随机源为 `makeRng(seed, 'fruit-export-height')`：同一 seed 图案可复现，
+ * 所以导出预览与正式导出看到的是同一张果皮。
+ *
+ * @param {object} fruit state.params.fruit（type 决定图案风格）
+ * @param {number} seed  随机种子
+ * @returns {Uint8ClampedArray|null} SIZE×SIZE 的 RGBA 像素；无 DOM 时 null
+ */
 function makeDetailPixels(fruit, seed) {
   const cv = makeCanvas(SIZE, SIZE)
   if (!cv) return null
@@ -80,6 +119,22 @@ function makeDetailPixels(fruit, seed) {
   return ctx.getImageData(0, 0, SIZE, SIZE).data
 }
 
+/**
+ * 生成中性果皮 diffuse（不染色，颜色由顶点色 COLOR_0 乘出来）。
+ *
+ * 注意：
+ *   - 底色刻意选很亮的 `#e8ddc8`：最终颜色 = 顶点色 × 这张图，底色越接近白，
+ *     顶点色还原得越准（避免和 COLOR_0 双重染色导致果实发暗）；
+ *   - 图案与高度场**不是**同一段随机序列（`fruit-export-tex` vs
+ *     `fruit-export-height`），所以 rough 的图案与 nor/alpha 的图案本就不同；
+ *     这不影响"方向/尺寸一致"（四张图仍同尺寸同朝向），只是它们的细节描述
+ *     不是同一个物理表面 —— 果皮纹理比较均匀，肉眼看不出冲突；
+ *   - 这里不写 alpha（恒为不透明），叶卡那种镂空 alpha 不适用于果实。
+ *
+ * @param {object} fruit state.params.fruit（capColor/color/type）
+ * @param {number} seed  随机种子
+ * @returns {THREE.CanvasTexture|null} sRGB 颜色贴图（flipY 用 CanvasTexture 默认 true）
+ */
 function makeDiffuseTexture(fruit, seed) {
   const cv = makeCanvas(SIZE, SIZE)
   if (!cv) return null
@@ -120,7 +175,24 @@ function makeDiffuseTexture(fruit, seed) {
   return tex
 }
 
-/** 从高度场生成有细节的黑白 alpha 掩码 (白=不透明, 黑=沟槽) */
+/**
+ * 从高度场生成黑白 alpha 蒙版（白=不透明，黑=沟槽/鳞片缝隙）。
+ *
+ * 语义与叶卡不同：叶卡的 alpha 是"叶片轮廓镂空"，果实的 alpha 是"果皮细节蒙版"
+ * （整颗果子依然不透明，只是把沟槽标记成 0）。它作为独立的 `fruit_alpha_1k`
+ * 资源交付，材质本身仍是不透明的（不设 alphaMode）。
+ *
+ * **朝向**：diff / nor 是 CanvasTexture（flipY=true），GLTFExporter 写 GLB 时
+ * 会把它们上下翻转；而 alpha 是独立 data URI、不走导出器，所以这里必须先
+ * 自己翻转一次，否则引擎里 `fruit_alpha` 与 `fruit_diff` 上下镜像（这正是
+ * "四张图方向必须一致"要防的问题）。
+ *
+ * 阈值取 105/255：把高度场里明显偏暗的区域（凹坑/沟缝）压成 0，其余为 255，
+ * 得到干净的二值蒙版，方便引擎当遮罩或叠加细节用。
+ *
+ * @param {Uint8ClampedArray} detailPixels makeDetailPixels() 的输出
+ * @returns {string|null} PNG data URL（不透明，灰度写在 RGB）；无 DOM 时 null
+ */
 function makeAlphaMaskDataUrl(detailPixels) {
   const cv = makeCanvas(SIZE, SIZE)
   if (!cv) return null
@@ -152,32 +224,72 @@ function makeAlphaMaskDataUrl(detailPixels) {
 }
 
 /**
- * @param {object} fruit state.params.fruit
- * @param {number} seed
+ * 创建导出用的独立果实材质，一次性生成果皮的四张图。
+ *
+ * 生成顺序与依赖关系（不要随便调换）：
+ *   1. `detail`     果皮高度场（nor / alpha 的唯一来源）
+ *   2. `map`        中性果皮 diffuse（颜色由 COLOR_0 提供）
+ *   3. `roughnessMap` 由 **diffuse** 亮度场推导（暗=粗、亮=滑）→ 与 diff 同尺寸同朝向
+ *   4. `normalMap`  由 **高度场** 求 Sobel 梯度 → 与 alpha 细节对齐
+ *   5. `alphaDataUrl` 由高度场二值化 → 与 nor 细节对齐（并已按导出朝向翻转）
+ *
+ * 材质参数说明：
+ *   - `vertexColors: true`：果实颜色来自 COLOR_0（坚果色/帽色/实例色差），
+ *     diffuse 只提供中性细节，所以材质 `color` 必须是白色，不能额外染色；
+ *   - `metalness: 0`：配合 `ensureExportRoughnessGrayscale()`，让 `_rough`
+ *     资源保持灰白（否则 glTF 会合成绿/蓝 metal-rough 打包图）；
+ *   - `side: FrontSide`：果实是封闭实体，不需要双面；
+ *   - `normalScale = 1.4`：果皮细节偏强，1.4 让鳞片/棱线在掠射光下更明显。
+ *
+ * 约定：
+ *   - `userData.kind = 'fruit'` 是 `textureNaming` 的契约：决定资源名前缀
+ *     `fruit_*`、以及要不要单独补 `fruit_alpha`；
+ *   - `userData.exportAlphaDataUrl` 让导出管线直接用这张"沟槽蒙版"作为
+ *     alpha 资源，而不是从 diff 的（全不透明）alpha 通道反推。
+ *
+ * @param {object} fruit state.params.fruit（type/capColor/color）
+ * @param {number} seed  随机种子（决定果皮图案，导出预览与正式导出一致）
+ * @returns {THREE.MeshStandardMaterial} name='Fruit'，带完整四图
  */
 export function createFruitExportMaterial(fruit = {}, seed = 1) {
+  // 1) 高度场：nor / alpha 的唯一来源，保证两者细节对齐
   const detail = makeDetailPixels(fruit, seed)
+  // 2) 中性果皮颜色（最终颜色 = 顶点色 × 这张图）
   const map = makeDiffuseTexture(fruit, seed)
+  // 3) 法线：由高度场求梯度；强 2.8 让鳞片/棱线在掠射光下有明确凹凸
   const normalMap = detail ? makeNormalTextureFromPixels(detail, SIZE, SIZE, 2.8) : null
+  // 4) 粗糙度：由 diffuse 亮度场推导（0.68 = 果皮基准粗糙度）
   const roughnessMap = map ? makeRoughnessTextureFromTexture(map, SIZE, SIZE, 0.68) : null
+  // 5) alpha：高度场二值化成的"沟槽蒙版"（已按导出朝向翻转）
   const alphaDataUrl = detail ? makeAlphaMaskDataUrl(detail) : null
   const mat = new THREE.MeshStandardMaterial({
     map,
     normalMap,
     roughnessMap,
-    color: 0xffffff,
+    color: 0xffffff,   // 必须纯白：果实颜色来自 COLOR_0，不能在这里再染一次
     roughness: 0.68,
     metalness: 0,
     vertexColors: true,
     side: THREE.FrontSide,
   })
   mat.name = 'Fruit'
+  // 契约：textureNaming 靠 kind 决定 `fruit_*` 资源名与 alpha 资源
   mat.userData.kind = 'fruit'
+  // 契约：优先使用这张"沟槽蒙版"作为独立 alpha 资源（见 makeAlphaMaskDataUrl）
   mat.userData.exportAlphaDataUrl = alphaDataUrl
+  // 果皮细节偏强，1.4 让鳞片/棱线更明显；与视口无关（只在导出材质上）
   mat.normalScale.set(1.4, 1.4)
   return mat
 }
 
+/**
+ * 释放导出材质及其三张贴图。
+ * 调用时机：`sceneManager._getFruitExportMaterial()` 在参数/种子变化后重建
+ * 导出材质之前。三张 CanvasTexture 都归这个函数释放（alpha 是 data URL，
+ * 由 patchGlbTextureNames 直接写进 GLB，没有 GPU 资源需要释放）。
+ *
+ * @param {THREE.MeshStandardMaterial|null} mat createFruitExportMaterial 的返回值
+ */
 export function disposeFruitExportMaterial(mat) {
   if (!mat) return
   mat.map?.dispose()

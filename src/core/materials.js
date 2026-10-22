@@ -231,33 +231,56 @@ const LEAF_REFLECTION = /* glsl */`
 `
 
 /**
- * 自发光二次合成 (tone mapping + 输出色彩空间转换之后)
- * ------------------------------------------------------------
- * three 的自发光是"辐射亮度": `outgoingLight += emissive`, 然后整条像素一起做
- * ACES tone mapping + 曝光。这在叶/花这种双面卡片上有明显副作用:
- *   - 正面(朝太阳、被照得很亮)已经处在 tone 曲线的高位, 同一份 emissive 被压得
- *     几乎看不出变化 -> 用户看到的是"正面自发光不生效";
- *   - 背面/树下很暗, 同样的加法非常显眼 -> "只有背面生效"。
- * 所以问题不在 `side` / `gl_FrontFacing`, 而在**加法发生的位置**。
+ * 自发光"显示空间"二次合成（注入在 tone mapping + 输出色彩空间转换**之后**）
+ * ============================================================================
+ * ## 为什么需要这一层
+ * three 的 `emissive` 是"辐射亮度"：`outgoingLight += emissive`，随后**整条像素**
+ * 一起做 ACES tone mapping × exposure。对叶/花这种双面卡片会出现：
+ *   - **正面**（朝太阳、被照得很亮）已经处在 tone 曲线的高位，同一份加法被压缩
+ *     到几乎看不出变化 → 观感是"正面自发光不生效"；
+ *   - **背面 / 树下**很暗，同样的加法非常显眼 → "只有背面生效"。
+ * 所以根因不是 `side` / `gl_FrontFacing`（正反两面走同一份着色器），而是
+ * **加法发生的位置**。参见 `docs/树皮骨架与单蒙皮-技术文档.md` §5.19。
  *
- * 修法: 把自发光从"进入 tone mapping 之前的辐射亮度"改成"显示空间的发光合成":
- *   1) 色相: 向自发光颜色混合 -> 被强光照白的正面也能明确看出颜色变化;
- *   2) 亮度: 显示空间加法 -> 同一个强度值在亮面/暗面产生接近的视觉增量。
- * 物理路径里原来的 emissive 项在 emissiveInjection 里被清零, 避免叠加两次。
- * 具体权重见 EMISSIVE_HUE_MIX / EMISSIVE_ADD。
+ * ## 做法
+ * 物理路径里的 emissive 项在 `applyTreeShader()` 里被清零
+ * （`totalEmissiveRadiance = vec3(0.0)`），改在这里按**显示空间**合成：
+ *   1) **色相**：向自发光颜色混合 → 被强光照白的正面也能明确看出颜色变化；
+ *   2) **亮度**：显示空间加法 → 同一个强度值在亮面/暗面产生接近的视觉增量。
+ * 两项都只依赖 `emissive`（= emissiveColor × emissiveIntensity），与法线/朝向无关，
+ * 所以正反面天然一致；实测正/背面像素变化比值 0.73 → 0.96（半强度 1.00）。
+ *
+ * ## 参数（想调"发光观感"就改这两个数）
+ *   - `EMISSIVE_HUE_MIX`：色相混合上限（0 = 只提亮，1 = 最大强度时完全变成自发光色）；
+ *   - `EMISSIVE_ADD`：显示空间亮度增量上限（emissive=1 时加多少，0..1 的显示空间量）。
+ * 两者都乘 `treeAmt`，所以滑杆 0..1 的行为单调、可预期；权重会自动写进 GLSL
+ * 字符串，不需要同步改两处（`internalShaderSources()` 也读这两个常量）。
+ *
+ * ## 注意
+ *   - 最高强度会**接近白色**（显示空间加法 + 向发光色混合本来就是往亮推），这是
+ *     自发光该有的观感；不希望过曝就调低 `EMISSIVE_ADD`；
+ *   - 这里改的是**视口合成**；材质的 `mat.emissive / emissiveIntensity` 照旧写入，
+ *     GLB 导出的 emissiveFactor 不受影响（外部软件走标准 glTF 语义）；
+ *   - 与"选中高亮 / 透光 / 反光 / 散光"不冲突：它们仍加在 `totalEmissiveRadiance`
+ *     （tone mapping 之前），只有材质自发光走这一层。
  */
 const EMISSIVE_HUE_MIX = 0.10
 const EMISSIVE_ADD = 0.22
 const EMISSIVE_COMPOSITE = /* glsl */`
   {
-    vec3 treeEmis = emissive;                              // emissiveColor * emissiveIntensity
+    // emissive = emissiveColor(线性) * emissiveIntensity(0..1)，由 three 每帧上传
+    vec3 treeEmis = emissive;
+    // 取最大通道当"强度"：纯色自发光（如 #ff0000）的最大通道就等于 intensity，
+    // 因此不需要额外再传一个 intensity uniform
     float treeEmax = max(treeEmis.r, max(treeEmis.g, treeEmis.b));
-    if (treeEmax > 1e-4) {
-      vec3 treeHue = treeEmis / treeEmax;                  // 纯色相 (主导通道 = 1)
+    if (treeEmax > 1e-4) {                                 // 强度 0 时整段是纯 no-op
+      vec3 treeHue = treeEmis / treeEmax;                  // 归一化色相（主导通道 = 1）
       float treeAmt = clamp(treeEmax, 0.0, 1.0);           // 强度 0..1
-      // 1) 色相: 亮面也看得见颜色 (纯白自发光则表现为提亮到白)
+      // 1) 色相：向自发光色混合。被阳光照白的正面也能看到颜色变化；
+      //    纯白自发光时这一步等价于"提亮到白"，视觉上仍然是发光。
       gl_FragColor.rgb = mix(gl_FragColor.rgb, treeHue, treeAmt * ${EMISSIVE_HUE_MIX.toFixed(2)});
-      // 2) 亮度: 显示空间加法, 保证"正面被照亮"时也有同量级的发光增量
+      // 2) 亮度：显示空间加法，保证"正面被照亮"时也有同量级的发光增量；
+      //    加法后钳到 1（此时 gl_FragColor 已在输出色彩空间，>1 会被截断成怪色）
       gl_FragColor.rgb = min(gl_FragColor.rgb + treeHue * (treeAmt * ${EMISSIVE_ADD.toFixed(2)}), vec3(1.0));
     }
   }
@@ -276,7 +299,15 @@ const LEAF_BACK_MAP_FRAGMENT = /* glsl */`
 #endif
 `
 
-/** 供自检使用: 返回注入用的 GLSL 片段与声明头 (静态检查"用了但没声明"的 uniform) */
+/**
+ * 供自检 / 外部诊断使用：把注入用的 GLSL 片段与声明头原文暴露出来。
+ *
+ * 用途：
+ *   - `selftest` 静态断言"片段里没有用未声明的 uniform""正反面高光用了 abs""自发光
+ *     合成注入在 colorspace 之后"等，避免改着色器时静默破坏约定；
+ *   - 导出/调试面板可以直接展示实际注入的代码。
+ * 注意：这里返回的是**原文引用**，调用方不要修改（字符串不可变，改也无效）。
+ */
 export function internalShaderSources() {
   return {
     fragmentHeader: FRAGMENT_HEADER,
@@ -300,13 +331,26 @@ export function resolveTintMix(m, hasTexture) {
   return m.vertexColorMix === undefined ? 0.5 : m.vertexColorMix
 }
 
-/** 若没有显式法线贴图且开启了自动生成, 就从 albedo 生成一张 */
 /**
- * 从 albedo 自动生成法线贴图 (叶片/树皮通用)
+ * 按参数"挂上/摘掉"从 albedo 自动生成的视口法线贴图（叶片/花朵/树皮通用）。
+ *
+ * 触发条件（三者同时满足才生成）：未上传法线贴图 `p.normalTexture`、强度
+ * `p.normalFromAlbedo > 0`、且当前有 diffuse 贴图 `p.texture`。任一不满足就
+ * 摘掉自己之前挂的自动法线（只摘自己的，不碰用户上传的）。
+ *
+ * 生命周期 / 契约：
+ *   - 生成走 `albedoNormalTexture()`（长边 256、flipY 跟随源贴图、带缓存）；
+ *   - `p.texture` 变化（换卡片）会重新生成：缓存键含 URL，所以不会拿到旧图；
+ *   - 贴图还没解码完时生成会失败 → 挂到该贴图的 `onUpdate` 上等一次，成功后标记
+ *     `userData[flagKey] = true`；
+ *   - 同时在 `mat.userData.autoNormalStrength` 记录强度：**导出**时
+ *     `ensureExportTextureAlignment()` 需要用它按全尺寸重新生成（视口版是压缩过的，
+ *     不能直接导出）。
+ *
  * @param {THREE.Material} mat 目标材质
- * @param {object} p 材质参数 (leafMat 或 bark)
- * @param {string} flagKey userData 里的标记键名 —— 树皮已有 autoNormal 用来存程序化法线贴图,
- *                         所以必须用不同的键, 否则会把程序化法线当成自动法线清掉
+ * @param {object} p 材质参数（leafMat / flower / bark）
+ * @param {string} [flagKey] userData 里的标记键名 —— 树皮已有 `autoNormal` 用来存
+ *        程序化法线贴图，所以必须用不同的键，否则会把程序化法线当成自动法线清掉
  */
 function applyAutoNormal(mat, p, flagKey = 'autoNormal') {
   const strength = p.normalFromAlbedo === undefined ? 0 : p.normalFromAlbedo
@@ -415,6 +459,34 @@ export function perMaterialUniforms(params, isLeaf) {
   }
 }
 
+/**
+ * 给 MeshStandardMaterial 注入"树专用"着色器代码（叶/花/树皮共用同一套注入点）。
+ *
+ * 注入点一览（都是 three 的 chunk 替换，替换失败 = 该功能静默失效，selftest 有断言）：
+ *
+ * | 注入点 | 内容 | 作用 |
+ * | --- | --- | --- |
+ * | `<begin_vertex>` | `vertexBody()` + 自定义顶点 GLSL | 生长动画、风场位移、叶片铰链、节点选中 |
+ * | `<uv_vertex>` | 贴图扭曲（低频正弦偏移 vMapUv） | 叶片纹理抖动 |
+ * | `<map_fragment>` | `LEAF_BACK_MAP_FRAGMENT`（仅 isLeaf） | 正/背面独立贴图（gl_FrontFacing） |
+ * | `<color_fragment>` | `fragmentBody()` + 自定义片元 GLSL | 顶点色只走 uVertexColorMix、背面独立颜色、选中/隔离 |
+ * | `<emissivemap_fragment>` | 选中高亮 + 清空 three 自带 emissive + 透光/反光/散光 | 光照类附加项 |
+ * | `<colorspace_fragment>` | `EMISSIVE_COMPOSITE` | 材质自发光按显示空间合成（修"只在背面生效"） |
+ *
+ * uniform 分两类（见文件头）：
+ *   - `shared`：时间/风场/太阳等，所有材质共享同一个对象，改一次全局生效；
+ *   - `material`：每个材质自己的（uTint/uTranslucency/uBackEnabled…），
+ *     存在 `mat.userData.uniforms` 里，编译前后都能安全更新。
+ *
+ * `customProgramCacheKey` 把"是否叶片 / 自定义 GLSL 哈希 / 是否有透光"编进程序
+ * 缓存键：两种材质的注入代码不同却共用缓存键时，three 会复用一个 program，
+ * 导致后编译的材质拿到前者的着色器。
+ *
+ * @param {THREE.MeshStandardMaterial} material 目标材质（叶/花/树皮）
+ * @param {object} shaderUniforms 合并后的 uniform 表（shared + material 专属）
+ * @param {{isLeaf?:boolean, translucency?:boolean, customEnabled?:boolean,
+ *          customVertex?:string, customFragment?:string}} opts
+ */
 function applyTreeShader(material, shaderUniforms, opts) {
   const isLeaf = !!opts.isLeaf
   const customVertex = (opts.customEnabled && opts.customVertex) ? opts.customVertex : ''
@@ -460,10 +532,14 @@ function applyTreeShader(material, shaderUniforms, opts) {
       '#include <color_fragment>',
       fragmentBody(customFragment),
     )
-    // 选中高亮 (自发光) 必须在 totalEmissiveRadiance 声明之后注入
-    // 注意: three 自带的 emissive 项在这里清零 —— 它原本加在 outgoingLight 上再统一
-    // tone mapping, 正面被阳光照亮时会被压得看不出, 造成"自发光只有背面生效"。
-    // 自发光改由 EMISSIVE_COMPOSITE 在 tone mapping 之后按显示空间合成。
+    // 选中高亮 / 透光 / 反光 / 散光 / 材质自发光，都必须在
+    // `totalEmissiveRadiance` 声明之后注入（该变量由 three 的 physical 片元着色器
+    // 在 <emissivemap_fragment> 之前初始化为 `emissive`）。
+    //
+    // **清零 three 自带的 emissive 项**：它会被加进 outgoingLight 再统一 tone mapping，
+    // 正面被阳光照亮时被压得看不出，造成"自发光只有背面生效"（见 EMISSIVE_COMPOSITE
+    // 的说明）。这里清零后，材质自发光改由后面的显示空间合成负责；
+    // 高亮 / 透光 / 反光 / 散光仍然走原来的辐射亮度路径（它们本来就是"光照"）。
     const emissiveInjection = '#include <emissivemap_fragment>\n' +
       'totalEmissiveRadiance = vec3(0.0);\n' +
       SELECTION_GLOW +
@@ -472,8 +548,11 @@ function applyTreeShader(material, shaderUniforms, opts) {
       '#include <emissivemap_fragment>',
       emissiveInjection,
     )
-    // 自发光二次合成: 在 tone mapping + 输出色彩空间转换之后再做一次,
-    // 否则正面(被阳光照亮)的加法会被 ACES 压掉, 只有背面/暗处看得见 (见 EMISSIVE_COMPOSITE)
+    // 自发光二次合成：必须放在 <colorspace_fragment> **之后**。
+    // 此时 gl_FragColor 已经是 tone mapping + 输出色彩空间（sRGB）后的显示值，
+    // 在这里做色相混合 / 加法，才不会被 ACES 按底色亮度压缩（根的因见上面常量注释）。
+    // 该 chunk 在 MeshStandardMaterial 的片元着色器里一定存在，替换失败会让自发光
+    // 完全消失，所以 `dev/emissive-front-check.html` 与 selftest 都断言了注入位置。
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <colorspace_fragment>',
       '#include <colorspace_fragment>\n' + EMISSIVE_COMPOSITE,

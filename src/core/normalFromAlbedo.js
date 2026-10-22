@@ -1,25 +1,48 @@
 import * as THREE from 'three'
 
 /**
- * 从 albedo(颜色贴图) 自动生成切空间法线贴图
- * ------------------------------------------------------------
- * 原理: 把亮度当"高度场", 用 Sobel 算子求梯度, 再编码成法线:
+ * 从 albedo（颜色贴图）自动生成切空间法线贴图
+ * ============================================================================
+ * 原理：把亮度当"高度场"，用 Sobel 算子求梯度，再编码成法线：
  *   n = normalize(vec3(-dH/du * strength, -dH/dv * strength, 1))
  *   rgb = n * 0.5 + 0.5
- * 对叶片卡片这种"照片级"贴图效果很好: 叶脉、叶面起伏、边缘卷曲都会有明暗起伏,
- * 法线贴图能把它们变成真实的光照细节 (还能和反光/散光叠加)。
+ * 对叶片卡片这种"照片级"贴图效果很好：叶脉、叶面起伏、边缘卷曲都会变成
+ * 真实的光照细节（还能和反光/散光叠加）。
  *
- * 之所以运行时生成: 不用为每张卡片额外存一份法线图 (97 张会多出十几 MB),
+ * 为什么运行时生成：不用为每张卡片额外存一份法线图（97 张会多出十几 MB），
  * 而且用户自己上传的贴图也能自动获得法线。
+ *
+ * ## 两条使用路径（朝向必须一致，这是本文件最容易踩的坑）
+ *   - **视口**：`albedoNormalTexture()` —— 长边压到 256 省显存，flipY **跟随
+ *     源贴图**（图片/CanvasTexture 默认 true）。早期版本固定 flipY=false，
+ *     导致法线细节相对叶脉上下镜像。
+ *   - **导出**：`textureNaming.makeNormalTextureFromTexture()` —— 全尺寸、
+ *     flipY 继承源贴图，四张导出图同尺寸同朝向（见 textureNaming.js 头注释）。
+ * 两边共用 `normalFromLuminance()` 的同一套梯度算法，只是分辨率/存储策略不同。
  */
 
 /**
- * 纯计算部分 (不依赖 canvas/DOM, Node 里也能单测)
- * @param {Uint8ClampedArray|Uint8Array} data RGBA 像素
+ * 纯计算部分（不依赖 canvas/DOM，Node 自检里可直接单测）。
+ *
+ * 输入像素约定：`data` 的行 0 = 图片/画布最上面一行（即"存储朝向"）。
+ * uv 的行方向由 `flipY` 决定：
+ *   - `flipY = true`（three 的图片贴图默认）：v=0 对应**最下面**一行，
+ *     所以 dv 与"图像行方向 dy"反号 → 内部把 dy 取反；
+ *   - `flipY = false`：v=0 对应最上面一行，dy 就是 dv。
+ * 这个符号必须与目标贴图的 `flipY` 一致，否则法线绿通道方向相反（光照看着"凹
+ * 进去"），从视口/导出都会错。所以**先确定贴图 flipY，再用同样的值调用本函数**。
+ *
+ * 细节：
+ *   - Sobel 梯度除以 8 做归一化（8 邻域最大梯度约 4，两侧差分合计 8）；
+ *   - 完全透明像素（a<8）亮度按 0 处理：避免叶卡透明区在边缘产生假法线；
+ *   - 边界用钳制采样（clamp），不会因为越界出现黑边；
+ *   - 输出是 **RGB 三通道**（不是 RGBA），由调用方负责写回 canvas/贴图。
+ *
+ * @param {Uint8ClampedArray|Uint8Array} data RGBA 像素（长度 w*h*4）
  * @param {number} w 宽
  * @param {number} h 高
- * @param {number} strength 起伏强度 (0 = 全平 -> 纯 (128,128,255))
- * @param {boolean} flipY 纹理坐标 v 方向是否需要翻转 (three 的 uv 原点在左下)
+ * @param {number} [strength] 起伏强度（0 = 全平 -> 纯 (128,128,255)）
+ * @param {boolean} [flipY]  目标贴图的 flipY；决定 v 轴方向（默认 false）
  * @returns {Uint8Array} RGB 法线数据 (w*h*3)
  */
 export function normalFromLuminance(data, w, h, strength = 1, flipY = false) {
@@ -64,15 +87,39 @@ export function normalFromLuminance(data, w, h, strength = 1, flipY = false) {
   return out
 }
 
+/**
+ * 自动法线缓存：key = `<贴图 URL|dataURL>|<强度>`。
+ * 目的：材质频繁更新（滑杆/风场/选中）时不重复跑 Sobel。
+ * 只缓存"视口版"（256 上限）；导出用的是全尺寸一次性生成，不进缓存。
+ */
 const cache = new Map()
 
-/** 浏览器环境: 把 THREE.Texture 的像素读出来 -> 生成法线贴图 (按 key 缓存)
- *  注意: 这里必须用 CanvasTexture 而不是 DataTexture。
- *  three 的 GLTFExporter 在处理 normalMap 的通道翻转时会对 texture.image 调
- *  canvas.drawImage(), 而 DataTexture 的 image 是 {data,width,height} 普通对象,
- *  drawImage 会抛 "provided value is not of type ..." -> GLB 导出直接失败。
- *  CanvasTexture 的 image 是真实 canvas, 导出器/浏览器都认。
- *  采样参数沿用原 DataTexture 默认值 (nearest / 不生成 mipmap / flipY=false), 视觉不变。 */
+/**
+ * 【视口专用】把一张颜色贴图转成自动法线贴图（按 `key + 强度` 缓存）。
+ *
+ * 与导出路径的区别（很重要，别混用）：
+ *   - **分辨率**：长边压到 256（法线只看梯度，太大只浪费显存）；导出用
+ *     `textureNaming.makeNormalTextureFromTexture()` 的全尺寸版本；
+ *   - **朝向**：flipY 跟随源贴图（图片贴图默认 true）。这样法线细节和叶脉
+ *     在视口里是对齐的；早期版本固定 flipY=false，导致法线相对 diffuse 上下镜像；
+ *   - **缓存**：同一张卡片/强度只生成一次，避免每次材质更新都重算 Sobel。
+ *
+ * 两个实现约束：
+ *   1. 必须用 `CanvasTexture`，不能用 `DataTexture`：`GLTFExporter` 处理法线贴图
+ *      的通道翻转时会对 `texture.image` 调 `canvas.drawImage()`，而 DataTexture 的
+ *      `image` 是 `{data,width,height}` 普通对象，会抛
+ *      "provided value is not of type ..." 让整个 GLB 导出失败。
+ *   2. 采样参数沿用最初的 DataTexture 默认值（nearest / 不生成 mipmap）——
+ *      只改朝向，不改变视口观感（除了修掉镜像本身）。
+ *
+ * 读不到像素（跨域 / 图片未解码）时返回 null；调用方
+ * `applyAutoNormal()` 会挂到贴图的 `onUpdate` 上，等解码完成后再生成。
+ *
+ * @param {THREE.Texture} texture 颜色贴图（提供 image 像素）
+ * @param {number} strength        起伏强度（= 参数 normalFromAlbedo）
+ * @param {string} key             缓存键（通常是贴图 URL / dataURL）
+ * @returns {THREE.CanvasTexture|null} flipY 与源贴图一致，colorSpace = NoColorSpace
+ */
 export function albedoNormalTexture(texture, strength, key) {
   if (typeof document === 'undefined') return null
   if (!texture || !texture.image) return null
