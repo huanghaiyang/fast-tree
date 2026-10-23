@@ -67,6 +67,8 @@ export const state = reactive({
   // busy: 有重建/导出等长任务在跑; ready: 首帧已渲染完成 (两者控制 loading 遮罩)
   busy: false,
   ready: false,
+  // >0 = 贴图位置调整面板正在拖动鼠标: 主预览暂停重建 (松开后统一刷新一次)
+  previewHold: 0,
   // 生长动画播放开关 (与 params.growth.enabled 不同: 这个只是"暂停画面")
   playing: true,
   activeTab: 'auto',        // 当前参数标签页 (属性搜索跳转会改它)

@@ -74,6 +74,11 @@
         <SliderRow label="叶片贴图旋转" v-model="lm.textureRotation" :min="-3.14" :max="3.14" :step="0.02" />
       </div>
     </div>
+    <div class="tex-editor-row">
+      <button class="btn small" @click="onFitTexture">📐 适配贴图尺寸</button>
+      <button class="btn small primary" @click="texOpen = true">🎯 可视化调整贴图位置</button>
+    </div>
+    <TexturePositionEditor v-model="texOpen" kind="leaf" />
   </Section>
 </template>
 
@@ -87,7 +92,8 @@ import ToggleRow from './ui/ToggleRow.vue'
 import TextureRow from './ui/TextureRow.vue'
 import TextureCard from './ui/TextureCard.vue'
 import TexturePad from './ui/TexturePad.vue'
-import { state } from '../store/treeStore.js'
+import TexturePositionEditor from './panels/TexturePositionEditor.vue'
+import { state, fitLeafCardToTexture } from '../store/treeStore.js'
 import { LEAF_CARDS, LEAF_CARD_BATCHES, LEAF_CARD_BATCH_NAMES, leafCardsFor, leafCardRows } from '../core/leafCards.generated.js'
 
 // 不能缓存成 state.params.leafMat：换种子/自动生成会整体替换 state.params，
@@ -104,6 +110,11 @@ function resetTexture() {
   lm.value.textureRepeatU = 1
   lm.value.textureRepeatV = 1
   lm.value.textureRotation = 0
+}
+// 可视化调整贴图位置 (与花朵面板同一套编辑器, kind='leaf')
+const texOpen = ref(false)
+function onFitTexture() {
+  fitLeafCardToTexture()
 }
 const tintOptions = [
   { value: 'texture', label: '原色 (贴图不变色)' },
@@ -159,6 +170,7 @@ function randomBackCard() {
 .chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .chips .chip { white-space: nowrap; }
 .pad-row { display: flex; gap: 12px; align-items: flex-start; margin: 6px 0; }
+.tex-editor-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
 .pad-box { width: 132px; flex: 0 0 auto; }
 .pad-side { flex: 1; min-width: 0; }
 </style>

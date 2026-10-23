@@ -32,6 +32,9 @@
 
     <WindCompass />
 
+    <!-- Blender 风格 XYZ 坐标轴指示器 (跟随主相机旋转, 点击轴字母切到该轴正视图) -->
+    <canvas ref="axisCv" class="axis-gizmo" @pointerdown="onAxisPick" />
+
     <!-- 扭曲句柄叠层 (树干/树枝扭转曲线) -->
     <TwistGizmo v-if="state.twistEdit" />
 
@@ -58,6 +61,7 @@ import { startBridgeClient } from '../core/appApi.js'
 import { onBeforeUnmount, onMounted, ref, watch, computed } from 'vue'
 import { TreeScene } from '../core/sceneManager.js'
 import { serializeGroup } from '../core/params.js'
+import { Vector3, Quaternion } from 'three'
 import WindCompass from './WindCompass.vue'
 import TwistGizmo from './TwistGizmo.vue'
 import {
@@ -67,6 +71,101 @@ import {
 
 const host = ref(null)
 const fps = ref(0)
+const axisCv = ref(null)
+
+/* ---------------- Blender 风格 XYZ 坐标轴指示器 ----------------
+ * 世界坐标系的 X/Y/Z 三个轴通过相机四元数的逆变换投到屏幕:
+ * 相机空间里 +X 向右、+Y 向上、+Z 朝向观察者, 所以绘制顺序按 z 从远到近。 */
+const AXIS_DIRS = [new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(0, 0, 1)]
+const AXIS_META = [
+  { k: 'X', color: '#e8574b' },
+  { k: 'Y', color: '#8bd450' },
+  { k: 'Z', color: '#4f9cf0' },
+]
+const _axisQ = new Quaternion()
+// 每次重绘记录三个轴字母的屏幕位置, 供点击命中判定
+let axisHits = []
+// 世界轴方向: 点击某轴 = 把相机放到该轴正方向去看树 (再点一次切到反方向)
+const AXIS_VEC = { X: new Vector3(1, 0, 0), Y: new Vector3(0, 1, 0), Z: new Vector3(0, 0, 1) }
+function drawAxes() {
+  const el = axisCv.value
+  const camera = scene && scene.camera
+  if (!el || !camera) return
+  const size = 84
+  const dpr = Math.min(2, window.devicePixelRatio || 1)
+  const px = Math.round(size * dpr)
+  if (el.width !== px || el.height !== px) { el.width = px; el.height = px }
+  const g = el.getContext('2d')
+  if (!g) return
+  g.setTransform(dpr, 0, 0, dpr, 0, 0)
+  g.clearRect(0, 0, size, size)
+  const ox = size / 2
+  const oy = size / 2
+  const R = 23
+  // 深色圆形底, 保证在亮色天空/雪景上也看得清
+  g.fillStyle = 'rgba(10,13,18,0.55)'
+  g.beginPath()
+  g.arc(ox, oy, 32, 0, Math.PI * 2)
+  g.fill()
+  g.strokeStyle = 'rgba(255,255,255,0.12)'
+  g.lineWidth = 1
+  g.stroke()
+  _axisQ.copy(camera.quaternion).invert()
+  axisHits = []
+  const axes = AXIS_META.map((a, i) => ({ ...a, v: AXIS_DIRS[i].clone().applyQuaternion(_axisQ) }))
+    .sort((a, b) => a.v.z - b.v.z) // 指向屏幕里的轴先画
+  for (const a of axes) {
+    const ex = ox + a.v.x * R
+    const ey = oy - a.v.y * R
+    const back = a.v.z < -0.15
+    g.globalAlpha = back ? 0.4 : 1
+    g.strokeStyle = a.color
+    g.lineWidth = 2.2
+    g.lineCap = 'round'
+    g.beginPath(); g.moveTo(ox, oy); g.lineTo(ex, ey); g.stroke()
+    g.fillStyle = a.color
+    g.beginPath(); g.arc(ex, ey, 7.5, 0, Math.PI * 2); g.fill()
+    g.globalAlpha = 1
+    g.fillStyle = back ? 'rgba(255,255,255,0.6)' : '#0b0e13'
+    g.font = 'bold 9.5px system-ui, sans-serif'
+    g.textAlign = 'center'
+    g.textBaseline = 'middle'
+    g.fillText(a.k, ex, ey + 0.5)
+    axisHits.push({ k: a.k, x: ex, y: ey })
+  }
+}
+
+/** 点击 XYZ 指示器上的轴字母: 把相机移到该轴方向, 保持到 controls.target 的距离不变 */
+function onAxisPick(e) {
+  const el = axisCv.value
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  const x = e.clientX - r.left
+  const y = e.clientY - r.top
+  const hit = axisHits.find((h) => (h.x - x) ** 2 + (h.y - y) ** 2 <= 13 * 13)
+  if (!hit) return
+  e.preventDefault()
+  e.stopPropagation()
+  setAxisView(hit.k)
+}
+
+function setAxisView(k) {
+  const cam = scene && scene.camera
+  if (!cam) return
+  const controls = scene.controls
+  const target = controls && controls.target ? controls.target.clone() : new Vector3()
+  const dist = Math.max(0.5, cam.position.distanceTo(target))
+  const dir = AXIS_VEC[k].clone()
+  // 已经在这个轴的正方向时, 再点一次切到反方向 (与 Blender 一致)
+  const cur = cam.position.clone().sub(target)
+  if (cur.lengthSq() > 1e-8 && cur.normalize().dot(dir) > 0.999) dir.negate()
+  // 顶视图 (沿 Y 轴看) 时默认 up=(0,1,0) 与视线平行, 改用 -Z 作屏幕上方
+  cam.up.set(0, 1, 0)
+  if (Math.abs(dir.y) > 0.9) cam.up.set(0, 0, -1)
+  cam.position.copy(target).addScaledVector(dir, dist)
+  cam.lookAt(target)
+  if (controls) controls.update()
+}
 
 const MODE_LABEL = { highlight: '高亮', isolate: '仅显示选中', dim: '其余变暗' }
 const modeLabel = computed(() => MODE_LABEL[state.selection.mode] || '高亮')
@@ -154,6 +253,7 @@ sceneApi.setImpostorModel = (res) => scene.setImpostorPreview(res)
       fpsFrames = 0
       last = now
     }
+    drawAxes()
     requestAnimationFrame(tickFps)
   }
   requestAnimationFrame(tickFps)
@@ -206,13 +306,11 @@ function customSignature() {
 }
 
 function setupWatchers() {
-  watch(() => serializeGroup(state.params, 'geometry'), () => scheduleRebuild(false))
-  // 树皮几何管线虽然在 bark 材质组里, 但切换会改变整张树皮拓扑 -> 必须重建几何
-  watch(() => state.params.bark && state.params.bark.pipeline, () => scheduleRebuild(false))
-  watch(() => selectionSignature(), () => {
-    scene?.setSelection(state.selection)
-  })
-  watch(() => serializeGroup(state.params, 'material'), () => {
+  // 贴图位置调整面板拖动期间 (state.previewHold > 0) 不重建主窗口: 只记脏标记,
+  // 松手后统一补一次, 避免拖动时每帧重建整棵树。
+  let heldGeometry = false
+  let heldMaterial = false
+  const applyMaterialUpdate = () => {
     if (!scene) return
     scene.updateMaterialParams(state.params)
     const sig = customSignature()
@@ -220,6 +318,24 @@ function setupWatchers() {
       scene.rebindCustomShader(state.params)
       lastCustomCode = sig
     }
+  }
+  watch(() => serializeGroup(state.params, 'geometry'), () => {
+    if (state.previewHold > 0) { heldGeometry = true; return }
+    scheduleRebuild(false)
+  })
+  // 树皮几何管线虽然在 bark 材质组里, 但切换会改变整张树皮拓扑 -> 必须重建几何
+  watch(() => state.params.bark && state.params.bark.pipeline, () => scheduleRebuild(false))
+  watch(() => selectionSignature(), () => {
+    scene?.setSelection(state.selection)
+  })
+  watch(() => serializeGroup(state.params, 'material'), () => {
+    if (state.previewHold > 0) { heldMaterial = true; return }
+    applyMaterialUpdate()
+  })
+  watch(() => state.previewHold, (n) => {
+    if (n > 0) return
+    if (heldGeometry) { heldGeometry = false; scheduleRebuild(false) }
+    if (heldMaterial) { heldMaterial = false; applyMaterialUpdate() }
   })
   watch(() => serializeGroup(state.params, 'wind'), () => {
     if (!scene) return
@@ -253,3 +369,16 @@ function setupWatchers() {
   })
 }
 </script>
+
+<style scoped>
+/* XYZ 指示器: 放在风向罗盘下方, 右上角区域; 轴字母可点击切视角 */
+.axis-gizmo {
+  position: absolute;
+  right: 12px;
+  top: 190px;
+  width: 84px;
+  height: 84px;
+  cursor: pointer;
+  z-index: 5;
+}
+</style>

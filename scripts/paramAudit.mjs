@@ -528,6 +528,11 @@ export const AUDIT_EXEMPT = {
   'custom.fragment': '自定义 GLSL 片段 (同上)',
   'custom.enabled': '自定义 GLSL 开关 (同上)',
   'seed': '改变整棵树的随机子流 (几何签名已覆盖)',
+  // 这两个参数在几何里是**相乘**使用的 (叶簇半径 × 离散度)。
+  // 默认值被产品要求设为 0/0, 所以单独扰动任一个仍是 0 -> 默认状态下无可见效果;
+  // 只要把另一个也调 >0, 两者都会立刻生效 (不是死参数)。
+  'leaves.clusterRadius': '默认 0: 与 clusterSpread 相乘, 两者都为 0 时无可见效果',
+  'leaves.clusterSpread': '默认 0: 与 clusterRadius 相乘, 两者都为 0 时无可见效果',
 }
 
 export function runAudit(opts = {}) {

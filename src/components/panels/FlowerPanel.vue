@@ -117,7 +117,7 @@
     <SliderRow label="落花堆积颜色差异" v-model="fl.colorVariance" :min="0" :max="1" :step="0.01" />
     <ColorRow label="落花堆积颜色" v-model="fl.color" />
   </Section>
-  <FlowerTextureEditor v-model="texOpen" />
+  <TexturePositionEditor v-model="texOpen" kind="flower" />
 </template>
 
 <script setup>
@@ -130,7 +130,7 @@ import SelectRow from '../ui/SelectRow.vue'
 import TextureRow from '../ui/TextureRow.vue'
 import TexturePad from '../ui/TexturePad.vue'
 import TextureCard from '../ui/TextureCard.vue'
-import FlowerTextureEditor from './FlowerTextureEditor.vue'
+import TexturePositionEditor from './TexturePositionEditor.vue'
 import MaterialPreview from './MaterialPreview.vue'
 import { state, randomFlowerCard, fitFlowerCardToTexture } from '../../store/treeStore.js'
 import { LEAF_CARDS, LEAF_CARD_BATCHES, LEAF_CARD_BATCH_NAMES, leafCardRows, leafCardsFor } from '../../core/leafCards.generated.js'

@@ -268,9 +268,9 @@ export const SPECIES = [
       },
       leaves: {
         enabled: true, levels: [false, false, true, true, true],
-        perBranch: 9, clusterCount: 4, clusterRadius: 0.2, clusterSpread: 0.75,
+        perBranch: 9, clusterCount: 4, clusterRadius: 0, clusterSpread: 0,
         size: 0.44, sizeVariance: 0.3, width: 0.72, shape: 'oak', segments: 6,
-        curl: 0.16, fold: 0.3, startT: 0.42, endT: 1.0,
+        curl: 0.16, fold: 0.3, startT: 0, endT: 1.0,
         pitch: -26, pitchVariance: 30, droop: 0.3, rollVariance: 180, faceUp: 0.55,
         twist: 0.22, color: '#4f8330', colorTip: '#8dbf52', colorVariance: 0.24, petiole: 0.1,
         shapeMix: [{ shape: 'oak', weight: 5 }, { shape: 'oval', weight: 1 }],
@@ -317,8 +317,8 @@ export const SPECIES = [
       leaves: {
         enabled: true, levels: [true, true, true, false, false],
         size: 0.5, width: 0.3, shape: 'needle',
-        clusterCount: 5, clusterRadius: 0.26, clusterSpread: 1.0, perBranch: 6,
-        startT: 0.22, pitch: -8, pitchVariance: 30, droop: 0.18,
+        clusterCount: 5, clusterRadius: 0, clusterSpread: 0, perBranch: 6,
+        startT: 0, pitch: -8, pitchVariance: 30, droop: 0.18,
         color: '#4e8b46', colorTip: '#87c26c', colorVariance: 0.2,
       },
       bark: { color: '#5a4030', color2: '#7d5b41', procedural: { enabled: true, style: 'pine', scale: 0.8, contrast: 0.7 } },

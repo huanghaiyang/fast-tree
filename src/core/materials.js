@@ -1231,6 +1231,17 @@ export function updateLeafMaterial(mat, params, sharedUniforms) {
   }
   const ns = p.normalScale === undefined ? 1 : p.normalScale
   mat.normalScale.set(ns, ns)
+  // ---- 法线贴图的 UV 变换必须与颜色贴图同步 ----
+  // 自动法线是按 (贴图 URL + 强度) 缓存的共享纹理, 生成时只从像素推梯度,
+  // 不会带 offset/repeat/rotation; 如果只改颜色图的变换, 平铺/旋转/偏移后
+  // 法线细节仍停在原来的 UV 位置 —— 表现为"材质球上的法线没跟着更新".
+  if (mat.normalMap && mat.map) {
+    const nm = mat.normalMap
+    nm.center.set(0.5, 0.5)
+    nm.offset.copy(mat.map.offset)
+    nm.repeat.copy(mat.map.repeat)
+    nm.rotation = mat.map.rotation
+  }
   return mat
 }
 

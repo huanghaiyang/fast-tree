@@ -1530,6 +1530,9 @@ export function buildTree(params, options = {}) {
           const pitch = pitchRad + fRng.signed() * pitchVar
           // 在 (bx, bz) 平面内把 by 俯仰 pitch 弧度: 等价于绕 bx 旋转。
           const bx = perp.clone()
+          // 环绕生长: 让花的朝向也绕枝轴转 (而不只是位置偏移)。
+          // 簇半径默认 0 时位置偏移会退化为 0, 这一步保证"环绕"仍然可见。
+          if (FL.branchWrap) bx.applyAxisAngle(dir, az)
           const bz = new THREE.Vector3().crossVectors(bx, by).normalize()
           const byRot = by.clone().multiplyScalar(Math.sin(pitch)).add(bz.clone().multiplyScalar(Math.cos(pitch))).normalize()
           // 下垂: 沿 -Y 拉一点, ×0.4 是幅度系数 (droop 参数本身的 40%)

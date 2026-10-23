@@ -286,8 +286,8 @@ export function defaultParams() {
       levels: [false, false, true, true, true], // 每层枝条是否长叶
       perBranch: 9,        // 每条枝条上的叶簇位置数量
       clusterCount: 3,     // 每个位置的叶片数量
-      clusterRadius: 0.16, // 叶簇半径(米)
-      clusterSpread: 0.8,
+      clusterRadius: 0,    // 叶簇半径(米): 默认 0 = 叶簇不额外散开
+      clusterSpread: 0,    // 叶簇离散度: 默认 0 = 叶片贴着取样点生长
       size: 0.42,          // 叶片长度(米)
       sizeVariance: 0.28,
       width: 0.78,         // 宽/长
@@ -295,7 +295,7 @@ export function defaultParams() {
       segments: 5,
       curl: 0.18,          // 纵向弯曲
       fold: 0.28,          // 横向 V 形折叠
-      startT: 0.25,
+      startT: 0,           // 分布起始位置: 默认 0 = 从枝条基部开始长叶
       endT: 1.0,
       // 树枝环绕式生长: 沿每根树枝螺旋分布叶簇 (不依赖树干)
       branchWrap: false,
@@ -445,10 +445,12 @@ export function defaultParams() {
       branchWrapTurns: 2.0,
       density: 1,            // 开花密度 (按比例从树叶位置采样)
       clusterCount: 2,       // 每个点位几朵花
+      startT: 0,             // 分布起始位置: 默认 0 = 从枝条基部开始开
+      endT: 1.0,
       size: 0.42,            // 花朵尺寸 (通常比叶大)
       sizeVariance: 0.2,     // 花朵尺寸随机
-      clusterRadius: 0.16,   // 每簇花朵散布半径
-      clusterSpread: 0.6,    // 花朵离散度
+      clusterRadius: 0,      // 每簇花朵散布半径: 默认 0 = 不额外散开
+      clusterSpread: 0,      // 花朵离散度: 默认 0 = 贴着取样点生长
       pitch: 55,             // 花朵朝向俯仰角
       pitchVariance: 20,
       droop: 0,              // 花朵下垂
