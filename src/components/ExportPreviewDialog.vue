@@ -117,7 +117,7 @@ function fmt(n) {
 }
 .epd-art.img { cursor: zoom-in; }
 .epd-art.img:hover { border-color: var(--accent, #4fd1b0); }
-.epd-art img { width: 44px; height: 44px; object-fit: cover; border-radius: 4px; flex: none; background: #0b0e13; }
+.epd-art img { width: 44px; height: 44px; object-fit: contain; border-radius: 4px; flex: none; background: #0b0e13; }
 .epd-fileicon { width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; font-size: 22px; background: #0b0e13; border-radius: 4px; flex: none; }
 .epd-art-meta { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .epd-art-meta b { font-size: 11.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

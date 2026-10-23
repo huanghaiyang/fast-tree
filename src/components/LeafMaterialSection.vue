@@ -47,12 +47,10 @@
         <button v-for="r in leafCardRows(backBatch)" :key="'backrow-' + r" class="chip"
           :class="{ active: backRow === r }" @click="backRow = r">#{{ r }}</button>
       </div>
-      <div class="chips">
-        <button v-for="cd in backCards" :key="'backcard-' + cd.id" class="chip dot back-card"
-          :class="{ active: lm.backTexture === cd.url }" :data-url="cd.url" :title="cd.id"
-          @click="useBackCard(cd)">
-          <img :src="cd.url" alt="" @error="onThumbError(e)" />
-        </button>
+      <div class="tex-cards">
+        <TextureCard v-for="cd in backCards" :key="'backcard-' + cd.id" class="back-card"
+          :src="cd.url" :active="lm.backTexture === cd.url" :data-url="cd.url" :title="cd.id"
+          @pick="useBackCard(cd)" />
         <button class="btn small" title="随机一张背面贴图" @click="randomBackCard">🎲</button>
         <span v-if="!backCards.length" class="muted">正在检测可用贴图…</span>
       </div>
@@ -87,6 +85,7 @@ import SelectRow from './ui/SelectRow.vue'
 import SliderRow from './ui/SliderRow.vue'
 import ToggleRow from './ui/ToggleRow.vue'
 import TextureRow from './ui/TextureRow.vue'
+import TextureCard from './ui/TextureCard.vue'
 import TexturePad from './ui/TexturePad.vue'
 import { state } from '../store/treeStore.js'
 import { LEAF_CARDS, LEAF_CARD_BATCHES, LEAF_CARD_BATCH_NAMES, leafCardsFor, leafCardRows } from '../core/leafCards.generated.js'
@@ -131,14 +130,6 @@ async function probe(urls) {
     }
   }))
 }
-function onThumbError(e) {
-  const img = e && e.target
-  if (!img) return
-  const url = img.getAttribute('src') || ''
-  if (url) missing.value = { ...missing.value, [url]: true }
-  const btn = img.parentElement
-  if (btn) btn.style.display = 'none'
-}
 const batches = Object.keys(LEAF_CARD_BATCHES)
 const batchLabel = (bt) => LEAF_CARD_BATCH_NAMES[bt] || bt
 const backBatch = ref('batch1')
@@ -165,8 +156,6 @@ function randomBackCard() {
   background: var(--bg-3); border: 1px solid var(--line); border-radius: 6px; cursor: pointer;
 }
 .chip.active { border-color: var(--accent); color: #eafff7; }
-.chip.dot { padding: 0; width: 34px; height: 34px; overflow: hidden; display: inline-flex; border-radius: 3px; }
-.chip.dot img { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .chips .chip { white-space: nowrap; }
 .pad-row { display: flex; gap: 12px; align-items: flex-start; margin: 6px 0; }

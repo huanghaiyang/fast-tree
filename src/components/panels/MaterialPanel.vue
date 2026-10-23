@@ -40,11 +40,9 @@
       <button v-for="r in barkTextureRows(barkBatch)" :key="r" class="chip" :class="{ active: barkRow === r }"
         @click="barkRow = r">#{{ r }}</button>
     </div>
-    <div class="chips">
-      <button v-for="bt in barkChoices" :key="bt.id" class="chip dot"
-        :class="{ active: b.texture === bt.url }" :title="bt.name" @click="useBark(bt)">
-        <img :src="bt.url" alt="" @error="onThumbError(e)" />
-      </button>
+    <div class="tex-cards">
+      <TextureCard v-for="bt in barkChoices" :key="bt.id" :src="bt.url"
+        :active="b.texture === bt.url" :title="bt.name" @pick="useBark(bt)" />
       <button class="btn small" title="随机一张树皮" @click="useBark(randomBarkTexture())">🎲</button>
     </div>
   </Section>
@@ -74,6 +72,7 @@ import ToggleRow from '../ui/ToggleRow.vue'
 import ColorRow from '../ui/ColorRow.vue'
 import SelectRow from '../ui/SelectRow.vue'
 import TextureRow from '../ui/TextureRow.vue'
+import TextureCard from '../ui/TextureCard.vue'
 import { state } from '../../store/treeStore.js'
 import {
   BARK_TEXTURES, BARK_BATCHES, barkTexturesFor, barkTextureRows,
@@ -99,15 +98,6 @@ async function probe(urls) {
       missing.value = { ...missing.value, [url]: true }
     }
   }))
-}
-function onThumbError(e) {
-  const img = e && e.target
-  if (!img) return
-  const url = img.getAttribute('src') || ''
-  if (url) missing.value = { ...missing.value, [url]: true }
-  // 整个按钮一起隐藏, 避免留下"空方块"
-  const btn = img.parentElement
-  if (btn) btn.style.display = 'none'
 }
 const alive = (list) => (list || []).filter((x) => !missing.value[x.url])
 
@@ -183,9 +173,6 @@ onMounted(() => {
   background: var(--bg-3); border: 1px solid var(--line); border-radius: 6px; cursor: pointer;
 }
 .chip.active { border-color: var(--accent); color: #eafff7; }
-.chip.dot { padding: 0; width: 34px; height: 34px; overflow: hidden; display: inline-flex; border-radius: 3px; }
-/* 缩略图只显示贴图**中间部分**并裁掉圆角: object-fit: cover 会居中裁剪填满方块 */
-.chip.dot img { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; }
 .pick-label { font-size: 11px; color: var(--text-2); margin: 6px 0 3px; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .chips .chip { white-space: nowrap; }

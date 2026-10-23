@@ -67,11 +67,9 @@
       <button v-for="r in leafCardRows(cardBatch)" :key="r" class="chip" :class="{ active: cardRow === r }"
         @click="cardRow = r">#{{ r }}</button>
     </div>
-    <div class="chips">
-      <button v-for="c in cardVariants" :key="c.id" class="chip dot" :class="{ active: f.cardId === c.id }"
-        :title="c.id" @click="useCard(c)">
-        <img :src="c.url" alt="" @error="(e) => (e.target.parentElement.style.display = 'none')" />
-      </button>
+    <div class="tex-cards">
+      <TextureCard v-for="c in cardVariants" :key="c.id" :src="c.url"
+        :active="f.cardId === c.id" :title="c.id" @pick="useCard(c)" />
       <button class="btn small" title="随机花朵卡片" @click="onRandomCard">🎲</button>
     </div>
     <TextureRow label="花朵贴图" v-model="f.texture" />
@@ -131,6 +129,7 @@ import ColorRow from '../ui/ColorRow.vue'
 import SelectRow from '../ui/SelectRow.vue'
 import TextureRow from '../ui/TextureRow.vue'
 import TexturePad from '../ui/TexturePad.vue'
+import TextureCard from '../ui/TextureCard.vue'
 import FlowerTextureEditor from './FlowerTextureEditor.vue'
 import MaterialPreview from './MaterialPreview.vue'
 import { state, randomFlowerCard, fitFlowerCardToTexture } from '../../store/treeStore.js'
@@ -204,8 +203,6 @@ const qualityOptions = [
   background: var(--bg-3); border: 1px solid var(--line); border-radius: 6px; cursor: pointer;
 }
 .chip.active { border-color: var(--accent); color: #eafff7; }
-.chip.dot { padding: 0; width: 34px; height: 34px; overflow: hidden; display: inline-flex; border-radius: 3px; }
-.chip.dot img { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; }
 .pad-row { display: flex; gap: 12px; align-items: flex-start; margin: 6px 0 6px; }
 .pad-box { width: 132px; }
 .pad-side { flex: 1; min-width: 0; }

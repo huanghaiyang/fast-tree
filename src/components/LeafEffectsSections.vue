@@ -6,12 +6,10 @@
       hint="落叶堆继承树叶的自发光/反光/散光 (默认开)" />
     <template v-if="lt.enabled">
       <div class="pick-label">堆积贴图</div>
-      <div class="chips">
+      <div class="tex-cards">
         <button class="chip nowrap" :class="{ active: !lt.cardId }" @click="lt.cardId = ''">跟随树叶</button>
-        <button v-for="c in cardChoices" :key="'lt-' + c.id" class="chip dot"
-          :class="{ active: lt.cardId === c.id }" @click="lt.cardId = c.id" :title="c.id + ' (' + c.w + '×' + c.h + ')'">
-          <img :src="c.url" alt="" @error="onThumbError(e)" />
-        </button>
+        <TextureCard v-for="c in cardChoices" :key="'lt-' + c.id" :src="c.url"
+          :active="lt.cardId === c.id" :title="c.id" @pick="lt.cardId = c.id" />
         <button class="btn small" title="随机一张" @click="lt.cardId = randomCardId()">🎲</button>
         <span v-if="!cardChoices.length" class="muted">正在检测可用贴图…</span>
       </div>
@@ -37,12 +35,10 @@
       hint="落叶继承树叶的自发光/反光/散光 (默认开)" />
     <template v-if="fl.enabled">
       <div class="pick-label">落叶贴图</div>
-      <div class="chips">
+      <div class="tex-cards">
         <button class="chip nowrap" :class="{ active: !fl.cardId }" @click="fl.cardId = ''">跟随树叶</button>
-        <button v-for="c in cardChoices" :key="'fl-' + c.id" class="chip dot"
-          :class="{ active: fl.cardId === c.id }" @click="fl.cardId = c.id" :title="c.id + ' (' + c.w + '×' + c.h + ')'">
-          <img :src="c.url" alt="" @error="onThumbError(e)" />
-        </button>
+        <TextureCard v-for="c in cardChoices" :key="'fl-' + c.id" :src="c.url"
+          :active="fl.cardId === c.id" :title="c.id" @pick="fl.cardId = c.id" />
         <button class="btn small" title="随机一张" @click="fl.cardId = randomCardId()">🎲</button>
         <span v-if="!cardChoices.length" class="muted">正在检测可用贴图…</span>
       </div>
@@ -93,6 +89,7 @@ import Section from './ui/Section.vue'
 import ToggleRow from './ui/ToggleRow.vue'
 import SliderRow from './ui/SliderRow.vue'
 import ColorRow from './ui/ColorRow.vue'
+import TextureCard from './ui/TextureCard.vue'
 import { state } from '../store/treeStore.js'
 import { LEAF_CARDS } from '../core/leafCards.generated.js'
 
@@ -117,14 +114,6 @@ async function probe(urls) {
       missing.value = { ...missing.value, [url]: true }
     }
   }))
-}
-function onThumbError(e) {
-  const img = e && e.target
-  if (!img) return
-  const url = img.getAttribute('src') || ''
-  if (url) missing.value = { ...missing.value, [url]: true }
-  const btn = img.parentElement
-  if (btn) btn.style.display = 'none'
 }
 const cardChoicesRaw = computed(() => {
   const out = []
@@ -155,8 +144,6 @@ function randomCardId() {
   background: var(--bg-3); border: 1px solid var(--line); border-radius: 6px; cursor: pointer;
 }
 .chip.active { border-color: var(--accent); color: #eafff7; }
-.chip.dot { padding: 0; width: 34px; height: 34px; overflow: hidden; display: inline-flex; border-radius: 3px; }
-.chip.dot img { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .chips .chip { white-space: nowrap; }
 .pick-label { font-size: 11px; color: var(--text-2); margin: 6px 0 3px; }

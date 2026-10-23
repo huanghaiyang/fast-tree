@@ -242,6 +242,10 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .chip { white-space: nowrap; }
+/* 贴图卡片行: 卡片之间留足间距, 不挤在一起 (卡片本体样式在 ui/TextureCard.vue) */
+.tex-cards { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+/* 行内文字标签与卡片垂直居中 */
+.tex-cards > .muted { align-self: center; }
 .wrap { display: flex; flex-wrap: wrap; gap: 6px; }
 .muted { color: var(--fg-dim); font-size: 11px; }
 .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }

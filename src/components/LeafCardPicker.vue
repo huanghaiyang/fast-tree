@@ -12,13 +12,10 @@
       <button v-for="r in leafCardRows(batch)" :key="r" class="chip" :class="{ active: row === r }"
         @click="row = r">#{{ r }}</button>
     </div>
-    <div class="chips">
+    <div class="tex-cards">
       <span class="muted">颜色变体</span>
-      <button v-for="cd in variantCards" :key="cd.id" class="chip dot"
-        :class="{ active: lm.texture === cd.url }" :style="{ background: 'transparent' }"
-        @click="use(cd)" :title="cd.id + ' (' + cd.w + '×' + cd.h + ')'">
-        <img :src="cd.url" alt="" />
-      </button>
+      <TextureCard v-for="cd in variantCards" :key="cd.id" :src="cd.url"
+        :active="lm.texture === cd.url" :title="cd.id" @pick="use(cd)" />
       <span v-if="!variantCards.length" class="muted">正在检测可用贴图…</span>
     </div>
     <div class="inline">
@@ -38,6 +35,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import Section from './ui/Section.vue'
 import ToggleRow from './ui/ToggleRow.vue'
+import TextureCard from './ui/TextureCard.vue'
 import { state, applyLeafCard, fitLeafCardToTexture } from '../store/treeStore.js'
 import { LEAF_CARDS, LEAF_CARD_BATCHES, LEAF_CARD_BATCH_NAMES, leafCardsFor, leafCardRows } from '../core/leafCards.generated.js'
 
@@ -124,8 +122,6 @@ onMounted(() => {
   background: var(--bg-3); border: 1px solid var(--line); border-radius: 6px; cursor: pointer;
 }
 .chip.active { border-color: var(--accent); color: #eafff7; }
-.chip.dot { padding: 0; width: 34px; height: 34px; overflow: hidden; display: inline-flex; border-radius: 3px; }
-.chip.dot img { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .chips .chip { white-space: nowrap; }
 </style>
