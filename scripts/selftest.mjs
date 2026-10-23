@@ -3,6 +3,7 @@
  * 运行: npm run selftest
  */
 import { buildTree, selectionRanges } from '../src/core/treeBuilder.js'
+import * as THREE from 'three'
 import { buildBarkSkin } from '../src/core/barkSkin.js'
 import { defaultParams, cloneParams, normalizeParams, ensureFeatureDefaults, MAX_LEVELS, GROUP_KEYS } from '../src/core/params.js'
 import { ENVIRONMENTS, ENV_IDS, envById, applyEnvironment } from '../src/core/environments.js'
@@ -21,7 +22,7 @@ import { sampleEmitPositions, buildParticleSeeds, createParticleMaterial, PARTIC
 import { buildFallingLeaves, fallRebuildKey, FALL_FRAG } from '../src/core/fallingLeaves.js'
 import { buildLeafLitter, litterRebuildKey } from '../src/core/litter.js'
 import { normalFromLuminance } from '../src/core/normalFromAlbedo.js'
-import { textureAssetName, applyExportTextureNames, ensureExportTextureAlignment, EXPORT_ALIGNED_KINDS } from '../src/core/textureNaming.js'
+import { textureAssetName, applyExportTextureNames, ensureExportTextureAlignment, ensureExportUvBake, EXPORT_ALIGNED_KINDS } from '../src/core/textureNaming.js'
 import { buildOcclusionGrid, occlusionAt, bakeOcclusion, bakeOcclusionByRanges } from '../src/core/ambientOcclusion.js'
 import { viewAngles, atlasLayout, crossCardQuads, alphaCoverage, elevationAngles } from '../src/core/impostor.js'
 import { ellipseLeafTexture, resolveEffectTexture, resolveEffectAspect } from '../src/core/leafTexture.js'
@@ -1782,13 +1783,15 @@ console.log('\n[31.1] 导出贴图成套一致性')
     nFlip[mid + 1] > 128 && nPlain[mid + 1] < 128,
     `flipY=true g=${nFlip[mid + 1]} / false g=${nPlain[mid + 1]}`)
 
-  // 导出链路: 先补槽 -> 再对齐 -> 再命名
+  // 导出链路: 先补槽 -> 再对齐 -> 再烘焙 UV -> 再命名
   const exporterSrc = readFileSync(join('src', 'core', 'exporter.js'), 'utf8')
   const iMaps = exporterSrc.indexOf('ensureExportMaterialMaps(root)')
   const iAlign = exporterSrc.indexOf('ensureExportTextureAlignment(root)')
+  const iBake = exporterSrc.indexOf('ensureExportUvBake(root)')
   const iNames = exporterSrc.indexOf('applyExportTextureNames(root)')
-  check('导出顺序: 补全贴图槽 -> 成套对齐 -> 资源命名',
-    iMaps > 0 && iAlign > iMaps && iNames > iAlign, `maps=${iMaps} align=${iAlign} names=${iNames}`)
+  check('导出顺序: 补全贴图槽 -> 成套对齐 -> 烘焙 UV -> 资源命名',
+    iMaps > 0 && iAlign > iMaps && iBake > iAlign && iNames > iBake,
+    `maps=${iMaps} align=${iAlign} bake=${iBake} names=${iNames}`)
   check('导出结束会恢复材质 (restoreAll 覆盖成功/失败两条路径)',
     exporterSrc.includes('restoreAlign()') && (exporterSrc.match(/restoreAll\(\)/g) || []).length >= 3)
 
@@ -1801,6 +1804,51 @@ console.log('\n[31.1] 导出贴图成套一致性')
   const autoSrc = readFileSync(join('src', 'core', 'normalFromAlbedo.js'), 'utf8')
   check('视口自动法线的 flipY 跟随源贴图 (不再固定 false)',
     autoSrc.includes('const flipY = texture.flipY !== false') && autoSrc.includes('tex.flipY = flipY'))
+}
+
+/* 31.2 导出 UV 烘焙 (旋转/偏移/非等比平铺要写进几何, 不靠 KHR_texture_transform) */
+console.log('\n[31.2] 导出 UV 烘焙')
+{
+  // three 的贴图矩阵 = T·S·R: uv' = S·R·(uv - center) + center + offset
+  const tex = new THREE.Texture()
+  tex.center.set(0.5, 0.5)
+  tex.offset.set(0.3, -0.2)
+  tex.repeat.set(1.5, 0.7)
+  tex.rotation = -2.48
+  tex.updateMatrix()
+  const m = Array.from(tex.matrix.elements)
+
+  const geo = new THREE.PlaneGeometry(1, 1)
+  const origUv = Array.from(geo.attributes.uv.array)
+  const mat = new THREE.MeshStandardMaterial({ map: tex })
+  const mesh = new THREE.Mesh(geo, mat)
+  const root = new THREE.Group()
+  root.add(mesh)
+
+  const restore = ensureExportUvBake(root)
+  check('烘焙时几何换成克隆 (不改视口几何)', mesh.geometry !== geo && mesh.geometry.attributes.uv)
+  check('烘焙后贴图变换归零 (导出不再写 KHR_texture_transform)',
+    tex.offset.x === 0 && tex.offset.y === 0 && tex.repeat.x === 1 && tex.repeat.y === 1 &&
+    tex.rotation === 0 && tex.center.x === 0 && tex.center.y === 0)
+
+  const uv = mesh.geometry.attributes.uv
+  let maxErr = 0
+  for (let i = 0; i < uv.count; i++) {
+    const u = origUv[i * 2]
+    const v = origUv[i * 2 + 1]
+    maxErr = Math.max(maxErr,
+      Math.abs(uv.getX(i) - (m[0] * u + m[3] * v + m[6])),
+      Math.abs(uv.getY(i) - (m[1] * u + m[4] * v + m[7])))
+  }
+  check('烘焙 uv 等于原 uv 乘 three 矩阵 (与视口采样一致)', maxErr < 1e-6, `maxErr=${maxErr}`)
+
+  restore()
+  check('恢复后几何与贴图变换都回到导出前',
+    mesh.geometry === geo &&
+    Math.abs(tex.offset.x - 0.3) < 1e-9 && Math.abs(tex.repeat.y - 0.7) < 1e-9 &&
+    Math.abs(tex.rotation + 2.48) < 1e-9 && Math.abs(tex.center.x - 0.5) < 1e-9)
+  check('无 root / 空 root 时安全返回空恢复函数',
+    typeof ensureExportUvBake(null) === 'function' && typeof ensureExportUvBake({}) === 'function')
 }
 
 /* 32. 分叉开口对中 + 粗树枝根部圆度 */

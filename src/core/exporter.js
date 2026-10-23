@@ -24,7 +24,7 @@
  */
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
 import { OBJExporter } from 'three/addons/exporters/OBJExporter.js'
-import { applyExportTextureNames, patchGlbTextureNames, ensureExportMaterialMaps, ensureExportRoughnessGrayscale, ensureExportTextureAlignment } from './textureNaming.js'
+import { applyExportTextureNames, patchGlbTextureNames, ensureExportMaterialMaps, ensureExportRoughnessGrayscale, ensureExportTextureAlignment, ensureExportUvBake } from './textureNaming.js'
 
 /**
  * 触发浏览器下载一个 Blob。
@@ -66,16 +66,19 @@ export function downloadText(text, filename, mime = 'text/plain') {
  *
  *   1. `ensureExportMaterialMaps`     补全缺失的 normalMap / roughnessMap
  *   2. `ensureExportTextureAlignment` 叶/花/果四张图对齐（同尺寸 + 同朝向 + 同 UV）
- *   3. `ensureExportRoughnessGrayscale` metalness=0 时让 `_rough` 保持灰白
- *   4. `applyExportTextureNames`      写入 `leaf_diff_1k` 这类资源名，收集 alpha 资源
- *   5. `GLTFExporter.parse`           真正写 GLB
- *   6. `patchGlbTextureNames`         字节层补 `images[].name` 与 `<kind>_alpha` 图
+ *   3. `ensureExportUvBake`           把贴图的 UV 变换烘进几何 uv 并归零贴图变换
+ *   4. `ensureExportRoughnessGrayscale` metalness=0 时让 `_rough` 保持灰白
+ *   5. `applyExportTextureNames`      写入 `leaf_diff_1k` 这类资源名，收集 alpha 资源
+ *   6. `GLTFExporter.parse`           真正写 GLB
+ *   7. `patchGlbTextureNames`         字节层补 `images[].name` 与 `<kind>_alpha` 图
  *
  * 顺序约束（改动前先读这段）：
  *   - 对齐必须在"补槽"之后：补槽会新建 normal/rough，对齐要基于它们的最终尺寸；
- *   - 对齐必须在"命名"之前：命名按贴图尺寸决定 `_xk` 后缀，尺寸没对齐后缀就会错；
- *   - grayscale 必须在"对齐"之后：它复用 roughnessMap，若之后对齐再换图就会指向旧图；
- *   - 恢复必须**逆序**（3 → 2 → 1），否则 metalnessMap 可能指回一张已 dispose 的图。
+ *   - 烘焙必须在"对齐"之后、"命名"之前：对齐统一了四张图的 UV 变换，烘焙才有一个
+ *     可乘进 uv 的确定矩阵；命名按尺寸定 `_xk`，与烘焙无关，但放在同一步里更清晰；
+ *   - grayscale 必须在"烘焙"之后：它复用 roughnessMap，若之后对齐再换图就会指向旧图；
+ *   - 恢复必须**逆序**（4 → 3 → 2 → 1），否则 metalnessMap 可能指回一张已 dispose 的图，
+ *     烘焙的几何也会被换回去之后又被对齐的贴图变换覆盖。
  *
  * 失败路径（parse 报错 / 同步异常）同样执行 `restoreAll()`，保证异常时材质干净。
  *
@@ -96,11 +99,13 @@ export function exportGLB(root, filename = 'fasttree.glb', opts = {}) {
     // 各阶段返回自己的 restore()；这些临时贴图只在本次导出期间存在
     const restoreMaps = ensureExportMaterialMaps(root)
     const restoreAlign = ensureExportTextureAlignment(root)
+    const restoreBake = ensureExportUvBake(root)
     const restoreGrayscale = ensureExportRoughnessGrayscale(root)
     const naming = applyExportTextureNames(root)
-    // 逆序恢复：先撤销 grayscale 借用的 metalnessMap，再撤销对齐的贴图替换，
-    // 最后撤销补槽（此时补槽产生的临时贴图已经没有人引用）
+    // 逆序恢复：先把几何换回原 uv，再撤销 grayscale 借用的 metalnessMap，
+    // 然后撤销对齐的贴图替换，最后撤销补槽（此时补槽产生的临时贴图已经没有人引用）
     const restoreAll = () => {
+      restoreBake()
       restoreGrayscale()
       restoreAlign()
       restoreMaps()

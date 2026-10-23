@@ -220,7 +220,8 @@ GLB 内贴图资源按 `_diff` / `_alpha` / `_nor_gl` / `_rough` 命名；贴图
 roughness 也从颜色贴图亮度/梯度推导（不是随机噪声）；glTF 默认会把 roughness/metalness 合并成绿蓝图，
 导出时对 metalness=0 的材质让两者共用同一张灰度贴图，所以 `_rough` 资源保持灰白。
 叶片/花朵/果实的 alpha 生成真正的黑白 PNG 资源；叶片/花朵仍以 baseColor alpha 通道 + `alphaMode: MASK` 表达裁切。
-**叶/花/果的四套贴图保证同尺寸、同朝向、同 UV 变换**：导出前会以该材质的 `diff` 为基准，把 `nor` / `rough` / `alpha` 对齐到同一分辨率、同一 `flipY`、同一 `offset/repeat/rotation`（`KHR_texture_transform`），
+**叶/花/果的四套贴图保证同尺寸、同朝向、同 UV 变换**：导出前会以该材质的 `diff` 为基准，把 `nor` / `rough` / `alpha` 对齐到同一分辨率、同一 `flipY`、同一 `offset/repeat/rotation`，
+再把这套 UV 变换**烘焙进几何的 uv 属性**并把贴图变换归零 —— 导出的 GLB 不写 `KHR_texture_transform`，贴图位置/旋转/平铺在任何 DCC 里都与视口一致（GLTFExporter 会丢弃 `center`，且 three 的 T·S·R 与 glTF 的 T·R·S 在非等比平铺时不等价），
 这样美术拿到的四张图可以直接叠在一起用。视口里的"自动法线"是按长边 256 上限、`flipY=false` 生成的，导出时会按当前颜色贴图**全尺寸重新生成**；
 用户自带法线贴图若分辨率不同会被重采样；alpha 资源也会按 `diff` 的 `flipY` 翻转（独立 data URI 不走 GLTFExporter 的翻转）。
 果实导出使用独立的 `Fruit` 材质，带 `fruit_diff_1k` / `fruit_alpha_1k` / `fruit_nor_gl_1k` / `fruit_rough_1k`；

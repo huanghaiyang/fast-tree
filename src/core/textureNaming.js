@@ -17,21 +17,24 @@
  *   1. `ensureExportMaterialMaps()`     补全缺失的 normalMap / roughnessMap
  *   2. `ensureExportTextureAlignment()` 以 diffuse 为基准，把四张图对齐成
  *      同尺寸 + 同 flipY + 同 UV 变换（叶/花/果，详见该函数注释）
- *   3. `ensureExportRoughnessGrayscale()` metalness=0 时复用同一张灰度
+ *   3. `ensureExportUvBake()`           把贴图的 UV 变换烘进几何 uv 属性，并把贴图
+ *      变换归零 —— GLB 不再依赖 `KHR_texture_transform`，贴图位置/旋转/平铺都与
+ *      视口完全一致（原因见该函数注释：导出器丢 center、T·S·R≠T·R·S）
+ *   4. `ensureExportRoughnessGrayscale()` metalness=0 时复用同一张灰度
  *      roughnessMap，避免 glTF 把 roughness/metalness 合并成绿蓝图
- *   4. `applyExportTextureNames()`      写入 `<材质>_<role>[_xk]` 资源名，并挑出
+ *   5. `applyExportTextureNames()`      写入 `<材质>_<role>[_xk]` 资源名，并挑出
  *      需要单独补 alpha 资源的材质（alphaAliases）
- *   5. `patchGlbTextureNames()`         GLB 落盘前补 `images[].name`，并把
+ *   6. `patchGlbTextureNames()`         GLB 落盘前补 `images[].name`，并把
  *      黑白 alpha PNG 作为独立 image 挂进 textures[]
  *
  * 调用方：`src/core/exporter.js` 的 `exportGLB()`（导出预览 `prepareExport`
- * 也走同一条链路）。撤销必须逆序（3 → 2 → 1）。
+ * 也走同一条链路）。撤销必须逆序（4 → 3 → 2 → 1）。
  *
  * ## 不变量（`dev/export-map-consistency-check.html` 在 GLB 内部图上逐条验）
  *   - 同一材质：diff / nor / rough / alpha 的 width×height 完全相等；
  *   - 同一材质：四张图的导出朝向一致（flipY 相同，引擎里叠在一起不上下镜像）；
- *   - 同一材质：nor / rough 的 offset/repeat/rotation 与 diff 相同
- *     （GLTFExporter 会写成 KHR_texture_transform，缺了图案就会错位）；
+ *   - 同一材质：nor / rough 的 UV 变换与 diff 相同 —— 烘焙后都已归零并乘进 uv，
+ *     所以导出结果里既不该有 `KHR_texture_transform`，也不该有残留的 offset；
  *   - 资源名后缀与该材质 diffuse 的尺寸档位一致。
  *
  * 纯函数（`textureAssetName` / `textureResolutionK`）可在 Node 里直接单测；
@@ -950,6 +953,151 @@ export function ensureExportTextureAlignment(root) {
     for (const s of swap.reverse()) {
       if (s.material[s.key] === s.texture) s.material[s.key] = s.previous
       s.texture.dispose()
+    }
+  }
+}
+
+/** 贴图参与烘焙的槽位（GLTFExporter 会为这些槽写 KHR_texture_transform） */
+const BAKE_UV_SLOTS = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'alphaMap', 'bumpMap', 'aoMap']
+
+/** 两张贴图的 UV 变换是否完全一致（含 center） */
+function sameUvTransform(a, b) {
+  const eq = (x, y) => Math.abs(x - y) < 1e-6
+  return eq(a.offset.x, b.offset.x) && eq(a.offset.y, b.offset.y) &&
+    eq(a.repeat.x, b.repeat.x) && eq(a.repeat.y, b.repeat.y) &&
+    eq(a.rotation, b.rotation) && eq(a.center.x, b.center.x) && eq(a.center.y, b.center.y)
+}
+
+/**
+ * 导出前把贴图的 UV 变换**烘进几何 uv 属性**，并把贴图变换归零。
+ *
+ * 为什么必须这么做 —— 全部出在 GLTFExporter 的 `KHR_texture_transform` 上：
+ *   1. **旋转中心被丢弃**：three 的 `texture.rotation` 绕 `texture.center` 旋转
+ *      （本项目固定 (0.5,0.5) = 贴图中心），glTF 的扩展只能绕原点旋转。导出器只写
+ *      offset/rotation/scale，center 不写 —— 于是"贴图旋转"过的材质在 GLB 里会整体
+ *      漂移（转 180° 时偏出整整一个贴图宽，等价于"位置跑掉"）。
+ *   2. **变换顺序不同**：three 的矩阵是 T·S·R（先转后缩放），glTF 规范是 T·R·S。
+ *      `repeatU ≠ repeatV` 时两者不等价，连 three 自己的 GLTFLoader（它按规范覆盖
+ *      matrix）都对不上。
+ *   3. 不少 DCC 根本不支持这个扩展，扩展一丢，贴图位置就回到"未调整"状态。
+ *
+ * 做法：把运行时贴图矩阵（含 center / 旋转 / 非等比平铺）乘进 uv 属性，再把贴图变换
+ * 归零 —— GLB 里只剩纯 UV，任何工具读出来都与视口一致，且不再依赖扩展。
+ *
+ * 边界（不满足就跳过该材质，保持原样）：
+ *   - 同一材质的贴图必须共享同一 UV 变换（对齐阶段已保证 diff/nor/rough 相同）;
+ *   - 贴图必须走 0 号 UV 通道，且不能被多个材质共用（共用时无法安全归零）;
+ *   - 几何没有 uv 属性时跳过。
+ *
+ * 几何是克隆后临时挂上去的（不污染视口渲染），restore 时换回原几何并释放克隆。
+ *
+ * @param {THREE.Object3D} root 导出组
+ * @returns {() => void} restore
+ */
+export function ensureExportUvBake(root) {
+  if (!root || typeof root.traverse !== 'function') return () => {}
+  const meshes = []
+  root.traverse((o) => {
+    if (o && o.isMesh && o.geometry && !Array.isArray(o.material) && o.material) meshes.push(o)
+  })
+
+  // 先做一遍"能不能烘"的判定：贴图被多个材质共用时无法安全归零，这些材质整体跳过
+  // 注意这里按**材质**去重：同一材质的 roughnessMap 与 metalnessMap 可能是同一张图
+  // （ensureExportRoughnessGrayscale 就是这么做的），但归零对同材质是安全的。
+  const texUsers = new Map() // tex -> Set<material>
+  const entries = []
+  for (const mesh of meshes) {
+    const mat = mesh.material
+    const entry = { mesh, mat, ref: null, ok: true }
+    for (const key of BAKE_UV_SLOTS) {
+      const tex = mat[key]
+      if (!tex) continue
+      let users = texUsers.get(tex)
+      if (!users) texUsers.set(tex, (users = new Set()))
+      users.add(mat)
+      if (tex.channel !== undefined && tex.channel !== 0) entry.ok = false
+      if (!entry.ref) entry.ref = tex
+      else if (!sameUvTransform(entry.ref, tex)) entry.ok = false
+    }
+    entries.push(entry)
+  }
+
+  const swaps = []        // { mesh, geometry } 临时几何替换
+  const zeroed = []       // { tex, center, offset, repeat, rotation } 被归零的贴图
+  const seenTex = new Set()
+  const baked = new Map() // 原几何 uuid + 矩阵 -> 克隆后的几何
+
+  for (const entry of entries) {
+    if (!entry.ok || !entry.ref) continue
+    let shared = false
+    for (const key of BAKE_UV_SLOTS) {
+      const tex = entry.mat[key]
+      const users = tex && texUsers.get(tex)
+      if (users && users.size > 1) shared = true
+    }
+    if (shared) continue
+
+    entry.ref.updateMatrix()
+    const e = entry.ref.matrix.elements
+    // 恒等变换不用烘（offset=0 / repeat=1 / rotation=0 且 center 无影响）
+    const isIdentity = Math.abs(e[0] - 1) < 1e-6 && Math.abs(e[4] - 1) < 1e-6 &&
+      Math.abs(e[1]) < 1e-6 && Math.abs(e[3]) < 1e-6 &&
+      Math.abs(e[6]) < 1e-6 && Math.abs(e[7]) < 1e-6
+    if (isIdentity) continue
+
+    const key = entry.mesh.geometry.uuid + '|' + e.join(',')
+    let geo = baked.get(key)
+    if (geo === undefined) {
+      geo = entry.mesh.geometry.clone()
+      const uv = geo.attributes && geo.attributes.uv
+      if (!uv) {
+        geo.dispose()
+        geo = null
+      } else {
+        for (let i = 0; i < uv.count; i++) {
+          const u = uv.getX(i)
+          const v = uv.getY(i)
+          uv.setXY(i, e[0] * u + e[3] * v + e[6], e[1] * u + e[4] * v + e[7])
+        }
+        uv.needsUpdate = true
+      }
+      baked.set(key, geo)
+    }
+    if (!geo) continue
+
+    swaps.push({ mesh: entry.mesh, geometry: entry.mesh.geometry })
+    entry.mesh.geometry = geo
+
+    for (const key2 of BAKE_UV_SLOTS) {
+      const tex = entry.mat[key2]
+      if (!tex || seenTex.has(tex)) continue
+      seenTex.add(tex)
+      zeroed.push({
+        tex,
+        center: tex.center.clone(),
+        offset: tex.offset.clone(),
+        repeat: tex.repeat.clone(),
+        rotation: tex.rotation,
+      })
+      tex.center.set(0, 0)
+      tex.offset.set(0, 0)
+      tex.repeat.set(1, 1)
+      tex.rotation = 0
+    }
+  }
+
+  return () => {
+    for (const z of zeroed) {
+      z.tex.center.copy(z.center)
+      z.tex.offset.copy(z.offset)
+      z.tex.repeat.copy(z.repeat)
+      z.tex.rotation = z.rotation
+    }
+    for (const s of swaps) {
+      if (s.mesh.geometry !== s.geometry) s.mesh.geometry = s.geometry
+    }
+    for (const geo of baked.values()) {
+      if (geo) geo.dispose()
     }
   }
 }
