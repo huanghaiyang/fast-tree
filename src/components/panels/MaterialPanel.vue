@@ -22,8 +22,17 @@
     <SliderRow label="顶点色混合" v-model="b.vertexColorMix" :min="0" :max="1" :step="0.01"
       hint="顶点色里烘焙了根部变暗 / 嫩枝偏绿" />
     <div class="grid-2">
-      <SliderRow label="UV 横向重复" v-model="b.uvScaleU" :min="0.2" :max="6" :step="0.1" />
-      <SliderRow label="UV 纵向重复" v-model="b.uvScaleV" :min="0.2" :max="6" :step="0.1" />
+      <SliderRow label="UV 横向重复" v-model="b.uvScaleU" :min="0.2" :max="6" :step="0.1"
+        hint="沿周长每米的重复次数 (树干与细枝保持同一纹理密度)" />
+      <SliderRow label="UV 纵向重复" v-model="b.uvScaleV" :min="0.2" :max="6" :step="0.1"
+        hint="沿树高每米的重复次数" />
+    </div>
+    <div class="inline">
+      <button class="btn small" @click="fitBarkUV"
+        title="按当前树皮贴图的像素尺寸与宽高比自动设置 U/V 重复，避免拉伸和细枝贴图变小">
+        📐 UV 自动适应贴图
+      </button>
+      <span class="muted">按贴图分辨率自动计算，保持宽高比</span>
     </div>
     <TextureRow label="自定义树皮贴图" v-model="b.texture" />
     <TextureRow label="自定义法线贴图" v-model="b.normalTexture" />
@@ -112,13 +121,38 @@ function useBark(bt) {
   // (这就是"点缩略图没反应"的根因; 模板里能用 `b.xxx` 是因为模板会自动解包 ref)。
   const bark = state.params.bark
   bark.texture = bt.url
-  // 照片树皮是 1m 左右的局部采样, 直接贴到几十米高的树干上会严重拉伸
-  // -> 给一组"接近真实树皮尺度"的平铺默认值 (之后可用 UV 重复滑杆微调)
-  if (bark.uvScaleU === 1 && bark.uvScaleV === 1) {
-    bark.uvScaleU = 3
-    bark.uvScaleV = 1.5
-  }
+  // 照片树皮是 ~1m 的局部采样, 直接贴到几十米高的树干上会严重拉伸。
+  // 默认按贴图分辨率自动算一组 U/V (见 fitBarkUV); 用户之后调过滑杆就不覆盖。
+  if (bark.uvScaleU === 1 && bark.uvScaleV === 1) fitBarkUV()
 }
+
+/* ---------------- UV 自动适应贴图 ----------------
+ * 目标: 让贴图在任何粗细的枝条上保持同一纹素密度, 既不被压扁/拉长, 也不会在细枝上变小。
+ * U 是沿周长的重复、V 是沿树高的重复 (每米次数), 两者用同一个像素密度反推:
+ *   uvScaleU = 目标像素密度 / 贴图宽, uvScaleV = 目标像素密度 / 贴图高
+ * 这样拼出来的 tile 物理宽高比 == 贴图像素宽高比。
+ */
+const BARK_TEXELS_PER_METER = 512
+const clampUV = (v) => Math.max(0.2, Math.min(6, Math.round(v * 100) / 100))
+
+/** 读取贴图真实像素尺寸; 程序化树皮没有 URL, 按 512×512 处理 */
+function barkTextureSize(url) {
+  return new Promise((resolve) => {
+    if (!url) return resolve({ w: 512, h: 512 })
+    const img = new Image()
+    img.onload = () => resolve({ w: img.naturalWidth || 512, h: img.naturalHeight || 512 })
+    img.onerror = () => resolve({ w: 512, h: 512 })
+    img.src = url
+  })
+}
+
+async function fitBarkUV() {
+  const bark = state.params.bark
+  const { w, h } = await barkTextureSize(bark.texture)
+  bark.uvScaleU = clampUV(BARK_TEXELS_PER_METER / Math.max(1, w))
+  bark.uvScaleV = clampUV(BARK_TEXELS_PER_METER / Math.max(1, h))
+}
+
 const barkChoices = computed(() => alive(barkTexturesFor(barkBatch.value, barkRow.value)))
 function randomBarkTexture() {
   const pool = barkChoices.value.length ? barkChoices.value : BARK_TEXTURES

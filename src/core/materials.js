@@ -999,10 +999,12 @@ export function updateBarkMaterial(mat, params, sharedUniforms) {
       mat.userData.__texKey = key
       // 先释放上一轮程序化生成的三张图，否则换图时显存只增不减。
       clearAutoBarkTextures(mat)
-      mat.map = loadTexture(p.texture)
+      // autoSeamless: 照片树皮多半不是无缝素材, 加载时自动检测并做边缘融合,
+      // 否则平铺后树干上会出现一圈圈硬接缝 (低分辨率素材尤其明显)。
+      mat.map = loadTexture(p.texture, { autoSeamless: true })
       // 法线贴图必须按线性数据 + normal 模式加载（srgb: false 且走法线专用解码），
       // 否则会被 sRGB 解码一次，光照方向整体偏掉。
-      if (p.normalTexture) mat.normalMap = loadTexture(p.normalTexture, { srgb: false, normal: true })
+      if (p.normalTexture) mat.normalMap = loadTexture(p.normalTexture, { srgb: false, normal: true, autoSeamless: true })
       else mat.normalMap = null
       // 照片树皮不提供粗糙度贴图时置空：让材质标量 roughness 生效，
       // 而不是留一张上一轮程序化图造成"图与滑杆打架"。

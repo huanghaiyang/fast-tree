@@ -27,7 +27,7 @@
  * 关键概念 / 约定:
  *   - 几何单位: 米; 环坐标系用平行移动 (parallel transport) 推进, 见 buildRingBases;
  *   - 每圈渲染 M 个面, 但存 M+1 个顶点: 第 M 个是与第 0 列位置/法线相同的"UV 接缝复制顶点";
- *     它让 uv.x 从 0 连续走到 uRepeat 而不回卷, 否则最后一格贴图会被拉伸回 0;
+ *     它让 uv.x 从 0 连续走到 uMeters 而不回卷, 否则最后一格贴图会被拉伸回 0;
  *   - aNodeId 写 branch.slot, 供节点树选中/高亮/拆分导出归属;
  *   - 所有随机/噪声都不在这里产生 (顶点噪声只在 barkSkin 里), 因此本文件是纯确定性的。
  */
@@ -257,9 +257,10 @@ export function buildSpeedtreeBark(skeleton, opts = {}) {
     let sumR = 0
     for (const f of frames) sumR += f.radius
     const avgR = sumR / frames.length
-    // U 方向重复次数按"这一圈的周长"折算: 粗细不同的枝条纹理密度因此接近,
-    // 不会出现"树干上贴图被拉宽、细枝上被挤碎"。clamp 到 [1,24] 兜住极端半径。
-    const uRepeat = Math.max(1, Math.min(24, Math.round(TAU * avgR * uvScaleU)))
+    // U 方向直接按"这一圈的周长(米)"展开: 1 个 UV 单位 = 1 米, 每米重复次数交给材质 repeat。
+    // 不用 round + clamp(≥1): 半径 <16cm 的细枝会被强制包满整张贴图, 纹理横向被压缩
+    // 5~10 倍, 于是树干与细枝的纹理比例对不上 ("细枝贴图变小、接不上"的根因)。
+    const uMeters = TAU * avgR * uvScaleU
 
     const ringStarts = []
     // arc = 从基部累计到当前帧的**弧长** (米), 直接当 v 坐标用:
@@ -282,7 +283,7 @@ export function buildSpeedtreeBark(skeleton, opts = {}) {
       const cb = color.b + (color2.b - color.b) * smooth01(tt)
       for (let j = 0; j <= M; j++) {
         // j 走 0..M 共 M+1 个顶点; jm = j % M 让第 M 个顶点复用第 0 列的角度与半径
-        // (位置/法线完全相同), 唯一不同的是 uv.x = (M/M)*uRepeat —— 这就是 UV 缝。
+        // (位置/法线完全相同), 唯一不同的是 uv.x = (M/M)*uMeters —— 这就是 UV 缝。
         const jm = j % M
         const angle = (jm / M) * TAU
         const ca = Math.cos(angle)
@@ -300,13 +301,13 @@ export function buildSpeedtreeBark(skeleton, opts = {}) {
         nx /= nl; ny /= nl; nz /= nl
         acc.vertex(
           px, py, pz, nx, ny, nz,
-          (j / M) * uRepeat, arc * uvScaleV,
+          (j / M) * uMeters, arc * uvScaleV,
           cr, cg, cb, wind, phase,
           origin.x, origin.y, origin.z, grow[0], grow[1], slot,
         )
       }
       // 记下一对 "接缝复制顶点 -> 原顶点": 第 M 号与第 0 号位置/法线完全相同。
-      // 渲染时它们的 uv.x 不同 (0 vs uRepeat), 拓扑校验时按这对焊回 —— 于是
+      // 渲染时它们的 uv.x 不同 (0 vs uMeters), 拓扑校验时按这对焊回 —— 于是
       // "渲染上有 UV 缝、几何上仍是封闭流形", 两个需求不打架。
       seamPairs.push([baseIndex + M, baseIndex])
     }

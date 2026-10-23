@@ -981,7 +981,7 @@ export function buildBarkSkin(skeleton, opts = {}) {
   /** rings[branchIndex] = [ringVertexStart, ...] */
   const rings = branchList.map(() => [])
   const ringM = branchList.map(() => 0)
-  // UV 接缝: 每圈多复制 1 个顶点 (位置/法线同第 0 列, uv.x = uRepeat),
+  // UV 接缝: 每圈多复制 1 个顶点 (位置/法线同第 0 列, uv.x = uMeters),
   // 这样最后一格贴图不会从 0.97 回插到 0 (那会在树干/树枝上留下一条拉伸带)。
   // 渲染上是一条零宽 UV 缝; 拓扑校验按 seamPairs 焊接后仍是封闭 2-manifold。
   const seamPairs = []
@@ -1019,9 +1019,10 @@ export function buildBarkSkin(skeleton, opts = {}) {
     let sumR = 0
     for (const f of frames) sumR += f.radius
     const avgR = sumR / frames.length
-    // U 方向重复次数按"平均周长"折算, 让粗枝与细枝的纹理密度接近;
-    // clamp 到 [1,24] 兜住极粗/极细的极端参数 (否则一条主干能要到几百次重复)。
-    const uRepeat = Math.max(1, Math.min(24, Math.round(TAU * avgR * uvScaleU)))
+    // U 方向直接按"周长(米)"展开: 1 个 UV 单位 = 1 米, 由材质 repeat 统一控制每米重复次数。
+    // 不能用 round + clamp(≥1): 半径 <16cm 的细枝会被强制包满整张贴图, 纹理横向被压缩
+    // 5~10 倍, 树干与细枝的纹理比例对不上 ("细枝上贴图变小、接不上"的根因)。
+    const uMeters = TAU * avgR * uvScaleU
 
     // arc = 从基部累计到当前帧的弧长 (米), 直接作为 v 坐标: U/V 都以米为单位,
     // 贴图在两个方向上密度一致, 不会被斜着拉伸。
@@ -1095,7 +1096,7 @@ export function buildBarkSkin(skeleton, opts = {}) {
         acc.vertex(
           px, py, pz,
           nx / nl, ny / nl, nz / nl,
-          (j / Mf) * uRepeat, arc * uvScaleV,
+          (j / Mf) * uMeters, arc * uvScaleV,
           clamp01(cr), clamp01(cg), clamp01(cb),
           wind, phase,
           origin.x, origin.y, origin.z,
@@ -1103,7 +1104,7 @@ export function buildBarkSkin(skeleton, opts = {}) {
           slot,
         )
       }
-      // 第 Mf 号顶点与第 0 号位置/法线相同, 只有 uv.x = uRepeat (而不是 0)。
+      // 第 Mf 号顶点与第 0 号位置/法线相同, 只有 uv.x = uMeters (而不是 0)。
       // 这一对要登记下来, 拓扑校验时焊回; Mf > 2 是防御性判断 (M 已被 clamp 到 >=3)。
       if (Mf > 2) seamPairs.push([baseIndex + Mf, baseIndex])
     }

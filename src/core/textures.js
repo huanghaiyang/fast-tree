@@ -478,6 +478,158 @@ function repairCardAlpha(image) {
   return canvas
 }
 
+/**
+ * 自动检测贴图能否直接平铺, 并在需要时生成"无缝版本" (树皮用)。
+ *
+ * 为什么需要: 内置照片树皮大多不是无缝素材 (左右/上下边缘的颜色对不上),
+ * 一旦用 RepeatWrapping 平铺, 树干上就会出现硬接缝; 分辨率越低越明显。
+ *
+ * 做法:
+ *   1. **自动检测 (按方向)**: 把图缩到 ≤96px, 分别比较"左/右边缘列"与"上/下边缘行"
+ *      的平均色差, 再和图中部的相邻列/行色差 (当作噪声基线) 比较。
+ *      边缘差明显高于基线 = 该方向不无缝; 两个方向都是无缝的图完全不动。
+ *   2. **智能羽化**: 只修有缝的方向, 过渡带宽度按"接缝失配 / 内部噪声"的比值自适应
+ *      (5%~16%, 最多不超过半幅): 失配越大带越宽, 颜色变化摊得越开, 不会留下明显的
+ *      涂抹条。带内权重用 smootherstep, 两端一阶/二阶导为 0, 带与正常区域之间没有折线。
+ *      中间内容完全不动, 做完后左=右、上=下, 平铺时颜色连续、无硬接缝。
+ *
+ * 无法读取像素 (跨域污染画布 / 未解码) 时返回 null, 调用方保持原图。
+ *
+ * @param {HTMLImageElement|HTMLCanvasElement} image 已加载完成的贴图源
+ * @returns {HTMLCanvasElement|null} 无缝画布; 无需修复或无法处理时返回 null
+ */
+function makeSeamlessCanvas(image) {
+  if (typeof document === 'undefined' || !image) return null
+  const w = image.width || image.naturalWidth || 0
+  const h = image.height || image.naturalHeight || 0
+  if (w < 4 || h < 4) return null
+  try {
+    /* ---------- ① 缩略检测 ---------- */
+    const S = 96
+    const k = Math.min(1, S / Math.max(w, h))
+    const dw = Math.max(8, Math.round(w * k))
+    const dh = Math.max(8, Math.round(h * k))
+    const probe = document.createElement('canvas')
+    probe.width = dw
+    probe.height = dh
+    const pctx = probe.getContext('2d', { willReadFrequently: true })
+    pctx.drawImage(image, 0, 0, dw, dh)
+    const d = pctx.getImageData(0, 0, dw, dh).data
+    const diffCol = (x1, x2) => {
+      let s = 0
+      for (let y = 0; y < dh; y++) {
+        const a = (y * dw + x1) * 4
+        const b = (y * dw + x2) * 4
+        s += Math.abs(d[a] - d[b]) + Math.abs(d[a + 1] - d[b + 1]) + Math.abs(d[a + 2] - d[b + 2])
+      }
+      return s / (dh * 3)
+    }
+    const diffRow = (y1, y2) => {
+      let s = 0
+      for (let x = 0; x < dw; x++) {
+        const a = (y1 * dw + x) * 4
+        const b = (y2 * dw + x) * 4
+        s += Math.abs(d[a] - d[b]) + Math.abs(d[a + 1] - d[b + 1]) + Math.abs(d[a + 2] - d[b + 2])
+      }
+      return s / (dw * 3)
+    }
+    const qx = Math.round(dw / 4)
+    const qy = Math.round(dh / 4)
+    const mx = Math.floor(dw / 2)
+    const my = Math.floor(dh / 2)
+    // 水平/垂直两个方向分别判断: 只修真正有缝的那个方向, 不留无谓的细节损失
+    const edgeX = diffCol(0, dw - 1)
+    const edgeY = diffRow(0, dh - 1)
+    // 基线取三条内部相邻列/行差的均值: 单看中间一列可能刚好落在裂纹上, 造成误判
+    const innerX = (diffCol(qx, qx + 1) + diffCol(mx, mx + 1) + diffCol(dw - 1 - qx, dw - qx)) / 3
+    const innerY = (diffRow(qy, qy + 1) + diffRow(my, my + 1) + diffRow(dh - 1 - qy, dh - qy)) / 3
+    // 判据: 边缘失配既要"相对内部噪声明显"(×1.25), 又要"绝对值有意义"(+2)。
+    // 只写 ×1.5+4 会漏掉中等程度的接缝 (实测照片树皮 X 方向 45.8 vs 基线 29.6 被判为无缝,
+    // 平铺后仍有一条横向硬边); 只写比值又会在本来就高噪的图上误判。
+    const seamX = edgeX > innerX * 1.25 + 2
+    const seamY = edgeY > innerY * 1.25 + 2
+    if (!seamX && !seamY) return null
+
+    /* ---------- ② 自适应羽化无缝化 (中间像素不动) ----------
+     * 过渡带宽度不写死: 接缝失配 / 内部噪声 的比值越大, 带越宽 (5%~16%),
+     * 这样颜色变化摊得更开, 不会在窄带上形成一条可见的"涂抹条"。
+     * 权重用 smootherstep, 两端一阶/二阶导都为 0, 所以带的两头没有硬折线。
+     */
+    const bandRatio = (edge, inner) => {
+      const ratio = edge / Math.max(1, inner)
+      return Math.min(0.16, Math.max(0.05, 0.05 + (ratio - 1) * 0.05))
+    }
+    const feather = (t) => t * t * t * (t * (t * 6 - 15) + 10)
+    const bandX = seamX
+      ? Math.max(1, Math.min(Math.round(w * bandRatio(edgeX, innerX)), Math.floor((w - 2) / 2)))
+      : 0
+    const bandY = seamY
+      ? Math.max(1, Math.min(Math.round(h * bandRatio(edgeY, innerY)), Math.floor((h - 2) / 2)))
+      : 0
+
+    const cv = document.createElement('canvas')
+    cv.width = w
+    cv.height = h
+    const cx = cv.getContext('2d', { willReadFrequently: true })
+    cx.drawImage(image, 0, 0)
+    const id = cx.getImageData(0, 0, w, h)
+    const data = id.data
+    // 水平: 每一行的左/右边缘都羽化到该行两端的平均值 -> 左边缘 = 右边缘
+    if (bandX > 0) {
+      for (let y = 0; y < h; y++) {
+        const li = (y * w) * 4
+        const ri = (y * w + w - 1) * 4
+        // 先记下边缘原值: 下面 i=0 时会把边缘本身改掉, 后续像素必须以原值为基准
+        const lr = data[li], lg = data[li + 1], lb = data[li + 2]
+        const rr = data[ri], rg = data[ri + 1], rb = data[ri + 2]
+        const tr = (lr + rr) / 2
+        const tg = (lg + rg) / 2
+        const tb = (lb + rb) / 2
+        for (let i = 0; i < bandX; i++) {
+          const t = feather(1 - i / bandX)
+          const l = (y * w + i) * 4
+          const r = (y * w + w - 1 - i) * 4
+          data[l] += (tr - lr) * t
+          data[l + 1] += (tg - lg) * t
+          data[l + 2] += (tb - lb) * t
+          data[r] += (tr - rr) * t
+          data[r + 1] += (tg - rg) * t
+          data[r + 2] += (tb - rb) * t
+        }
+      }
+    }
+    // 垂直: 同理把上/下边缘羽化到每列两端的平均值。水平已经让上下两行的左右端相等,
+    // 所以这里左列与右列得到的目标值相同, 不会破坏水平方向的无缝性。
+    if (bandY > 0) {
+      for (let x = 0; x < w; x++) {
+        const ti = x * 4
+        const bi = ((h - 1) * w + x) * 4
+        const tr0 = data[ti], tg0 = data[ti + 1], tb0 = data[ti + 2]
+        const br0 = data[bi], bg0 = data[bi + 1], bb0 = data[bi + 2]
+        const tr = (tr0 + br0) / 2
+        const tg = (tg0 + bg0) / 2
+        const tb = (tb0 + bb0) / 2
+        for (let i = 0; i < bandY; i++) {
+          const t = feather(1 - i / bandY)
+          const u = (i * w + x) * 4
+          const b = ((h - 1 - i) * w + x) * 4
+          data[u] += (tr - tr0) * t
+          data[u + 1] += (tg - tg0) * t
+          data[u + 2] += (tb - tb0) * t
+          data[b] += (tr - br0) * t
+          data[b + 1] += (tg - bg0) * t
+          data[b + 2] += (tb - bb0) * t
+        }
+      }
+    }
+    cx.putImageData(id, 0, 0)
+    return cv
+  } catch (e) {
+    // 跨域画布无法 getImageData 等情况: 保持原图交给调用方
+    return null
+  }
+}
+
 /** 从 image URL / dataURL 载入贴图 (onError: 404/坏图时回调, 用于降级) */
 // 说明: 返回值是**立刻**可用的 Texture 对象 (此时可能还没有像素), three.js 会在加载完成后
 // 自动上传, 所以调用方不必等 onLoad 再建材质; 失败时只打一个 userData.loadFailed 标记。
@@ -486,11 +638,19 @@ function repairCardAlpha(image) {
 //   srgb      false 时不做 sRGB 解码 (法线/粗糙度这类数据贴图要传 false 或 normal:true)
 //   normal    true 时强制 NoColorSpace (法线贴图专用, 优先级高于 srgb)
 //   repairAlpha  true 时在加载完成后跑一遍 repairCardAlpha (花卡去黑洞/去黑边)
+//   autoSeamless true 时自动检测平铺接缝, 非无缝图会在加载后转成无缝画布 (照片树皮)
 //   onError   加载失败回调 (参数为 url), 用于把卡片标记成不可用并回退
 export function loadTexture(url, opts = {}) {
   const tex = new THREE.TextureLoader().load(
     url,
     (loaded) => {
+      if (opts.autoSeamless && loaded && loaded.image) {
+        const fixed = makeSeamlessCanvas(loaded.image)
+        if (fixed) {
+          loaded.image = fixed
+          loaded.needsUpdate = true
+        }
+      }
       if (opts.repairAlpha && loaded && loaded.image) {
         const fixed = repairCardAlpha(loaded.image)
         if (fixed) {

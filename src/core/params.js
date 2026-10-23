@@ -406,8 +406,9 @@ export function defaultParams() {
     /* 树皮材质: pipeline 决定走哪条几何管线 ——
      *   'speedtree' = 分枝管 + 领口 (默认, 多闭合分量)
      *   'skin'      = 单张连续蒙皮 (boundary = 0 的单连通面)
-     * 程序化花纹由 color (深色端) / color2 (浅色端) 生成; uvScaleU 是周向重复次数,
-     * uvScaleV 是沿树高"每米"的重复次数 (所以树越高纹路越多, 天然不会拉伸)。
+     * 程序化花纹由 color (深色端) / color2 (浅色端) 生成; uvScaleU / uvScaleV 都是
+     * "每米"重复次数 (分别沿周长 / 沿树高), 因为 UV 坐标本身就是米为单位的物理弧长,
+     * 所以树干与细枝的纹素密度一致, 树越高纹路越多, 天然不会拉伸。
      * texture / normalTexture 是用户上传的 dataURL: 一旦有值就替换程序化花纹。 */
     // ---------------- 树皮材质 ----------------
     bark: {
