@@ -26,6 +26,7 @@
     <SliderRow label="太阳方位角" v-model="s.sunAzimuth" :min="0" :max="360" :step="1" unit="°" />
     <SliderRow label="太阳高度角" v-model="s.sunElevation" :min="-5" :max="88" :step="1" unit="°" />
     <ToggleRow label="阴影" v-model="s.shadows" />
+    <ToggleRow v-if="s.shadows" label="动态阴影" v-model="s.dynamicShadows" />
     <ToggleRow label="地面" v-model="s.ground" />
     <ToggleRow label="网格" v-model="s.grid" />
     <SelectRow label="线框展示 (三角面)" v-model="s.wireframe" :options="wireOptions" />

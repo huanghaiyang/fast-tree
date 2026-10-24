@@ -17,7 +17,7 @@ import {
 import { buildLeafTemplate, LEAF_SHAPE_KEYS } from '../src/core/leaf.js'
 import { buildFruitTemplate, FRUIT_TYPES } from '../src/core/fruit.js'
 import { expandExponentialNumbers } from '../src/core/exporter.js'
-import { createSharedUniforms, createLeafMaterial, createFlowerMaterial, createBarkMaterial, updateMaterials, internalShaderSources, resolveTintMix } from '../src/core/materials.js'
+import { createSharedUniforms, createLeafMaterial, createFlowerMaterial, createBarkMaterial, createTreeDepthMaterial, updateMaterials, internalShaderSources, resolveTintMix } from '../src/core/materials.js'
 import { sampleEmitPositions, buildParticleSeeds, createParticleMaterial, PARTICLE_VERT, PARTICLE_FRAG } from '../src/core/particles.js'
 import { buildFallingLeaves, fallRebuildKey, FALL_FRAG } from '../src/core/fallingLeaves.js'
 import { buildLeafLitter, litterRebuildKey } from '../src/core/litter.js'
@@ -1881,6 +1881,47 @@ console.log('\n[31.3] 卡片贴图边缘透明')
   check('loadTexture 对 clamp 贴图默认清边',
     src.includes('const wantBorder = opts.clearBorder === undefined ? !!opts.clamp : opts.clearBorder') &&
     src.includes('const cleared = clearCardBorder(loaded.image)'))
+}
+
+/* 31.4 动态阴影 */
+console.log('\n[31.4] 动态阴影')
+{
+  const p = defaultParams()
+  check('默认场景开启阴影且动态阴影默认开启', p.scene.shadows === true && p.scene.dynamicShadows === true)
+  const old = normalizeParams({ scene: { shadows: false } })
+  check('旧参数缺 dynamicShadows 时补默认 true (且保留 shadows=false)',
+    old.scene.dynamicShadows === true && old.scene.shadows === false)
+
+  // 深度材质必须注入与主材质相同的风场/生长顶点位移, 才能让影子跟着树动
+  const u = createSharedUniforms()
+  const leafU = { uIsLeaf: { value: 1 }, uSway: { value: 1 }, uLeafFlutter: { value: 0.6 }, uLeafTwist: { value: 0.5 } }
+  const dm = createTreeDepthMaterial(u, leafU)
+  check('深度材质是 MeshDepthMaterial 且用 RGBA 打包',
+    dm.isMeshDepthMaterial === true && dm.depthPacking === THREE.RGBADepthPacking)
+  const shader = {
+    uniforms: {},
+    vertexShader: '#include <begin_vertex>\n#include <project_vertex>',
+    fragmentShader: '',
+  }
+  dm.onBeforeCompile(shader)
+  check('注入了风场/生长属性声明', shader.vertexShader.includes('attribute float aWind') && shader.vertexShader.includes('attribute vec2 aGrow'))
+  check('替换了 <begin_vertex> (生长+风场位移生效)',
+    shader.vertexShader.includes('vec3 treePos = transformed') &&
+    shader.vertexShader.includes('float growK = clamp'))
+  check('共享同一份 uniform 对象 (uTime/每材质 uIsLeaf 逐帧同步到阴影)',
+    shader.uniforms.uTime === u.uTime && shader.uniforms.uGrowth === u.uGrowth &&
+    shader.uniforms.uIsLeaf === leafU.uIsLeaf && shader.uniforms.uSway === leafU.uSway)
+
+  const sm = readFileSync(join('src', 'core', 'sceneManager.js'), 'utf8')
+  check('场景管理器按 dynamicShadows 决定阴影是否每帧重算',
+    sm.includes('this.renderer.shadowMap.autoUpdate = this.shadowsEnabled && this.dynamicShadows'))
+  check('投影网格按动态阴影挂载 customDepthMaterial',
+    sm.includes('c.mesh.customDepthMaterial = dynamic ? this._depthMaterialFor(c.mesh.material) : undefined'))
+  check('深度材质按主材质分别缓存 (树叶/树皮运动形态不同)',
+    sm.includes('_depthMaterials.get(material)') &&
+    sm.includes('material.userData.uniforms'))
+  const panel = readFileSync(join('src', 'components', 'panels', 'ScenePanel.vue'), 'utf8')
+  check('场景面板暴露动态阴影开关', panel.includes('v-model="s.dynamicShadows"'))
 }
 
 /* 32. 分叉开口对中 + 粗树枝根部圆度 */

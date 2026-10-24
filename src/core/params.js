@@ -637,6 +637,7 @@ export function defaultParams() {
       fogColor: '#111820',
       fogScale: 1.0,      // 雾距离倍率: <1 雾更近, >1 雾更远
       shadows: true,
+      dynamicShadows: true,  // 阴影是否每帧重算(跟随太阳角度/风场/生长); 关 = 冻结阴影省性能
       sunColor: '#fff2e0',
       sunAzimuth: 35,
       sunElevation: 40,

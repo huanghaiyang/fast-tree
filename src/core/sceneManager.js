@@ -41,6 +41,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js'
 import { buildTree } from './treeBuilder.js'
 import {
   createSharedUniforms, createBarkMaterial, createLeafMaterial, createFlowerMaterial,
+  createTreeDepthMaterial,
   updateMaterials, updateWindUniforms, updateGrowthUniforms, rebindCustomShader,
 } from './materials.js'
 import { exportGLB, exportOBJ, exportScreenshot } from './exporter.js'
@@ -345,6 +346,13 @@ export class TreeScene {
     this._fruitExportKey = ''
     // 视锥分块: 只用于 LOD0 渲染; 源网格保留给导出/统计/粒子采样
     this._cullChunks = []
+    // 动态阴影用的深度材质(懒创建, 每个主材质一份): 注入与主材质相同的
+    // 风场/生长顶点位移与每材质 uniform, 让影子跟着树一起动。
+    // 静态阴影下不挂这个材质, 由 three 用默认的静止姿态深度材质。
+    this._depthMaterials = new Map()
+    // 阴影总开关与"是否每帧重算"缓存(updateScene 写入, applyShadowFlags 读取)
+    this.shadowsEnabled = true
+    this.dynamicShadows = true
     // 动态 LOD: LOD0 = 上面的主网格; LOD1/2 首次需要时才构建并缓存
     // lastParams 是"重建参数快照", LOD 生成、导出拆件都从这里取参数。
     this.lastParams = null
@@ -1404,29 +1412,63 @@ export class TreeScene {
   }
 
   /**
+   * 同步阴影标记：总开关、隔离模式、以及"静态/动态"两套投影材质。
+   *
    * 隔离模式下被隐藏的几何不该再投影 (阴影 pass 用的是独立depth材质, 看不到选中逻辑)。
    *
    * 原因: "只显示选中"是靠片元里 discard 实现的, 但阴影贴图是用另一套 depth 材质
    * 渲染的, 那里没有我们的选中判定 —— 于是被隐藏的叶子仍然在地上投出影子,
    * 看起来像"树叶幽灵"。解决办法是在隔离模式下直接关掉 castShadow。
    *
-   * 覆盖范围: 源树皮/树叶(源网格本身不渲染, 但保持标志一致以防被复用)、
-   * 所有视锥分块(含花朵分块)、所有 LOD 档位的树皮/树叶。
-   * 花朵源网格的 castShadow 在 build 里固定为 true, 不参与这里的开关
-   * —— 花朵在隔离模式下的表现由分块统一处理。
+   * 动态阴影(dynamicShadows)开启时, 每个投影网格挂上 `customDepthMaterial`:
+   * 它注入了与主材质相同的风场/生长顶点位移, 影子会跟着树一起摆动/生长。
+   * 关闭时不挂(还原默认的静止姿态深度材质), 并由 updateScene 冻结阴影重算。
    *
-   * @sideeffect 批量修改 mesh.castShadow
+   * 覆盖范围: 源树皮/树叶/花朵、所有视锥分块(含花朵分块)、所有 LOD 档位的
+   * 树皮/树叶/花朵。花朵源网格的 castShadow 在 build 里固定为 true, 不参与
+   * 这里的开关 —— 花朵在隔离模式下的表现由分块统一处理。
+   *
+   * @sideeffect 批量修改 mesh.castShadow / mesh.customDepthMaterial;
+   *   静态阴影模式下标记阴影贴图需要重算一次。
    */
   applyShadowFlags() {
     const isolate = this.selectMode === 2
     const on = !!this.shadowsEnabled && !isolate
+    const dynamic = on && !!this.dynamicShadows
     if (this.barkMesh) this.barkMesh.castShadow = on
     if (this.leafMesh) this.leafMesh.castShadow = on
-    for (const c of this._cullChunks) c.mesh.castShadow = on
+    for (const c of this._cullChunks) {
+      c.mesh.castShadow = on
+      c.mesh.customDepthMaterial = dynamic ? this._depthMaterialFor(c.mesh.material) : undefined
+    }
     for (const e of this.lodCache.values()) {
       if (e.leafMesh) e.leafMesh.castShadow = on
       if (e.barkMesh) e.barkMesh.castShadow = on
+      if (e.flowerMesh) e.flowerMesh.castShadow = on
+      for (const m of [e.barkMesh, e.leafMesh, e.flowerMesh]) {
+        if (m) m.customDepthMaterial = dynamic ? this._depthMaterialFor(m.material) : undefined
+      }
     }
+    // 静态阴影只在"标志变了"时重算一次; 动态阴影由 autoUpdate 每帧刷新。
+    if (this.shadowsEnabled && !this.dynamicShadows) this.renderer.shadowMap.needsUpdate = true
+  }
+
+  /**
+   * 懒创建某个主材质对应的动态阴影深度材质。
+   * 每个主材质一份: uIsLeaf / uSway / uLeafFlutter / uLeafTwist 这些"每材质不同"的
+   * uniform 必须与主材质一致, 否则树叶在阴影里的运动形态会与树体对不上。
+   * 同材质的多个网格(分块/LOD)共用一份; three 在投影时会各自复制 map/alphaTest/side。
+   *
+   * @param {THREE.Material} material 主材质(树皮/树叶/花朵)
+   * @returns {THREE.MeshDepthMaterial}
+   */
+  _depthMaterialFor(material) {
+    let dm = this._depthMaterials.get(material)
+    if (!dm) {
+      dm = createTreeDepthMaterial(this.uniforms, (material.userData && material.userData.uniforms) || {})
+      this._depthMaterials.set(material, dm)
+    }
+    return dm
   }
 
   /**
@@ -1546,8 +1588,8 @@ export class TreeScene {
    *
    * @param {Object} s 场景参数分片；字段含 background / wireframe / gradient /
    *   skyTop / skyBottom / stars / ground / groundColor / grid / exposure /
-   *   autoRotate / shadows / sunColor / sunIntensity / hemiSky / hemiGround /
-   *   ambient / fog / fogColor / fogScale / sunAzimuth / sunElevation
+   *   autoRotate / shadows / dynamicShadows / sunColor / sunIntensity / hemiSky /
+   *   hemiGround / ambient / fog / fogColor / fogScale / sunAzimuth / sunElevation
    * @sideeffect 修改场景背景与雾、天空材质、星空材质、灯光与阴影开关、
    *   renderer 曝光、轨道自动旋转、线框网格
    */
@@ -1591,6 +1633,11 @@ export class TreeScene {
     this.renderer.shadowMap.enabled = !!s.shadows
     this.shadowsEnabled = !!s.shadows
     this.sun.castShadow = !!s.shadows
+    // 动态阴影: 开 = 阴影贴图每帧重算, 随太阳角度/风场/生长实时变化;
+    // 关 = 只在场景参数或几何变化时重算一次(autoUpdate=false), 省掉每帧
+    // 多一遍全树深度绘制。老预设没有该字段时按开启处理。
+    this.dynamicShadows = s.dynamicShadows === undefined ? true : !!s.dynamicShadows
+    this.renderer.shadowMap.autoUpdate = this.shadowsEnabled && this.dynamicShadows
     this.sun.color.set(s.sunColor || '#fff2e0')
     this.sun.intensity = s.sunIntensity === undefined ? 3.1 : s.sunIntensity
     this.hemi.color.set(s.hemiSky || '#c8dcff')
@@ -2607,6 +2654,9 @@ export class TreeScene {
     /* ---- 主材质(树皮/树叶; 花朵与树叶共用实例, 不重复释放) ---- */
     this.materials?.bark?.dispose()
     this.materials?.leaf?.dispose()
+    // 动态阴影深度材质(每个主材质一份)
+    for (const dm of this._depthMaterials.values()) dm.dispose()
+    this._depthMaterials.clear()
     disposeFruitExportMaterial(this._fruitExportMaterial)
     this._fruitExportMaterial = null
     /* ---- 场景背景资源(地面 / 天空 / 星空) ---- */

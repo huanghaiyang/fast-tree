@@ -773,6 +773,48 @@ function applyTreeShader(material, shaderUniforms, opts) {
 }
 
 /* ------------------------------------------------------------------ */
+/* 动态阴影深度材质                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 创建"跟随风场/生长动画"的阴影深度材质（供 `mesh.customDepthMaterial` 使用）。
+ *
+ * 为什么需要：阴影 pass 默认用 three 内置的 MeshDepthMaterial，它不认识
+ * aWind / aPhase / aOrigin / aGrow 这些属性 —— 于是风把树吹动、生长动画播放时，
+ * 地上的影子仍停在静止姿态，看起来像"影子不跟着树动"。
+ * 这里把与主材质**完全相同**的顶点位移代码注入深度材质，并共享同一份
+ * uniforms 对象（uTime / uGrowth 是同一引用），所以影子与树体逐帧同步。
+ *
+ * 注意：
+ *   - 贴图与 alphaTest 由 WebGLShadowMap 在投影时自动从主材质复制，无需在这里设置；
+ *   - 几何必须带有 aWind / aPhase / aOrigin / aGrow / aNodeId 属性（树几何都带）；
+ *   - 只在"动态阴影"开启时挂到网格上；静态阴影直接不挂，让 three 用默认静止姿态。
+ *
+ * @param {Object<string,{value:*}>} sharedUniforms `createSharedUniforms()` 的返回值
+ * @param {Object<string,{value:*}>} [materialUniforms] 该主材质的 `userData.uniforms`
+ *   （uIsLeaf / uSway / uLeafFlutter / uLeafTwist 是**每材质不同**的，必须一起传进来，
+ *   否则树叶在阴影里会退化成"整体平移"或干脆不动）
+ * @returns {THREE.MeshDepthMaterial} 注入过顶点动画的深度材质
+ */
+export function createTreeDepthMaterial(sharedUniforms, materialUniforms = {}) {
+  const mat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking })
+  const shaderUniforms = { ...sharedUniforms, ...materialUniforms }
+  mat.onBeforeCompile = (shader) => {
+    // 共享同一份 uniform 对象引用：改 uTime 就同时改主材质与阴影
+    Object.assign(shader.uniforms, shaderUniforms)
+    shader.vertexShader = VERTEX_HEADER + shader.vertexShader
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <begin_vertex>',
+      '#include <begin_vertex>\n' + vertexBody(''),
+    )
+  }
+  // 固定缓存键：所有树网格共用同一套深度程序（贴图/alphaTest 的差异由
+  // three 自己的 defines 参与缓存键，不会被这里合并掉）。
+  mat.customProgramCacheKey = () => 'fast-tree-depth'
+  return mat
+}
+
+/* ------------------------------------------------------------------ */
 /* 创建                                                                */
 /* ------------------------------------------------------------------ */
 
