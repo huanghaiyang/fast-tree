@@ -630,6 +630,48 @@ function makeSeamlessCanvas(image) {
   }
 }
 
+/**
+ * 把卡片贴图最外一圈像素清成全透明（原地尺寸不变，内容不缩放、不重采样）。
+ *
+ * 解决"移动/缩放贴图后卡片上出现多余条纹"：卡片材质用 ClampToEdgeWrapping，
+ * 一旦 UV 被 offset / repeat 推出 0..1，GPU 会**无限拉伸最外一圈像素**；如果那一圈
+ * 里正好有花枝、花瓣或白色底，就会被涂成贯穿整张卡的一条细线（条纹）。
+ * 把最外 margin 像素改成透明后，超出范围的采样区域拿到的是透明像素，
+ * 经 alphaTest 直接丢弃 —— 既没有条纹，也不会像 RepeatWrapping 那样冒出重复图案。
+ *
+ * 尺寸必须保持不变：导出时 `textureResolutionK` 靠长边判定 `_1k/_2k/_4k`，
+ * 改了尺寸会让资源名档位错乱。
+ *
+ * @param {HTMLImageElement|HTMLCanvasElement} image 源图（已加载完成）
+ * @param {number} [margin=2] 要清掉的边缘像素宽度（2px 对任意尺寸的 UV 溢出都够用）
+ * @returns {HTMLCanvasElement|null} 同尺寸的新画布；无 DOM / 跨域读图失败 / 图太小时返回 null
+ */
+export function clearCardBorder(image, margin = 2) {
+  if (typeof document === 'undefined' || !image) return null
+  const w = Math.max(0, Math.round(image.width || image.naturalWidth || 0))
+  const h = Math.max(0, Math.round(image.height || image.naturalHeight || 0))
+  // 太小的图清掉边就只剩一点内容了, 宁可保持原样
+  if (w < margin * 2 + 4 || h < margin * 2 + 4) return null
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+  try {
+    // 1:1 原样复制 (同尺寸 drawImage 不重采样, 内容位置/清晰度都不变)
+    ctx.drawImage(image, 0, 0)
+    // 2: 只把最外一圈抹成透明
+    ctx.clearRect(0, 0, w, margin)
+    ctx.clearRect(0, h - margin, w, margin)
+    ctx.clearRect(0, 0, margin, h)
+    ctx.clearRect(w - margin, 0, margin, h)
+  } catch {
+    // 跨域图片无法绘制时保持原图, 交给调用方
+    return null
+  }
+  return canvas
+}
+
 /** 从 image URL / dataURL 载入贴图 (onError: 404/坏图时回调, 用于降级) */
 // 说明: 返回值是**立刻**可用的 Texture 对象 (此时可能还没有像素), three.js 会在加载完成后
 // 自动上传, 所以调用方不必等 onLoad 再建材质; 失败时只打一个 userData.loadFailed 标记。
@@ -638,6 +680,7 @@ function makeSeamlessCanvas(image) {
 //   srgb      false 时不做 sRGB 解码 (法线/粗糙度这类数据贴图要传 false 或 normal:true)
 //   normal    true 时强制 NoColorSpace (法线贴图专用, 优先级高于 srgb)
 //   repairAlpha  true 时在加载完成后跑一遍 repairCardAlpha (花卡去黑洞/去黑边)
+//   clearBorder  true 时把最外一圈像素清成透明 (clamp 卡片默认开启, 见 clearCardBorder)
 //   autoSeamless true 时自动检测平铺接缝, 非无缝图会在加载后转成无缝画布 (照片树皮)
 //   onError   加载失败回调 (参数为 url), 用于把卡片标记成不可用并回退
 export function loadTexture(url, opts = {}) {
@@ -655,6 +698,16 @@ export function loadTexture(url, opts = {}) {
         const fixed = repairCardAlpha(loaded.image)
         if (fixed) {
           loaded.image = fixed
+          loaded.needsUpdate = true
+        }
+      }
+      // 夹边采样的卡片: 最外一圈必须透明, 否则 UV 超出 0..1 时会被拉伸成条纹
+      // (clearBorder 可以显式关掉；默认跟随 clamp)
+      const wantBorder = opts.clearBorder === undefined ? !!opts.clamp : opts.clearBorder
+      if (wantBorder && loaded && loaded.image) {
+        const cleared = clearCardBorder(loaded.image)
+        if (cleared) {
+          loaded.image = cleared
           loaded.needsUpdate = true
         }
       }

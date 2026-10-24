@@ -23,6 +23,7 @@ import { buildFallingLeaves, fallRebuildKey, FALL_FRAG } from '../src/core/falli
 import { buildLeafLitter, litterRebuildKey } from '../src/core/litter.js'
 import { normalFromLuminance } from '../src/core/normalFromAlbedo.js'
 import { textureAssetName, applyExportTextureNames, ensureExportTextureAlignment, ensureExportUvBake, EXPORT_ALIGNED_KINDS } from '../src/core/textureNaming.js'
+import { clearCardBorder } from '../src/core/textures.js'
 import { buildOcclusionGrid, occlusionAt, bakeOcclusion, bakeOcclusionByRanges } from '../src/core/ambientOcclusion.js'
 import { viewAngles, atlasLayout, crossCardQuads, alphaCoverage, elevationAngles } from '../src/core/impostor.js'
 import { ellipseLeafTexture, resolveEffectTexture, resolveEffectAspect } from '../src/core/leafTexture.js'
@@ -1849,6 +1850,37 @@ console.log('\n[31.2] 导出 UV 烘焙')
     Math.abs(tex.rotation + 2.48) < 1e-9 && Math.abs(tex.center.x - 0.5) < 1e-9)
   check('无 root / 空 root 时安全返回空恢复函数',
     typeof ensureExportUvBake(null) === 'function' && typeof ensureExportUvBake({}) === 'function')
+}
+
+/* 31.3 卡片贴图最外圈透明 (夹边采样 + UV 溢出时不出现拉伸条纹) */
+console.log('\n[31.3] 卡片贴图边缘透明')
+{
+  // Node 环境没有 document: 必须安全返回 null (不能抛错)
+  check('无 DOM 环境下安全返回 null', clearCardBorder({ width: 64, height: 64 }) === null)
+
+  // 用最小 canvas mock 校验"同尺寸 + 只清外圈"的几何逻辑
+  const calls = []
+  const ctx = {
+    drawImage: (img, x, y) => calls.push(['draw', x, y]),
+    clearRect: (x, y, w, h) => calls.push(['clear', x, y, w, h]),
+  }
+  const canvas = { width: 0, height: 0, getContext: () => ctx }
+  const prevDoc = globalThis.document
+  globalThis.document = { createElement: () => canvas }
+  const out = clearCardBorder({ width: 128, height: 64 }, 2)
+  globalThis.document = prevDoc
+  check('返回同尺寸画布 (导出 _1k/_2k 档位不受影响)', !!out && out.width === 128 && out.height === 64)
+  check('内容按 1:1 原样复制 (不缩放、不重采样)', calls.some((c) => c[0] === 'draw' && c[1] === 0 && c[2] === 0))
+  const clears = calls.filter((c) => c[0] === 'clear')
+  // 四条边都必须贴着画布边缘, 且厚度至少 2px (不能清到内部像素)
+  const onBorder = clears.every(([, x, y, w, h]) =>
+    (x === 0 || x + w === 128) && (y === 0 || y + h === 64) && w >= 2 && h >= 2)
+  check('只清掉最外 2px 的四条边', clears.length === 4 && onBorder, JSON.stringify(clears))
+  check('过小的图保持原样 (清完就没内容了)', clearCardBorder({ width: 4, height: 4 }) === null)
+  const src = readFileSync(join('src', 'core', 'textures.js'), 'utf8')
+  check('loadTexture 对 clamp 贴图默认清边',
+    src.includes('const wantBorder = opts.clearBorder === undefined ? !!opts.clamp : opts.clearBorder') &&
+    src.includes('const cleared = clearCardBorder(loaded.image)'))
 }
 
 /* 32. 分叉开口对中 + 粗树枝根部圆度 */
