@@ -30,7 +30,7 @@
  *      所以不同阶段/季节的叶色抽样互不相同 (这是有意的: 让每个组合都有自己的色调)。
  *   3. 叶量顺序 夏 > 秋 > 冬 必须成立; 冬季仍需 >0 片 (橡树的枯叶残留);
  *      常绿树种冬季不得低于夏季的 70%。
- *   4. 同一组合 + 同一种子 = 完全相同的几何; 不同种子 = 不同个体; 7 个树种两两不同。
+ *   4. 同一组合 + 同一种子 = 完全相同的几何; 不同种子 = 不同个体; 各树种两两不同。
  * 注意: 各 apply 系列函数都是**就地修改**传入的 p (p 已是 mergeParams 产出的新对象,
  * 不会污染 defaultParams 或物种表)。
  */
@@ -288,6 +288,82 @@ export const SPECIES = [
         color: '#c9a86b', capColor: '#8a6f45', colorVariance: 0.16, maxCount: 380, chance: 0.5, radial: 8,
       },
       leafMat: { roughness: 0.72, metalness: 0.0, translucency: 0.5, emissive: 0.02 },
+    }),
+  },
+  {
+    /* 枫树 (槭树): 秋色阔叶乔木, 参考图特征是"主干短、近圆形浓密树冠、冠幅≈树高、
+     * 掌状 5 裂叶、秋季黄橙"。
+     * 与橡树的差别: 主干更直更细一点, 分叉略高 (0.32 而非 0.33 的粗壮低分叉),
+     * L1 枝角 60° 略小于橡树的 66° (树冠更收拢、更圆而不是开张的伞形),
+     * 叶形用 palmate (裂片更深) 而不是 oak, 秋季调色板是黄-橙而不是红橙。 */
+    id: 'maple', name: '枫树', icon: '🍁',
+    desc: '掌状裂叶、近圆形浓密树冠, 秋季黄橙',
+    evergreen: false,
+    variation: {
+      height: 0.28, radius: 0.24, curve: 0.42, lean: 0.12, gnarl: 0.4,
+      crown: 0.55, count: 0.28, leaf: 0.24, fork: 0.24, trunkShare: 0.12,
+    },
+    seasonal: {
+      autumn: {
+        // 参考图是"金黄-橙"而不是泛白: 基色偏深、方差收小, 避免高光下叶片被冲成奶油色
+        palette: ['#c8791d', '#cf8a22', '#b86a1a', '#d0952c'],
+        tipPalette: ['#e0a02a', '#d99528'], leafDensity: 0.92, colorVariance: 0.2,
+      },
+      winter: { leafDensity: 0.02 },
+      spring: { palette: ['#7fb548', '#a5cf6a'], leafDensity: 0.72 },
+    },
+    patch: () => ({
+      trunk: {
+        height: 8.6, baseRadius: 0.36, taper: 0.1, radiusCurve: 1.3,
+        curve: 0.28, gnarl: 0.45, flare: 1.1, knots: 3, radialSegments: 12,
+        fork: {
+          enabled: true, count: 3, height: 0.32, angle: 30, spread: 0.8,
+          radiusScale: 0.62, lengthScale: 0.95, taper: 0.3, curve: 0.4,
+        },
+      },
+      roots: { enabled: false, count: 6, length: 0.22 },
+      branches: {
+        levels: 4, apicalDominance: 0.38, phototropism: 0.06, gravityScale: 1.05,
+        level: levels(
+          {
+            count: 5, pitch: 60, pitchVariance: 14, lengthRatio: 0.52, lengthVariance: 0.2,
+            radiusRatio: 0.46, startT: 0.14, endT: 0.86, taper: 0.34, radiusCurve: 1.25,
+            curve: 0.44, curveVariance: 0.45, gravity: 0.1, upBias: 0.1,
+            spread: 0.5, segments: 11, radialSegments: 7, windGain: 0.55,
+          },
+          {
+            count: 5, pitch: 52, pitchVariance: 16, lengthRatio: 0.6, lengthVariance: 0.22,
+            radiusRatio: 0.48, startT: 0.18, endT: 0.95, curve: 0.5, curveVariance: 0.5,
+            gravity: -0.04, upBias: 0.06, spread: 0.6,
+            segments: 8, radialSegments: 5, windGain: 0.75,
+          },
+          {
+            count: 4, pitch: 46, pitchVariance: 18, lengthRatio: 0.62, lengthVariance: 0.24,
+            radiusRatio: 0.46, startT: 0.24, endT: 1.0, curve: 0.5, gravity: -0.12,
+            spread: 0.7, segments: 6, radialSegments: 4, windGain: 0.9,
+          },
+          {
+            count: 3, pitch: 42, pitchVariance: 20, lengthRatio: 0.62, lengthVariance: 0.26,
+            radiusRatio: 0.5, startT: 0.28, endT: 1.0, curve: 0.45, gravity: -0.15,
+            spread: 0.8, segments: 4, radialSegments: 3, windGain: 1.0,
+          },
+        ),
+      },
+      leaves: {
+        enabled: true, levels: [false, true, true, true, true],
+        perBranch: 8, clusterCount: 3, clusterRadius: 0, clusterSpread: 0,
+        size: 0.42, sizeVariance: 0.28, width: 0.95, shape: 'palmate', segments: 6,
+        curl: 0.16, fold: 0.26, startT: 0, endT: 1.0,
+        pitch: -24, pitchVariance: 30, droop: 0.28, rollVariance: 180, faceUp: 0.5,
+        twist: 0.2, color: '#5a8f35', colorTip: '#9ac45c', colorVariance: 0.24, petiole: 0.09,
+        // 掌状为主, 少量 maple/oval 混入避免整树"复制粘贴感"
+        shapeMix: [{ shape: 'palmate', weight: 5 }, { shape: 'maple', weight: 2 }, { shape: 'oval', weight: 1 }],
+      },
+      bark: {
+        color: '#6b5a48', color2: '#8f7a62', roughness: 0.9,
+        procedural: { enabled: true, style: 'rough', scale: 1.15, contrast: 0.6 },
+      },
+      leafMat: { roughness: 0.7, translucency: 0.55 },
     }),
   },
   {
@@ -888,7 +964,7 @@ export function classificationDesc(speciesId, stageId, seasonId) {
  * 做组合画廊。每项只含 id 与显示名, 不生成任何几何 (生成一次要几十毫秒, 这里不能做)。
  *
  * @returns {Array<{species: string, stage: string, season: string, name: string}>}
- *          长度 = SPECIES.length × GROWTH_STAGES.length × SEASONS.length (当前 7×5×4 = 140)
+ *          长度 = SPECIES.length × GROWTH_STAGES.length × SEASONS.length (当前 8×5×4 = 160)
  */
 export function allCombinations() {
   const out = []

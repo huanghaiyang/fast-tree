@@ -28,7 +28,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 const PORT = Number(process.argv.find((a) => a.startsWith('--port='))?.split('=')[1] || process.env.BRIDGE_PORT || 5275)
 /** 桥服务版本 + 能力清单: 供 vite 插件判断本机已有实例是否兼容 (旧实例会自动替换) */
-const BRIDGE_VERSION = '2.1.0'
+const BRIDGE_VERSION = '2.2.0'
 const BRIDGE_FEATURES = ['bridge', 'mcp', 'llm.chat', 'llm.chat.stream', 'llm.models', 'search']
 /** 一次对话里最多允许几轮"模型 -> 工具 -> 模型"; 参考图还原需要 读参数/预设/精调/重建/截图 + 修正, 4 轮会被探索类调用耗尽 */
 const MAX_TOOL_ROUNDS = 8
@@ -61,6 +61,8 @@ export { COMMANDS }
 /* ---------------- 浏览器桥 (轮询模式, 零依赖) ---------------- */
 const pending = new Map()   // id -> { id, name, args, at, target }
 const consumers = new Map() // consumerId -> { commands: string[], lastSeen, path, version }
+/** tabId(标签页, sessionStorage 持久) -> consumerId: 同一标签页的所有轮询循环共用一个实例 id */
+const tabCid = new Map()
 const results = new Map() // id -> { ok, data, error }
 let lastPollAt = 0
 let bridgeCalls = 0
@@ -195,6 +197,24 @@ const LLM_SYSTEM = `你是"快速树生成工具 (FastTree)"的建模助手。�
 - 路径写法: 分组.键, 数组用下标, 如 'branches.level[1].count'、'traffic' 不存在; 批量改一次发一个 patch 即可
 - 单位: 长度=米, 角度=度, 比例=0~1 或相对父级的倍率; 改完参数后 app.rebuild 会重新生长 (约 1 秒)
 - 回复用简短中文, 可用 Markdown, 说明改了什么、依据是什么; 不要输出大段代码或完整参数 JSON
+意图分流 (先判断这次是"只看"还是"要动手", 判断错会被用户认为多做了或没做):
+- 用户只要"识别/描述/分析/看看这张图/这是什么树", 没有说还原、照着做、改成这样 -> 只输出 3~6 条视觉要点与结论, 不调用任何改动类工具 (apply_preset/set_params/rebuild/apply_leaf_card/set_bark_texture), 也不 rebuild; 末尾可补一句"要我按这张图建模吗?"
+- 用户说"还原/照着这张图建模/改成这样/和参考图一致/按图重建" -> 必须走下方参考图还原流程, 至少 set_params + rebuild + screenshot 各一次, 不能只给方案
+- 一句话里两者都有 ("识别并还原") -> 先简短描述要点, 再直接建模, 不要反问
+取值与语义 (都已确定, 不要靠 list_* 或试错去猜):
+- 树种 species: oak 橡树 / maple 枫树 / pine 松树 / birch 白桦 / willow 垂柳 / sakura 樱花 / shrub 灌木 / dead 枯树 (没有 banyan)
+- 生长阶段 stage: seedling 树苗 / sapling 幼树 / young 小树 / mature 大树 / ancient 古树
+- 季节 season: spring / summer / autumn / winter
+- leaves.shape (程序化叶形): oval 椭圆 / birch 桦叶 / lance 披针 / needle 针叶 / maple 枫(浅裂) / oak 橡叶 / palmate 掌状 5 裂 / cordate 心形
+- leaves.cardMode=true 时显示卡片贴图, shape 不生效; 要用程序化叶形就同时设 cardMode=false
+- leafMat.tintMode: 'texture' 保持贴图原色 / 'season' 跟随叶色染色 / 'custom' 自定义; 改了 leaves.color 却看不出变化, 多半是 tintMode 还停在 texture
+- app.camera action: frame 框住整树 / front 正视图 / top 俯视 / side 侧视 / reset 复位
+- app.toggle target: leaves/flower/fruit/fall/litter/flowerFall/flowerLitter/particles/roots/playing/wireframe
+- app.set_material target: bark/leaf/flower
+- app.apply_preset 省略 stage/season 会沿用当前值 (不用硬填); 它直接返回 summary (树高/分叉/层数/叶色/卡片状态/树皮), 用 summary 判断即可, 不要再 get_params 复核预设结果
+- app.set_params 只接受参数树里已存在的键; 返回的 ignored 非空就说明键名写错了, 按 get_params 里的真实键名改正后重发, 不许装作没看见
+- 树皮贴图: set_bark_texture 用 batch + row/col (都从 1 开始, 默认第 1 行第 1 列), 不要猜坐标; 批次中文名: 灰褐裂隙 / 红褐块状 / 黑白桦皮 / 白桦 / 灌木 褐裂 / 灌木 霜裂 / 松树 赤裂 / 松树 鳞片
+- 叶片批次推荐: 秋色阔叶(枫/橡) -> ① 秋色系; 绿色阔叶 -> ② 绿色系; 白桦 -> ③/④; 樱花 -> ⑤~⑩; 柳 -> ⑪; 灌木 -> ⑭/⑮; 松 -> ⑯/⑰
 工具调用纪律 (违反就会来回空转, 必须遵守):
 - 严禁用 app.help / app.list_species / app.status / app.node_tree 做"探索"; 工具清单与树种枚举已在上面给出, 需要状态直接读 get_params
 - 每一轮把所有能并行的调用一次性发出 (同一个 assistant 消息里多个 tool_calls), 不要一轮只发一个只读调用
@@ -204,12 +224,12 @@ const LLM_SYSTEM = `你是"快速树生成工具 (FastTree)"的建模助手。�
 - 换树种/换参考图时先清掉上一轮残留的卡片贴图, 否则旧卡片会盖掉季节叶色: 在 set_params 里同时带 'leaves.cardMode':false、'leafMat.texture':''、'leafMat.tintMode':'season' (只有当参考图的叶片形态与某个卡片批次一致时才保留卡片)
 参考图还原流程 (用户发图, 或说"照着这张图/这棵树建模"时, 必须按顺序执行):
 1. 先在思考里定 3~6 条要点: 树种/生长阶段/季节, 树冠轮廓(圆/伞/塔/垂/不规则)与冠幅/树高比例, 主干分叉(高度/条数/角度), 枝条走向与疏密, 叶片形状/大小/颜色, 花或果, 树皮质感, 地面与天空氛围
-2. 第 1 轮: 同时调用 app.get_params 与 app.apply_preset (选最接近的 树种+阶段+季节; 可用树种 oak/sakura/birch/maple/pine/willow/banyan, 季节 spring/summer/autumn/winter)
+2. 第 1 轮: app.apply_preset 定树种+阶段+季节 (可用树种 oak/maple/pine/birch/willow/sakura/shrub/dead, 季节 spring/summer/autumn/winter); 需要完整键名时同一轮并行 app.get_params
 3. 第 2 轮: app.set_params 一次批量精调树形/枝条/叶/花/果/树皮/地面, 参考下方映射
 4. 第 3 轮: app.rebuild
 5. 第 4 轮: app.screenshot (默认 900px JPEG, 会作为图片回传给你), 与参考图对比轮廓/比例/疏密/颜色
 6. 需要修正就再 1~2 轮 set_params + rebuild + screenshot, 然后汇报关键参数与取舍
-- 只要用户要求建模, 就必须至少改动一次参数并 rebuild, 不允许"只给方案不动手"; 读完参数不要再重复读同一组
+- 用户要求还原时, 必须至少改动一次参数并 rebuild, 不允许"只给方案不动手"; 读完参数不要再重复读同一组
 视觉特征 -> 参数速查:
 - 树高/干径/树干弯曲: trunk.height, trunk.baseRadius, trunk.taper, trunk.curve, trunk.lean, trunk.gnarl, trunk.flare
 - 主干分叉(低分叉/多主枝): trunk.fork { enabled,count,height,angle,spread,radiusScale,lengthScale }
@@ -217,8 +237,9 @@ const LLM_SYSTEM = `你是"快速树生成工具 (FastTree)"的建模助手。�
   圆形浓密冠: levels 3~4, 主枝 count 4~6, pitch 55~70, 上层 pitch 40~55, apicalDominance 0.25~0.5
   塔形/针叶: pine 预设 + 上层 pitch 小 + upBias 大; 垂枝: gravity 取负 + pitch 大
 - 叶片: leaves.enabled/size(米)/width/shape/perBranch/clusterCount/levels(哪几层长叶), 叶色 leaves.color/colorTip/colorVariance, 卡片贴图 app.list_leaf_cards + app.apply_leaf_card
+  shape 只在 cardMode=false 时生效; 掌状/裂叶用 palmate 或 oak, 浅裂枫叶用 maple, 阔叶用 oval
   list_leaf_cards 会返回 batches 的中文名(如 ① 秋色系 / ② 绿色系 / ⑬ 柳花穗), 按名字选批次, 不要凭 id 猜; 阔叶参考图优先用叶片形状接近的批次, 形态不符就关掉卡片用程序化叶形
-- 秋色(黄/橙/红): 用 season=autumn 预设, 再按需改 leaves.color/colorTip 与 colorVariance
+- 秋色(黄/橙/红): maple 或 oak 预设 + season=autumn; 枫树的黄橙由 maple 自带调色板给出, 再按需改 leaves.color/colorTip 与 colorVariance
 - 花/果: flower.enabled/color/size/density/levels; fruit.enabled/type/color/size; 参考图没花就不要开
 - 树皮: app.list_bark_textures + app.set_bark_texture, 或 bark.color/color2/tint/roughness/normalScale
 - 地面与氛围: scene.ground/groundColor/gradient/skyTop/skyBottom, litter.enabled, fall.enabled, particles.enabled
@@ -314,7 +335,15 @@ function appTools() {
       description: c.description,
       parameters: {
         type: 'object',
-        properties: Object.fromEntries(Object.entries(c.params || {}).map(([k, s]) => [k, { type: s.type, description: s.description || '' }])),
+        properties: Object.fromEntries(Object.entries(c.params || {}).map(([k, s]) => {
+          const prop = { type: s.type }
+          // enum 必须透传给上游: 否则模型看不到 stage/season/camera action 等合法取值,
+          // 只能靠猜或额外调用 list_* 去探索, 白烧工具轮次。
+          if (Array.isArray(s.enum)) prop.enum = s.enum
+          if (s.items) prop.items = s.items
+          if (s.description) prop.description = s.description
+          return [k, prop]
+        })),
         required: Object.entries(c.params || {}).filter(([, s]) => s.required).map(([k]) => k),
       },
     },
@@ -681,11 +710,17 @@ const server = http.createServer(async (req, res) => {
     if (route === '/mcp' && req.method === 'POST') return json(res, 200, await mcpHandle(await readBody(req)))
     if (route === '/bridge/hello' && req.method === 'POST') {
       const body = await readBody(req)
-      const cid = 'p' + seq++
       const tabId = typeof body.tabId === 'string' ? body.tabId : ''
-      // 同一标签页只保留最新实例: HMR 重载可能留下旧轮询, 不去重会让一条命令被多实例领走
-      if (tabId) {
-        for (const [oldId, old] of consumers) if (old.tabId === tabId) consumers.delete(oldId)
+      // 同一个标签页复用同一个 consumerId。
+      // 为什么不是"删掉旧实例再发新 id": HMR 会重新执行客户端模块, 如果 dispose 没跑成功,
+      // 同一页面里会同时存在多个轮询循环; 每次 hello 都换 id 会让它们轮流把对方从
+      // consumers 里删掉 -> 一方轮询 404 -> 重新注册 -> 再删掉另一方, 无限乒乓,
+      // 期间任何命令的 target 都会立刻失效, 表现为"浏览器无响应"。
+      // 复用 id 后所有循环都轮询同一个实例, 命令拿到一次就删, 不会被重复执行。
+      let cid = tabId ? tabCid.get(tabId) : ''
+      if (!cid) {
+        cid = 'p' + seq++
+        if (tabId) tabCid.set(tabId, cid)
       }
       consumers.set(cid, {
         commands: Array.isArray(body.commands) ? body.commands : [],

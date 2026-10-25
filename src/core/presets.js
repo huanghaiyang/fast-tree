@@ -185,7 +185,7 @@ export function applyPreset(params, id, stage = 'mature', season = 'summer') {
 /* 树种 -> 叶色参考板 [基色, 高光色] (CSS hex 字符串)。
  * 注意: 当前文件内没有引用它 —— 自动生成的叶色改由 species.js 的季节调色板
  * (palette / tipPalette) 决定; 这里保留作为"该树种大致长什么颜色"的速查表,
- * 后续做个体色相派生时可直接复用。maple 只出现在这张表里, 不是可选树种。 */
+ * 后续做个体色相派生时可直接复用。 */
 const LEAF_PALETTES = {
   oak: ['#5d9c37', '#a3cd63'],
   maple: ['#d3712c', '#efb454'],
@@ -207,8 +207,8 @@ const LEAF_PALETTES = {
  *     seedling / sapling / young / mature / ancient, 权重对应 5 个值
  *   - 季节:    由 SEASONS 派生 id, 顺序固定为 spring / summer / autumn / winter
  * 这些权重直接决定"点随机生成 10 次会看到什么", 改它们等于改产品的默认观感。 */
-const ARCHETYPE_IDS = ['oak', 'pine', 'birch', 'willow', 'sakura', 'shrub', 'dead']
-const ARCHETYPE_WEIGHTS = [0.22, 0.16, 0.16, 0.12, 0.12, 0.12, 0.1]
+const ARCHETYPE_IDS = ['oak', 'maple', 'pine', 'birch', 'willow', 'sakura', 'shrub', 'dead']
+const ARCHETYPE_WEIGHTS = [0.2, 0.13, 0.14, 0.14, 0.1, 0.11, 0.1, 0.08]
 // 随机时"大树/小树"更常见, 树苗与古树是少数
 const STAGE_IDS = GROWTH_STAGES.map((s) => s.id)
 const STAGE_WEIGHTS = [0.1, 0.16, 0.24, 0.36, 0.14]

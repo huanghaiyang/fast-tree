@@ -29,8 +29,8 @@
  * 必须与 src/core/species.js 的 SPECIES / GROWTH_STAGES / SEASONS 的 id 保持一致,
  * 否则 MCP 侧合法、应用侧查不到对应预设 (会静默回退到默认值)。
  */
-const SPECIES = ['oak', 'sakura', 'birch', 'maple', 'pine', 'willow', 'banyan']
-const STAGES = ['sapling', 'young', 'mature', 'ancient']
+const SPECIES = ['oak', 'maple', 'pine', 'birch', 'willow', 'sakura', 'shrub', 'dead']
+const STAGES = ['seedling', 'sapling', 'young', 'mature', 'ancient']
 const SEASONS = ['spring', 'summer', 'autumn', 'winter']
 // app.toggle 支持的开关目标; 顺序与 README/自检脚本里的列举顺序一致
 const TARGETS = [
@@ -59,12 +59,12 @@ export const COMMANDS = [
   CMD('app.selfcheck', '应用侧自检: 场景/材质/着色器/卡片库/贴图/命令处理器'),
   // ---- 参数读写 (整组 / 点路径批量 / 全量导入导出) ----
   CMD('app.get_params', '读取参数树 (path 读子树, 如 leaves / branches.level[0]; group 读分组; 都不传读全量)', { group: { type: 'string' }, path: { type: 'string' } }),
-  CMD('app.set_params', '按点路径批量改参数, 支持数组下标, 例 {"leaves.size":0.4,"branches.level[1].count":8,"flower.enabled":true}', { patch: { type: 'object', required: true } }),
+  CMD('app.set_params', '按点路径批量改参数(键必须已存在, 不存在的会回在 ignored 里), 支持数组下标, 例 {"leaves.size":0.4,"branches.level[1].count":8,"flower.enabled":true}', { patch: { type: 'object', required: true } }),
   CMD('app.export_params', '导出完整参数 JSON 字符串'),
   CMD('app.import_params', '导入参数 JSON 字符串并重建', { json: { type: 'string', required: true } }),
   // ---- 树种 / 阶段 / 季节组合 ----
   CMD('app.list_species', '列出树种/阶段/季节/全部组合'),
-  CMD('app.apply_preset', '应用树种+阶段+季节', {
+  CMD('app.apply_preset', '应用树种+阶段+季节 (stage/season 省略时沿用当前值); 返回实际三轴与关键参数 summary, 不必再读全量参数', {
     species: { type: 'string', enum: SPECIES, required: true },
     stage: { type: 'string', enum: STAGES },
     season: { type: 'string', enum: SEASONS },
@@ -88,11 +88,11 @@ export const COMMANDS = [
   CMD('app.set_growth', '生长动画: 进度/自动/速度', { value: { type: 'number' }, auto: { type: 'boolean' }, speed: { type: 'number' } }),
   CMD('app.set_lod', '面数预算', { maxLeaves: { type: 'number' } }),
   // ---- 内置素材 (叶片/花朵卡片、树皮贴图) ----
-  CMD('app.list_leaf_cards', '列出内置叶片/花朵卡片', { batch: { type: 'string' }, limit: { type: 'number' } }),
-  CMD('app.apply_leaf_card', '设置树叶卡片 (id 或 batch)', { id: { type: 'string' }, batch: { type: 'string' } }),
+  CMD('app.list_leaf_cards', '列出内置叶片/花朵卡片 (附批次中文名, 如 ① 秋色系 / ③ 桦树 A / ⑪ 柳叶 B / ⑬ 柳花穗)', { batch: { type: 'string' }, limit: { type: 'number' } }),
+  CMD('app.apply_leaf_card', '设置树叶卡片 (id 或 batch); 会自动切到卡片模式并用贴图原色', { id: { type: 'string' }, batch: { type: 'string' } }),
   CMD('app.apply_flower_card', '设置花朵卡片 (id 或 batch; 含樱花批次)', { id: { type: 'string' }, batch: { type: 'string' } }),
-  CMD('app.list_bark_textures', '列出内置树皮贴图', { batch: { type: 'string' } }),
-  CMD('app.set_bark_texture', '设置树皮贴图', {
+  CMD('app.list_bark_textures', '列出内置树皮贴图 (附批次中文名与 row/col 寻址)', { batch: { type: 'string' } }),
+  CMD('app.set_bark_texture', '设置树皮贴图 (row/col 从 1 开始, 对应 list_bark_textures 的网格)', {
     batch: { type: 'string' }, row: { type: 'number' }, col: { type: 'number' }, url: { type: 'string' },
   }),
   CMD('app.set_material', '改材质属性 (target: bark|leaf|flower; props: 任意材质字段)', {

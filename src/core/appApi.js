@@ -56,6 +56,19 @@ const BRIDGE = 'http://127.0.0.1:' + (typeof __APP_BRIDGE_PORT__ !== 'undefined'
  * @param {any} value 要写入的值(类型由调用方保证与目标字段一致)
  * @sideeffect 直接修改 obj(响应式对象会触发下游 watcher 重建)
  */
+const pathExists = (obj, path) => {
+  const parts = String(path).split(/\.|\[|\]/).filter((s) => s !== '')
+  if (!parts.length) return false
+  let o = obj
+  for (let i = 0; i < parts.length - 1; i++) {
+    o = o?.[parts[i]]
+    if (o == null || typeof o !== 'object') return false
+  }
+  const last = parts[parts.length - 1]
+  // 数字下标写进已存在的数组是合法的(例如空的 forces.items 里放第 0 个力场)
+  if (/^\d+$/.test(last)) return Array.isArray(o)
+  return o != null && typeof o === 'object' && last in o
+}
 const setAt = (obj, path, value) => {
   // 同时支持 'branches.levels[2].count' 与 'wind.speed' 两种写法:
   // 数组下标用 [n] 表示, 这样大模型可以只改某一层枝条而不必回传整个数组。
@@ -152,9 +165,15 @@ export const COMMAND_HANDLERS = {
    */
   'app.set_params': (a) => {
     const patch = a?.patch || {}
-    const keys = Object.keys(patch)
-    for (const k of keys) setAt(state.params, k, patch[k])
-    return { applied: keys.length, keys }
+    const applied = []
+    const ignored = []
+    for (const k of Object.keys(patch)) {
+      // 不存在的键直接忽略并回报: 悄悄写进去会生成脏字段, 模型也永远发现不了自己拼错了
+      if (!pathExists(state.params, k)) { ignored.push(k); continue }
+      setAt(state.params, k, patch[k])
+      applied.push(k)
+    }
+    return { applied: applied.length, keys: applied, ignored: ignored.length ? ignored : undefined }
   },
   /** 把整棵 params 树序列化成 JSON 字符串(用于保存方案或跨实例搬运)。 */
   'app.export_params': () => ({ json: JSON.stringify(state.params) }),
@@ -184,23 +203,63 @@ export const COMMAND_HANDLERS = {
    * 所以下面三个 set_* 命令都靠"读当前另两轴 + 只换一轴"来实现单轴切换。
    */
   'app.apply_preset': (a) => {
-    applyClassification(a.species, a.stage, a.season)
-    return { species: a.species, stage: a.stage, season: a.season }
+    // 省略 stage/season 时沿用当前值, 而不是悄悄退回 mature/summer
+    const cur = state.params.classify || {}
+    const switching = !!a.species && a.species !== cur.species
+    applyClassification(a.species, a.stage || cur.stage, a.season || cur.season)
+    const p = state.params
+    // 换树种时旧叶卡(如柳叶/花穗)对新叶形完全不对, 而且 tintMode='texture' 会让
+    // leaves.color 失效 —— 只保留给同树种, 换树种一律回程序化叶形 + 跟随叶色。
+    if (switching) {
+      p.leaves.cardMode = false
+      p.leafMat.texture = ''
+      p.leafMat.tintMode = 'season'
+    }
+    return {
+      species: p.classify?.species,
+      stage: p.classify?.stage,
+      season: p.classify?.season,
+      // 直接把预设后的关键参数回给模型, 省掉一轮 get_params
+      summary: {
+        height: p.trunk?.height,
+        baseRadius: p.trunk?.baseRadius,
+        fork: p.trunk?.fork ? { enabled: p.trunk.fork.enabled, count: p.trunk.fork.count, height: p.trunk.fork.height, angle: p.trunk.fork.angle } : undefined,
+        levels: p.branches?.levels,
+        levelCounts: Array.isArray(p.branches?.level) ? p.branches.level.map((l) => l.count) : undefined,
+        leafSize: p.leaves?.size,
+        leafColor: p.leaves?.color,
+        leafShape: p.leaves?.shape,
+        cardMode: p.leaves?.cardMode,
+        tintMode: p.leafMat?.tintMode,
+        leafTexture: p.leafMat?.texture ? String(p.leafMat.texture).split('/').pop() : '',
+        barkTexture: p.bark?.texture ? String(p.bark.texture).split('/').pop() : '',
+      },
+    }
   },
-  /** 只换物种, 阶段/季节沿用当前值(从 params.auto 里读)。 */
+  /** 只换物种, 阶段/季节沿用当前值(从 classify 里读)。 */
   'app.set_species': (a) => {
-    applyClassification(a.species, state.params.auto?.stage, state.params.auto?.season)
-    return { species: a.species }
+    const cur = state.params.classify || {}
+    const switching = !!a.species && a.species !== cur.species
+    applyClassification(a.species, cur.stage, cur.season)
+    const p = state.params
+    if (switching) {
+      p.leaves.cardMode = false
+      p.leafMat.texture = ''
+      p.leafMat.tintMode = 'season'
+    }
+    return { species: a.species, stage: cur.stage, season: cur.season }
   },
   /** 只换生长阶段, 物种/季节沿用当前值。 */
   'app.set_stage': (a) => {
-    applyClassification(state.archetype, a.stage, state.params.auto?.season)
-    return { stage: a.stage }
+    const cur = state.params.classify || {}
+    applyClassification(cur.species || state.archetype, a.stage, cur.season)
+    return { species: cur.species, stage: a.stage, season: cur.season }
   },
   /** 只换季节, 物种/阶段沿用当前值。 */
   'app.set_season': (a) => {
-    applyClassification(state.archetype, state.params.auto?.stage, a.season)
-    return { season: a.season }
+    const cur = state.params.classify || {}
+    applyClassification(cur.species || state.archetype, cur.stage, a.season)
+    return { species: cur.species, stage: cur.stage, season: a.season }
   },
   /* ---------------- 随机与种子 ---------------- */
   /**
@@ -359,7 +418,7 @@ export const COMMAND_HANDLERS = {
     return {
       total: list.length,
       batches: BARK_SETS.map((s) => ({ id: s.id, name: s.name, rows: s.rows, cols: s.cols })),
-      sample: list.slice(0, 40).map((t) => ({ id: t.id, url: t.url })),
+      sample: list.slice(0, 40).map((t) => ({ id: t.id, url: t.url, batch: t.batch, row: t.row, col: t.col })),
     }
   },
   /**
@@ -719,6 +778,9 @@ async function registerConsumer() {
  */
 export function startBridgeClient() {
   if (timer) return
+  // HMR 重新执行本模块时, 旧模块实例的 timer 变量已随模块一起丢失, 但它的定时器还在跑;
+  // window 上的句柄不会丢, 先停掉旧的, 避免同一标签页出现多个轮询循环互相顶掉注册。
+  try { if (window.__fastTreeBridgeTimer) clearInterval(window.__fastTreeBridgeTimer) } catch (e) { /* 忽略 */ }
   window.__fastTreeCommandApi = { run: runCommand, handlers: COMMAND_LIST }
   registerConsumer()
   timer = setInterval(async () => {
@@ -747,6 +809,7 @@ export function startBridgeClient() {
       consumerId = ''
     }
   }, 400)
+  window.__fastTreeBridgeTimer = timer
 }
 /**
  * 停止桥客户端(组件卸载时调用)。
@@ -757,6 +820,7 @@ export function startBridgeClient() {
 export function stopBridgeClient() {
   if (timer) clearInterval(timer)
   timer = null
+  try { if (window.__fastTreeBridgeTimer) window.__fastTreeBridgeTimer = null } catch (e) { /* 忽略 */ }
   connected = false
 }
 // dev 下 HMR 会重新执行本模块: 先停掉旧轮询, 否则每次热更新都会在桥上多挂一个实例
