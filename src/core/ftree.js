@@ -175,11 +175,13 @@ export function exportFtree(params, filename) {
  * @returns {Promise<{params: object, seed: number, textureCount: number}>}
  */
 export async function parseFtree(file) {
-  let buf
-  if (file instanceof Blob) buf = await file.arrayBuffer()
-  else if (file instanceof ArrayBuffer) buf = file
-  else buf = file.buffer
-  const bytes = new Uint8Array(buf)
+  // 三种输入: Blob/File(下载导入) / ArrayBuffer / Uint8Array(模板库从 IndexedDB 读出的字节)
+  let bytes
+  if (file instanceof Blob) bytes = new Uint8Array(await file.arrayBuffer())
+  else if (file instanceof Uint8Array) bytes = file
+  else if (file instanceof ArrayBuffer) bytes = new Uint8Array(file)
+  else if (ArrayBuffer.isView(file)) bytes = new Uint8Array(file.buffer, file.byteOffset, file.byteLength)
+  else throw new Error('无效的 .ftree 输入类型')
   const unzipped = unzipSync(bytes)
   // 把 Uint8Array 转成可查找的 map, key 兼容带不带 textures/ 前缀
   const files = {}

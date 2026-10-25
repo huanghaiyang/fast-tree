@@ -15,6 +15,7 @@
   <ForcesPanel v-else-if="activeTab === 'forces'" />
   <MaterialPanel v-else-if="activeTab === 'material'" />
   <ScenePanel v-else-if="activeTab === 'scene'" />
+  <TemplatesPanel v-else-if="activeTab === 'templates'" />
   <ExportPanel v-else-if="activeTab === 'export'" />
 </template>
 
@@ -33,6 +34,7 @@ import WindPanel from './panels/WindPanel.vue'
 import ForcesPanel from './panels/ForcesPanel.vue'
 import MaterialPanel from './panels/MaterialPanel.vue'
 import ScenePanel from './panels/ScenePanel.vue'
+import TemplatesPanel from './panels/TemplatesPanel.vue'
 import ExportPanel from './panels/ExportPanel.vue'
 
 const tabs = [
@@ -46,6 +48,7 @@ const tabs = [
   { id: 'forces', name: '引导力', icon: '🧲' },
   { id: 'material', name: '材质', icon: '🎨' },
   { id: 'scene', name: '场景', icon: '🌅' },
+  { id: 'templates', name: '模板', icon: '📚' },
   { id: 'export', name: '导出', icon: '📦' },
 ]
 </script>

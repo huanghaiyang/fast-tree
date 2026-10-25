@@ -45,7 +45,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { loadFtreeHistory } from './store/treeStore.js'
+import { loadFtreeHistory, loadTemplates } from './store/treeStore.js'
 import ControlPanel from './components/ControlPanel.vue'
 import PropertySearch from './components/PropertySearch.vue'
 import ChatPanel from './components/ChatPanel.vue'
@@ -130,6 +130,8 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   // 载入 .ftree 导出/导入历史 (localStorage 持久化)
   loadFtreeHistory()
+  // 载入模板库元信息 (IndexedDB 持久化)
+  loadTemplates()
 })
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>

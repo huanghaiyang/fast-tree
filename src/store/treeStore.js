@@ -41,7 +41,10 @@ import { selectionRanges } from '../core/treeBuilder.js'
 import { makeRng } from '../core/rng.js'
 import { modelTriangleCount } from '../core/modelStats.js'
 // .ftree 工程文件: 压缩参数 + 外部贴图
-import { loadFtreeFile, exportFtree } from '../core/ftree.js'
+import { loadFtreeFile, exportFtree, buildFtree, parseFtree } from '../core/ftree.js'
+// 模板库: 用 IndexedDB 存完整 .ftree 字节 (可带外部贴图, 不受 localStorage 5MB 限制)
+import { listTemplates, getTemplate, putTemplate, deleteTemplate } from '../core/templateDb.js'
+import { downloadBlob } from '../core/exporter.js'
 
 export const state = reactive({
   // 初始参数 = 默认树种 (oak) 的成熟/夏季预设 -> 一进页面就是带果实的橡树
@@ -99,6 +102,10 @@ export const state = reactive({
   },
   // .ftree 工程文件导出/导入历史 (localStorage 持久化, 最多保留 20 条)
   ftreeHistory: [],
+  // 模板库元信息列表 (IndexedDB 持久化; 只放元信息, 压缩字节留在库里按需读取)
+  templates: [],
+  // 当前正在"二次编辑"的模板 id ('' = 没有): 应用模板后自动记住, 用于一键覆盖更新
+  activeTemplateId: '',
 })
 
 /* ------------------------------------------------------------------ */
@@ -1061,6 +1068,147 @@ export async function doImportFtree(file) {
   return { seed, textureCount }
 }
 
+/* ------------------------------------------------------------------ */
+/* 模板库: 保存 / 列表 / 应用 / 覆盖更新 / 重命名 / 删除 / 下载          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 刷新模板库列表到 state (只拉元信息, 不读压缩字节)。
+ * 应用启动时调用一次; 任何增删改后也要重新调用。
+ * @returns {Promise<Array<object>>} 最新的模板元信息列表
+ */
+export async function loadTemplates() {
+  try {
+    state.templates = await listTemplates()
+  } catch (e) {
+    state.templates = []
+  }
+  // 当前编辑中的模板被外部删掉了: 清掉标记, 避免 UI 继续提示"覆盖更新"
+  if (state.activeTemplateId && !state.templates.some((t) => t.id === state.activeTemplateId)) {
+    state.activeTemplateId = ''
+  }
+  return state.templates
+}
+
+/** 用当前参数生成一条新模板名 (树种/阶段/季节 + seed), 供 UI 当默认值 */
+export function suggestTemplateName() {
+  const p = state.params
+  const c = p.classify || {}
+  const label = [archetypeName(state.autoType || state.archetype || c.species), c.stage, c.season]
+    .filter(Boolean).join(' · ')
+  return `${label || '模板'} · seed ${p.seed}`
+}
+
+/** 模板名里不允许出现的文件名字符, 下载时替换成 '-' */
+function safeFileName(name) {
+  return String(name || 'template').replace(/[\\/:*?"<>|]+/g, '-').slice(0, 80)
+}
+
+/**
+ * 把当前参数保存为一个新模板 (含外部贴图), 写入 IndexedDB。
+ * 同名不会合并 —— 需要覆盖请用 `doUpdateTemplate`。
+ * @param {string} [name] 模板名 (空 = 自动生成)
+ * @returns {Promise<{id: string, name: string, textureCount: number, size: number}>}
+ */
+export async function doSaveTemplate(name) {
+  const { bytes, textureCount } = buildFtree(state.params)
+  const rec = {
+    id: `tpl-${Date.now()}-${Math.round(Math.random() * 1e6)}`,
+    name: (name || '').trim() || suggestTemplateName(),
+    seed: state.params.seed,
+    textureCount,
+    bytes,
+  }
+  const saved = await putTemplate(rec)
+  await loadTemplates()
+  state.activeTemplateId = saved.id
+  return { id: saved.id, name: saved.name, textureCount, size: saved.size }
+}
+
+/**
+ * 应用模板到编辑器 (即"二次编辑"的第一步: 载入后随便改, 再覆盖保存)。
+ * @param {string} id
+ * @returns {Promise<{name: string, seed: number, textureCount: number}>}
+ */
+export async function doApplyTemplate(id) {
+  const rec = await getTemplate(id)
+  if (!rec) throw new Error('模板不存在或已被删除')
+  const { params, textureCount, seed } = await parseFtree(rec.bytes)
+  pushUndo()
+  state.params = normalizeParams(params)
+  if (seed != null) state.params.seed = seed
+  state.activeTemplateId = id
+  state.frameVersion++
+  return { name: rec.name, seed: state.params.seed, textureCount }
+}
+
+/**
+ * 用当前参数覆盖更新已有模板 (保留 id / 创建时间 / 名字)。
+ * @param {string} id
+ * @returns {Promise<{name: string, textureCount: number, size: number}>}
+ */
+export async function doUpdateTemplate(id) {
+  const rec = await getTemplate(id)
+  if (!rec) throw new Error('模板不存在或已被删除')
+  const { bytes, textureCount } = buildFtree(state.params)
+  await putTemplate({
+    id: rec.id,
+    name: rec.name,
+    seed: state.params.seed,
+    textureCount,
+    bytes,
+    createdAt: rec.createdAt,
+  })
+  await loadTemplates()
+  return { name: rec.name, textureCount, size: bytes.length }
+}
+
+/**
+ * 重命名模板。
+ * @param {string} id
+ * @param {string} name 新名字 (空值会被忽略)
+ */
+export async function doRenameTemplate(id, name) {
+  const rec = await getTemplate(id)
+  if (!rec) throw new Error('模板不存在或已被删除')
+  const next = (name || '').trim()
+  if (!next) return
+  await putTemplate({ ...rec, name: next })
+  await loadTemplates()
+}
+
+/**
+ * 删除模板。
+ * @param {string} id
+ */
+export async function doDeleteTemplate(id) {
+  await deleteTemplate(id)
+  await loadTemplates()
+  if (state.activeTemplateId === id) state.activeTemplateId = ''
+}
+
+/**
+ * 下载模板为 .ftree 文件 (与"导出 .ftree"产物完全一致), 并记一条导出历史。
+ * @param {string} id
+ * @returns {Promise<{filename: string, size: number}>}
+ */
+export async function doDownloadTemplate(id) {
+  const rec = await getTemplate(id)
+  if (!rec) throw new Error('模板不存在或已被删除')
+  const filename = `${safeFileName(rec.name)}.ftree`
+  downloadBlob(new Blob([rec.bytes], { type: 'application/octet-stream' }), filename)
+  pushFtreeHistory({
+    id: `exp-${Date.now()}`,
+    action: 'export',
+    name: filename,
+    seed: rec.seed,
+    textureCount: rec.textureCount || 0,
+    size: rec.bytes ? rec.bytes.length : 0,
+    date: new Date().toISOString(),
+  })
+  return { filename, size: rec.bytes ? rec.bytes.length : 0 }
+}
+
 /**
  * 按当前种子重新推导一整套自动风参数 (不改变 intensity)。
  * 用于"种子换了但风没跟着变"的场景 (例如外部脚本直接改了 seed)。
@@ -1098,6 +1246,8 @@ if (typeof window !== 'undefined' && import.meta.env && import.meta.env.DEV) {
     fitLeafCardToTexture, fitFlowerCardToTexture,
     applyClassification, randomClassification, applyLeafCard, randomLeafCard,
     doExportFtree, doImportFtree, clearFtreeHistory,
+    loadTemplates, doSaveTemplate, doApplyTemplate, doUpdateTemplate,
+    doRenameTemplate, doDeleteTemplate, doDownloadTemplate, suggestTemplateName,
   }
 }
 
