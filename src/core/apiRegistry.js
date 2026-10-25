@@ -58,8 +58,8 @@ export const COMMANDS = [
   CMD('app.status', '应用状态: 树种/阶段/季节, 树叶/花朵/果实数量, 三角面数, 节点数'),
   CMD('app.selfcheck', '应用侧自检: 场景/材质/着色器/卡片库/贴图/命令处理器'),
   // ---- 参数读写 (整组 / 点路径批量 / 全量导入导出) ----
-  CMD('app.get_params', '读取参数 (group 可选: geometry/material/wind/scene/leaves/flower/flowerFall/flowerLitter)', { group: { type: 'string' } }),
-  CMD('app.set_params', '按点路径批量改参数, 例 {"leaves.size":0.4,"flower.enabled":true}', { patch: { type: 'object', required: true } }),
+  CMD('app.get_params', '读取参数树 (path 读子树, 如 leaves / branches.level[0]; group 读分组; 都不传读全量)', { group: { type: 'string' }, path: { type: 'string' } }),
+  CMD('app.set_params', '按点路径批量改参数, 支持数组下标, 例 {"leaves.size":0.4,"branches.level[1].count":8,"flower.enabled":true}', { patch: { type: 'object', required: true } }),
   CMD('app.export_params', '导出完整参数 JSON 字符串'),
   CMD('app.import_params', '导入参数 JSON 字符串并重建', { json: { type: 'string', required: true } }),
   // ---- 树种 / 阶段 / 季节组合 ----
@@ -104,7 +104,9 @@ export const COMMANDS = [
   CMD('app.select_node', '选中节点 (传 id 或 group)', { id: { type: 'number' }, group: { type: 'string' } }),
   // ---- 相机 / 截图 ----
   CMD('app.camera', '相机取景', { action: { type: 'string', enum: ['frame', 'front', 'top', 'side', 'reset'], required: true } }),
-  CMD('app.screenshot', '截图 (返回 PNG dataURL, 供视觉模型查看)'),
+  CMD('app.screenshot', '截图 (默认 JPEG, 最长边 900px; max=0 出原尺寸 PNG; 供视觉模型查看与对照参考图)', {
+    max: { type: 'number' }, quality: { type: 'number' },
+  }),
   // ---- 伪装卡 / 导出 ----
   CMD('app.impostor', '生成伪装卡', {
     mode: { type: 'string', enum: ['atlas', 'cross'] }, views: { type: 'number' },

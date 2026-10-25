@@ -35,7 +35,7 @@ import {
   importParamsJSON,
 } from '../store/treeStore.js'
 import { SPECIES, GROWTH_STAGES, SEASONS } from './species.js'
-import { LEAF_CARDS } from './leafCards.generated.js'
+import { LEAF_CARDS, LEAF_CARD_SETS } from './leafCards.generated.js'
 import { BARK_TEXTURES, BARK_SETS } from './barkTextures.js'
 import { COMMAND_NAMES } from './apiRegistry.js'
 
@@ -57,14 +57,17 @@ const BRIDGE = 'http://127.0.0.1:' + (typeof __APP_BRIDGE_PORT__ !== 'undefined'
  * @sideeffect 直接修改 obj(响应式对象会触发下游 watcher 重建)
  */
 const setAt = (obj, path, value) => {
-  const parts = path.split('.')
+  // 同时支持 'branches.levels[2].count' 与 'wind.speed' 两种写法:
+  // 数组下标用 [n] 表示, 这样大模型可以只改某一层枝条而不必回传整个数组。
+  const parts = String(path).split(/\.|\[|\]/).filter((s) => s !== '')
   let o = obj
   for (let i = 0; i < parts.length - 1; i++) {
     const k = parts[i]
-    if (o[k] == null) o[k] = {}
+    if (o[k] == null) o[k] = /^\d+$/.test(parts[i + 1]) ? [] : {}
     o = o[k]
   }
-  o[parts[parts.length - 1]] = value
+  const last = parts[parts.length - 1]
+  o[/^\d+$/.test(last) ? Number(last) : last] = value
 }
 /**
  * 在叶片卡片表里按 id 精确取卡; 未命中时退回"该批次的第一张卡"。
@@ -125,10 +128,21 @@ export const COMMAND_HANDLERS = {
   }),
   /* ---------------- 参数读写(点号路径补丁) ---------------- */
   /**
-   * 读参数: 给了 group 只回该分组(如 'wind'), 否则回整棵 params 树。
+   * 读取参数树。可不带参数读全量(默认树约 8KB, 一次就能放进大模型上下文),
+   * 也可以按 group 取一个分组、按 path 取单个子树 (如 'leaves' / 'branches.levels[0]'),
+   * 便于大模型在不确定键名时按需读取, 避免一次塞进过长的 JSON。
    * 返回的是 reactive 对象本身(未做深拷贝), 调用方只读, 不要就地改。
    */
-  'app.get_params': (a) => (a?.group ? state.params[a.group] ?? null : state.params),
+  'app.get_params': (a) => {
+    const base = a?.group ? state.params[a.group] ?? null : state.params
+    if (!a?.path) return base
+    let o = base
+    for (const k of String(a.path).split(/\.|\[|\]/).filter((s) => s !== '')) {
+      if (o == null) return null
+      o = o[k]
+    }
+    return o ?? null
+  },
   /**
    * 用点号路径批量写参数, 逐键就地合并; 写响应式对象即触发下游重建。
    *
@@ -307,7 +321,14 @@ export const COMMAND_HANDLERS = {
     let list = LEAF_CARDS
     if (a?.batch) list = list.filter((c) => c.batch === a.batch)
     const limit = Math.max(1, Math.min(200, Math.round(a?.limit || 40)))
-    return { total: list.length, batch: a?.batch || 'all', sample: list.slice(0, limit).map((c) => ({ id: c.id, url: c.url, batch: c.batch })) }
+    return {
+      total: list.length,
+      batch: a?.batch || 'all',
+      // 批次中文名: 大模型只拿到 "batch1-r01-c01" 无法判断是枫叶还是柳絮,
+      // 必须给可读描述才能按参考图选卡片 (例如 ① 秋色系 / ⑬ 柳花穗)。
+      batches: LEAF_CARD_SETS.map((s) => ({ id: s.id, name: s.name, rows: s.rows, cols: s.cols })),
+      sample: list.slice(0, limit).map((c) => ({ id: c.id, url: c.url, batch: c.batch })),
+    }
   },
   /**
    * 套用一张叶片卡片(改树叶贴图)。
@@ -439,18 +460,75 @@ export const COMMAND_HANDLERS = {
     return { action }
   },
   /**
-   * 截一张 PNG 返回 dataUrl。
+   * 截取当前视口。
+   *
+   * 默认输出 **JPEG + 最长边 900px** (max/quality 可调): 大模型看图只需要轮廓与颜色,
+   * 原尺寸 PNG 往往几百 KB ~ 几 MB, base64 后会把上下文和请求体一起撑爆。
+   * 需要无损原图时传 { max: 0 } 走 PNG 原尺寸。
+   *
    * 先手动 render 一次: renderer 开了 preserveDrawingBuffer, 但若上一帧已被
    * 浏览器合成器清空, 直接 toDataURL 可能拿到黑图, 主动重绘最稳。
    * bytes 是 base64 长度的 3/4 估算(每 4 个 base64 字符承载 3 字节), 不是精确值。
+   *
+   * @param {{max?:number, quality?:number}} [a] max=最长边像素(0=不缩放), quality=JPEG 质量 0.4~0.95
+   * @returns {{dataUrl:string, bytes:number, width:number, height:number, format:string}}
    */
-  'app.screenshot': () => {
+  'app.screenshot': (a) => {
     const sc = window.__fastTreeScene
-    const canvas = sc && sc.renderer && sc.renderer.domElement
+    const renderer = sc && sc.renderer
+    const canvas = renderer && renderer.domElement
     if (!canvas) return { error: '渲染器不可用' }
-    sc.renderer.render(sc.scene, sc.camera)
-    const url = canvas.toDataURL('image/png')
-    return { dataUrl: url, bytes: Math.round(url.length * 0.75) }
+    // 窗口最小化/容器折叠时 canvas 会被压到 1x1。直接截只会得到一张无意义的图,
+    // 而大模型会把它当成"当前画面"去和参考图对比, 进而盲调参数。
+    // 这里临时把绘制缓冲放大到 1280x800 再渲染, 截完恢复原尺寸与相机比例。
+    const oldW = Math.max(1, canvas.width || 1)
+    const oldH = Math.max(1, canvas.height || 1)
+    let restore = null
+    if (oldW < 32 || oldH < 32) {
+      const w = 1280
+      const h = 800
+      const oldAspect = sc.camera.aspect
+      const oldCssW = Math.max(1, canvas.clientWidth || oldW)
+      const oldCssH = Math.max(1, canvas.clientHeight || oldH)
+      const oldPR = typeof renderer.getPixelRatio === 'function' ? renderer.getPixelRatio() : 1
+      renderer.setPixelRatio(1)
+      renderer.setSize(w, h, false)
+      sc.camera.aspect = w / h
+      sc.camera.updateProjectionMatrix()
+      restore = () => {
+        renderer.setPixelRatio(oldPR)
+        renderer.setSize(oldCssW, oldCssH, false)
+        sc.camera.aspect = oldAspect
+        sc.camera.updateProjectionMatrix()
+      }
+    }
+    try {
+      renderer.render(sc.scene, sc.camera)
+      const max = a?.max === undefined ? 900 : Number(a.max)
+      const quality = Math.min(0.95, Math.max(0.4, Number(a?.quality) || 0.82))
+      // 先尝试缩放到 JPEG: 浏览器不支持 canvas 编码时会抛错, 这时退回原尺寸 PNG。
+      if (Number.isFinite(max) && max > 0) {
+        const longest = Math.max(canvas.width || 1, canvas.height || 1)
+        const scale = Math.min(1, max / longest)
+        const width = Math.max(1, Math.round((canvas.width || 1) * scale))
+        const height = Math.max(1, Math.round((canvas.height || 1) * scale))
+        try {
+          const cv = document.createElement('canvas')
+          cv.width = width
+          cv.height = height
+          const ctx = cv.getContext('2d')
+          ctx.drawImage(canvas, 0, 0, width, height)
+          const url = cv.toDataURL('image/jpeg', quality)
+          return { dataUrl: url, bytes: Math.round(url.length * 0.75), width, height, format: 'jpeg' }
+        } catch (e) {
+          // 忽略, 走下面的 PNG 分支
+        }
+      }
+      const url = canvas.toDataURL('image/png')
+      return { dataUrl: url, bytes: Math.round(url.length * 0.75), width: canvas.width, height: canvas.height, format: 'png' }
+    } finally {
+      if (restore) restore()
+    }
   },
   /**
    * 生成伪装卡(Impostor / LOD 远景卡片)。
@@ -559,6 +637,20 @@ let consumerId = ''
 let registerPending = false
 /** 命令表版本号; 与命令数量一起上报, 桥可据此判断前端是否需要刷新。 */
 const BRIDGE_VERSION = 33
+/**
+ * 稳定标签页标识: HMR 重新执行本模块时会再注册一次, 旧轮询若没清掉,
+ * 同一页面就会在桥上挂出多个实例 (命令也就会重复执行)。带 tabId 让桥在注册时去重。
+ * 用 sessionStorage 保证刷新后仍是同一个标签页。
+ */
+const TAB_ID = (() => {
+  try {
+    let v = sessionStorage.getItem('fasttree.tab')
+    if (!v) { v = 't' + Math.random().toString(36).slice(2, 10); sessionStorage.setItem('fasttree.tab', v) }
+    return v
+  } catch (e) {
+    return 't' + Math.random().toString(36).slice(2, 10)
+  }
+})()
 /** 本实例支持的命令名列表(从注册表派生, 天然不会与实现脱节)。 */
 const COMMAND_LIST = Object.keys(COMMAND_HANDLERS)
 /**
@@ -567,6 +659,14 @@ const COMMAND_LIST = Object.keys(COMMAND_HANDLERS)
  */
 export function bridgeStatus() {
   return { connected, url: BRIDGE }
+}
+/**
+ * 当前页面在桥上的实例 id。
+ * 多窗口/多标签时每个页面各有独立场景, 聊天请求必须带上它, 让大模型的
+ * 工具调用落在"发起对话的这个窗口", 否则会出现"改了 A 却截图 B"。
+ */
+export function bridgeConsumerId() {
+  return consumerId
 }
 /**
  * 向桥注册本实例能力; 桥重启后会自动重新注册 (无需刷新页面)。
@@ -583,7 +683,14 @@ async function registerConsumer() {
     const res = await fetch(BRIDGE + '/bridge/hello', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ commands: COMMAND_LIST, path: location.pathname, version: COMMAND_LIST.length + '/' + BRIDGE_VERSION }),
+      body: JSON.stringify({
+        commands: COMMAND_LIST,
+        path: location.pathname,
+        version: COMMAND_LIST.length + '/' + BRIDGE_VERSION,
+        tabId: TAB_ID,
+        // 多标签页时桥要优先把命令发给前台可见的那个实例 (后台标签会被节流)
+        visible: document.visibilityState === 'visible',
+      }),
     })
     const j = await res.json().catch(() => ({}))
     if (j && j.consumerId) { consumerId = j.consumerId; connected = true }
@@ -618,7 +725,9 @@ export function startBridgeClient() {
     // 桥还没连上 (首次 / 重启中) -> 重新注册, 避免 dev 重启 MCP 后必须刷新页面
     if (!connected || !consumerId) { await registerConsumer(); return }
     try {
-      const res = await fetch(`${BRIDGE}/bridge/poll?id=${encodeURIComponent(consumerId)}`, { cache: 'no-store' })
+      const res = await fetch(`${BRIDGE}/bridge/poll?id=${encodeURIComponent(consumerId)}&visible=${document.visibilityState === 'visible' ? 1 : 0}`, { cache: 'no-store' })
+      // 桥重启后旧 consumerId 会被丢弃: 轮询返回 404, 必须重新注册而不是继续空轮询。
+      if (!res.ok) { connected = false; consumerId = ''; await registerConsumer(); return }
       const json = await res.json()
       connected = true
       // commands 是本次轮询领到的命令数组(可能为空); 逐条执行并回传结果。
@@ -649,4 +758,10 @@ export function stopBridgeClient() {
   if (timer) clearInterval(timer)
   timer = null
   connected = false
+}
+// dev 下 HMR 会重新执行本模块: 先停掉旧轮询, 否则每次热更新都会在桥上多挂一个实例
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    try { stopBridgeClient() } catch (e) { /* 忽略 */ }
+  })
 }

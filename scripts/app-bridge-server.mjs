@@ -30,6 +30,8 @@ const PORT = Number(process.argv.find((a) => a.startsWith('--port='))?.split('='
 /** 桥服务版本 + 能力清单: 供 vite 插件判断本机已有实例是否兼容 (旧实例会自动替换) */
 const BRIDGE_VERSION = '2.1.0'
 const BRIDGE_FEATURES = ['bridge', 'mcp', 'llm.chat', 'llm.chat.stream', 'llm.models', 'search']
+/** 一次对话里最多允许几轮"模型 -> 工具 -> 模型"; 参考图还原需要 读参数/预设/精调/重建/截图 + 修正, 4 轮会被探索类调用耗尽 */
+const MAX_TOOL_ROUNDS = 8
 
 /* ---------------- 配置 (Key 只在服务端) ---------------- */
 const CONFIG_PATHS = [
@@ -70,13 +72,26 @@ function pickConsumer() {
   const now = Date.now()
   const alive = [...consumers.entries()].filter(([, c]) => now - c.lastSeen < 5000)
   if (!alive.length) return null
-  alive.sort((a, b) => (b[1].commands.length - a[1].commands.length) || (b[1].lastSeen - a[1].lastSeen))
+  // 前台可见的标签优先: 后台标签的 setInterval 会被节流, 轮询间隔可达分钟级,
+  // 而且最小化时 canvas 可能只有 1x1, 用它截图会让模型"看到"错误画面。
+  alive.sort((a, b) =>
+    ((b[1].visible ? 1 : 0) - (a[1].visible ? 1 : 0)) ||
+    (b[1].commands.length - a[1].commands.length) ||
+    (b[1].lastSeen - a[1].lastSeen))
   return alive[0][0]
 }
 
-function callBrowser(name, args, timeoutMs = 8000) {
+/**
+ * 把命令发给浏览器执行。
+ * preferId: 一次对话内钉住同一个标签页, 避免 set_params 与 screenshot 落在不同标签上
+ * (多标签时会各自维护一套场景, 混用会导致"改了 A 却截图 B")。
+ */
+function callBrowser(name, args, timeoutMs = 8000, preferId = null) {
   const id = 'c' + seq++
-  pending.set(id, { id, name, args, at: Date.now(), target: pickConsumer() })
+  const now = Date.now()
+  const pinned = preferId && consumers.get(preferId) && now - consumers.get(preferId).lastSeen < 5000
+    ? preferId : pickConsumer()
+  pending.set(id, { id, name, args, at: now, target: pinned })
   bridgeCalls++
   return new Promise((resolve) => {
     const t0 = Date.now()
@@ -173,12 +188,43 @@ function mcpHandle(body) {
 
 /* ---------------- 大模型代理 (OpenAI 兼容; Key 只在服务端) ---------------- */
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36'
-const LLM_SYSTEM = `你是"快速树生成工具 (FastTree)"的助手。用户用中文描述需求, 你通过工具修改应用里的程序化树。
-规则:
-- 只能通过给定工具操作应用, 不要臆造命令; 改参数用 app.set_params, 换树用 app.apply_preset, 开关用 app.toggle, 改完一般要 app.rebuild
-- 用户可能上传图片: 先准确描述/识别图片里的内容 (树、叶、花、颜色、结构), 再据此操作应用
-- 本次对话可能允许联网搜索: 仅当需要外部/实时信息时调用 web_search (最多 2 次), 拿到结果后立刻基于结果回答, 不要反复换关键词搜索; 引用搜索结果时在句末用 [1][2] 标注来源编号
-- 回复用简短中文, 可以用 Markdown (列表/加粗/行内代码), 说明你做了什么、依据是什么`
+const LLM_SYSTEM = `你是"快速树生成工具 (FastTree)"的建模助手。用户用中文描述需求或上传参考照片, 你通过工具把应用里的程序化树调成目标样子。
+基本规则:
+- 只能通过给定工具操作应用, 不要臆造命令; 改参数用 app.set_params, 换树用 app.apply_preset, 开关用 app.toggle, 改完用 app.rebuild
+- 参数键名必须来自 app.get_params 返回的真实参数树 (全量约 8KB, 一次读完即可); 不确定某组键时用 app.get_params({path:'leaves'}) 精确读, 禁止猜键名
+- 路径写法: 分组.键, 数组用下标, 如 'branches.level[1].count'、'traffic' 不存在; 批量改一次发一个 patch 即可
+- 单位: 长度=米, 角度=度, 比例=0~1 或相对父级的倍率; 改完参数后 app.rebuild 会重新生长 (约 1 秒)
+- 回复用简短中文, 可用 Markdown, 说明改了什么、依据是什么; 不要输出大段代码或完整参数 JSON
+工具调用纪律 (违反就会来回空转, 必须遵守):
+- 严禁用 app.help / app.list_species / app.status / app.node_tree 做"探索"; 工具清单与树种枚举已在上面给出, 需要状态直接读 get_params
+- 每一轮把所有能并行的调用一次性发出 (同一个 assistant 消息里多个 tool_calls), 不要一轮只发一个只读调用
+- 工具轮只做操作, 不要长篇叙述; 拿到全部结果后, 最后一轮再用 2~4 句话总结
+- 整个还原过程应在 5 轮内完成主体 (读参数、换预设、精调、重建、截图), 只有截图对比后确实需要修正才追加第 6、7 轮
+- 截图回传后, 必须先用 2~3 句话说出"当前画面 vs 参考图"的具体差异 (冠幅/树高比例、冠形、疏密、叶色/叶形、树皮/地面), 再据此调参; 不允许截完图就直接结束
+- 换树种/换参考图时先清掉上一轮残留的卡片贴图, 否则旧卡片会盖掉季节叶色: 在 set_params 里同时带 'leaves.cardMode':false、'leafMat.texture':''、'leafMat.tintMode':'season' (只有当参考图的叶片形态与某个卡片批次一致时才保留卡片)
+参考图还原流程 (用户发图, 或说"照着这张图/这棵树建模"时, 必须按顺序执行):
+1. 先在思考里定 3~6 条要点: 树种/生长阶段/季节, 树冠轮廓(圆/伞/塔/垂/不规则)与冠幅/树高比例, 主干分叉(高度/条数/角度), 枝条走向与疏密, 叶片形状/大小/颜色, 花或果, 树皮质感, 地面与天空氛围
+2. 第 1 轮: 同时调用 app.get_params 与 app.apply_preset (选最接近的 树种+阶段+季节; 可用树种 oak/sakura/birch/maple/pine/willow/banyan, 季节 spring/summer/autumn/winter)
+3. 第 2 轮: app.set_params 一次批量精调树形/枝条/叶/花/果/树皮/地面, 参考下方映射
+4. 第 3 轮: app.rebuild
+5. 第 4 轮: app.screenshot (默认 900px JPEG, 会作为图片回传给你), 与参考图对比轮廓/比例/疏密/颜色
+6. 需要修正就再 1~2 轮 set_params + rebuild + screenshot, 然后汇报关键参数与取舍
+- 只要用户要求建模, 就必须至少改动一次参数并 rebuild, 不允许"只给方案不动手"; 读完参数不要再重复读同一组
+视觉特征 -> 参数速查:
+- 树高/干径/树干弯曲: trunk.height, trunk.baseRadius, trunk.taper, trunk.curve, trunk.lean, trunk.gnarl, trunk.flare
+- 主干分叉(低分叉/多主枝): trunk.fork { enabled,count,height,angle,spread,radiusScale,lengthScale }
+- 冠形与疏密: branches.levels(有效层数 1~5), branches.level[i] { count,pitch,lengthRatio,startT,endT,gravity,spread,upBias,curve }, branches.apicalDominance(顶端优势), branches.gravityScale/phototropism/lengthScale
+  圆形浓密冠: levels 3~4, 主枝 count 4~6, pitch 55~70, 上层 pitch 40~55, apicalDominance 0.25~0.5
+  塔形/针叶: pine 预设 + 上层 pitch 小 + upBias 大; 垂枝: gravity 取负 + pitch 大
+- 叶片: leaves.enabled/size(米)/width/shape/perBranch/clusterCount/levels(哪几层长叶), 叶色 leaves.color/colorTip/colorVariance, 卡片贴图 app.list_leaf_cards + app.apply_leaf_card
+  list_leaf_cards 会返回 batches 的中文名(如 ① 秋色系 / ② 绿色系 / ⑬ 柳花穗), 按名字选批次, 不要凭 id 猜; 阔叶参考图优先用叶片形状接近的批次, 形态不符就关掉卡片用程序化叶形
+- 秋色(黄/橙/红): 用 season=autumn 预设, 再按需改 leaves.color/colorTip 与 colorVariance
+- 花/果: flower.enabled/color/size/density/levels; fruit.enabled/type/color/size; 参考图没花就不要开
+- 树皮: app.list_bark_textures + app.set_bark_texture, 或 bark.color/color2/tint/roughness/normalScale
+- 地面与氛围: scene.ground/groundColor/gradient/skyTop/skyBottom, litter.enabled, fall.enabled, particles.enabled
+- 用户只给文字时同样先 app.get_params, 再 apply_preset + set_params; 不要只调一两个参数就结束
+- 本次对话可能允许联网搜索: 仅当需要外部/实时信息 (真实树种形态、季节特征) 时调用 web_search (最多 2 次), 拿到结果立刻建模, 不要反复换关键词; 引用时在句末用 [1][2] 标注
+- 用户上传的图片可能出现在消息的 image_url 里; 若模型无法看图, 明确告诉用户切换到带"视觉"标记的模型`
 
 /** 模型清单 (带视觉/上下文能力), 缓存 10 分钟 */
 let modelsCache = { at: 0, value: null }
@@ -195,7 +241,7 @@ async function listModels() {
     const list = (json.data || []).map((m) => ({
       id: m.id,
       name: m.name || m.id,
-      vision: Array.isArray(m.input_modalities) ? m.input_modalities.includes('image') : false,
+      vision: Array.isArray(m.input_modalities) ? m.input_modalities.includes('image') : null,
       contextWindow: m.context_window || 0,
       maxOutput: m.max_output_tokens || 0,
     }))
@@ -321,12 +367,39 @@ function buildMessages(body, allowSearch) {
     ...normalizeChatMessages(body.messages || body.message),
   ]
 }
+/** 模型是否支持图片输入: true/false 已知, null = 上游没给能力字段 (按未知处理, 允许尝试) */
+async function modelSupportsVision(model) {
+  try {
+    const list = await listModels()
+    if (!Array.isArray(list)) return null
+    const hit = list.find((m) => m.id === model)
+    return hit ? !!hit.vision : null
+  } catch (e) { return null }
+}
 function parseToolArgs(s) {
   try { return JSON.parse(s || '{}') } catch { return {} }
 }
 function briefTool(name, args) {
   if (name === 'web_search') return '联网搜索: ' + String((args && args.query) || '').slice(0, 40)
+  if (name === 'app.screenshot') return '截图 (用于与参考图对比)'
   return name
+}
+/**
+ * 工具轮用尽 / 模型没给正文时的兜底回复。
+ * 之前直接返回 "(已完成)", 用户只看到思考过程却不知道有没有真的建模。
+ */
+function fallbackReply(executed) {
+  const names = [...new Set((executed || []).map((e) => e.brief || e.name))]
+  if (!names.length) return '(未收到模型回复, 请重试或将模型切换到 视觉 🖼 版本)'
+  return `已执行 ${executed.length} 个操作: ${names.join('、')}。若效果还不理想, 再发一句具体要求即可继续调整。`
+}
+/** 上游 HTTP 错误 -> 可读提示 (图片相关错误单独给出可操作的建议) */
+function llmHttpError(status, txt) {
+  const s = String(txt || '')
+  if (/(image|vision|multimodal|image_url|图片|图像)/i.test(s)) {
+    return new Error('当前模型不支持图片输入: 请在右上角切换到带 "视觉 🖼" 标记的模型后重试')
+  }
+  return new Error(`大模型接口错误 ${status}: ${s.slice(0, 300)}`)
 }
 async function callLlm(model, messages, tools, timeoutMs = 120000) {
   const payload = { model, messages, temperature: 0.3 }
@@ -338,13 +411,13 @@ async function callLlm(model, messages, tools, timeoutMs = 120000) {
     signal: AbortSignal.timeout(timeoutMs),
   })
   const json = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(`大模型接口错误 ${res.status}: ${JSON.stringify(json).slice(0, 400)}`)
+  if (!res.ok) throw llmHttpError(res.status, JSON.stringify(json))
   const msg = json.choices?.[0]?.message || {}
   return { msg, usage: json.usage || null, model: json.model || model }
 }
 
 /** 执行一次工具调用 (应用命令走浏览器桥; web_search 在服务端) */
-async function runToolCall(tc, searchState) {
+async function runToolCall(tc, searchState, targetTab) {
   const name = fromToolName(tc.name)
   const args = tc.args || {}
   if (name === 'web_search') {
@@ -356,8 +429,39 @@ async function runToolCall(tc, searchState) {
     const r = await webSearch(args.query || args.q || '')
     return { name: 'web_search', args, result: r, sources: r.ok ? r.items : [], ok: r.ok }
   }
-  const r = await callBrowser(name, args)
-  return { name, args, result: r, sources: [], ok: r.ok !== false }
+  const r = await callBrowser(name, args, 8000, targetTab || null)
+  // 截图单独摘出来: dataUrl 有几十万字符, 塞进 tool 文本会被 12000 字符上限截断,
+  // 必须改由下面 toolMessages 追加成一条真正的图片消息, 模型才能"看见"画面。
+  const image = name === 'app.screenshot' && r && r.ok !== false && r.data && typeof r.data.dataUrl === 'string'
+    ? r.data.dataUrl : ''
+  return { name, args, result: r, sources: [], ok: r.ok !== false, image }
+}
+
+/**
+ * 工具结果 -> 发给大模型的消息数组。
+ * 普通结果就是一条 tool 消息; 截图额外补一条 user(image_url) 消息。
+ * allowImage=false (模型明确不支持图片) 时只保留占位文本, 避免请求被上游拒绝。
+ */
+function toolMessages(callId, r, allowImage) {
+  const out = []
+  let result = r.result
+  if (r.image) {
+    const placeholder = allowImage ? '[截图已作为图片消息附在下方]' : '[当前模型不支持图片输入, 截图已省略]'
+    result = { ...result, data: { ...((result && result.data) || {}), dataUrl: placeholder } }
+  }
+  // 参数树是建模的核心输入, 给更大上限, 避免刚好越过 12000 被截成非法 JSON
+  const limit = r.name === 'app.get_params' ? 30000 : 12000
+  out.push({ role: 'tool', tool_call_id: callId, content: JSON.stringify(result).slice(0, limit) })
+  if (r.image && allowImage) {
+    out.push({
+      role: 'user',
+      content: [
+        { type: 'text', text: '[FastTree 当前视口截图] 请把这张截图与用户给的参考图对比: 轮廓/冠幅/枝条疏密/叶色/地面氛围, 决定是否还要微调。' },
+        { type: 'image_url', image_url: { url: r.image } },
+      ],
+    })
+  }
+  return out
 }
 
 /** 非流式对话: 多轮工具调用 + 思考内容 + 来源 */
@@ -373,7 +477,16 @@ async function llmChat(body) {
   const executed = []
   const sources = []
   const searchState = { count: 0 }
-  for (let round = 0; round < 4; round++) {
+  // 一次对话钉住同一个标签页: 多标签时每个标签有独立场景, 混用会出现"改了 A 却截图 B"
+  // clientId 由聊天面板上报(它知道自己所在的页面), 优先用它, 保证改的就是用户眼前的树
+  const targetTab = (body.clientId && consumers.has(body.clientId)) ? body.clientId : pickConsumer()
+  // 只有真的产生截图时才查询模型能力, 避免普通对话多一次上游 /models 请求
+  let canImages = null
+  const imageAllowed = async () => {
+    if (canImages === null) canImages = (await modelSupportsVision(model)) !== false
+    return canImages
+  }
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     let got
     try { got = await callLlm(model, messages, tools) } catch (e) { return { ok: false, error: String(e.message || e), executed, sources } }
     finalModel = got.model
@@ -385,13 +498,14 @@ async function llmChat(body) {
     reply = ''
     messages.push({ role: 'assistant', content: msg.content || '', tool_calls: msg.tool_calls })
     for (const call of calls) {
-      const r = await runToolCall(call, searchState)
+      const r = await runToolCall(call, searchState, targetTab)
       executed.push({ name: r.name, ok: !!r.ok, brief: briefTool(r.name, r.args) })
       if (r.sources && r.sources.length) sources.push(...r.sources)
-      messages.push({ role: 'tool', tool_call_id: call.id || call.name, content: JSON.stringify(r.result).slice(0, 12000) })
+      const allow = r.image ? await imageAllowed() : true
+      messages.push(...toolMessages(call.id || call.name, r, allow))
     }
   }
-  return { ok: true, reply: reply || '(已完成)', thinking, executed, sources: dedupeSources(sources), model: finalModel }
+  return { ok: true, reply: reply || fallbackReply(executed), thinking, executed, sources: dedupeSources(sources), model: finalModel }
 }
 function dedupeSources(list) {
   const seen = new Set()
@@ -424,15 +538,22 @@ async function llmChatStream(body, res) {
   const executed = []
   const sources = []
   const searchState = { count: 0 }
+  // 流式对话同样钉住同一个标签页, 避免工具与截图落到不同标签
+  const targetTab = (body.clientId && consumers.has(body.clientId)) ? body.clientId : pickConsumer()
+  let canImages = null
+  const imageAllowed = async () => {
+    if (canImages === null) canImages = (await modelSupportsVision(model)) !== false
+    return canImages
+  }
   let thinking = ''
   let reply = ''
   let finalModel = model
   // 浏览器断开时中止上游请求, 避免继续计费
   const upstreamAbort = new AbortController()
-  const abortTimer = setTimeout(() => upstreamAbort.abort(), 180000)
+  const abortTimer = setTimeout(() => upstreamAbort.abort(), 600000)
   res.on('close', () => { closed = true; try { upstreamAbort.abort() } catch (e) { /* ignore */ } })
   try {
-    for (let round = 0; round < 4 && !closed; round++) {
+    for (let round = 0; round < MAX_TOOL_ROUNDS && !closed; round++) {
       const payload = { model, messages, temperature: 0.3, stream: true }
       if (tools.length) { payload.tools = tools; payload.tool_choice = 'auto' }
       const upstream = await fetch(llmUrl(), {
@@ -443,7 +564,7 @@ async function llmChatStream(body, res) {
       })
       if (!upstream.ok || !upstream.body) {
         const txt = await upstream.text().catch(() => '')
-        throw new Error(`大模型接口错误 ${upstream.status}: ${txt.slice(0, 300)}`)
+        throw llmHttpError(upstream.status, txt)
       }
       const reader = upstream.body.getReader()
       const dec = new TextDecoder()
@@ -493,7 +614,7 @@ async function llmChatStream(body, res) {
       for (const call of calls) {
         const args = parseToolArgs(call.arguments)
         send({ type: 'tool', name: call.name, args, brief: briefTool(call.name, args), status: 'running' })
-        const r = await runToolCall({ name: call.name, args }, searchState)
+        const r = await runToolCall({ name: call.name, args }, searchState, targetTab)
         executed.push({ name: r.name, ok: !!r.ok, brief: briefTool(r.name, r.args) })
         send({ type: 'tool', name: r.name, args: r.args, brief: briefTool(r.name, r.args), status: r.ok ? 'done' : 'error' })
         if (r.sources && r.sources.length) {
@@ -502,10 +623,11 @@ async function llmChatStream(body, res) {
           send({ type: 'sources', items: merged })
         }
         if (closed) break
-        messages.push({ role: 'tool', tool_call_id: call.id || call.name, content: JSON.stringify(r.result).slice(0, 12000) })
+        const allow = r.image ? await imageAllowed() : true
+        messages.push(...toolMessages(call.id || call.name, r, allow))
       }
     }
-    if (!closed) send({ type: 'done', reply: reply || '(已完成)', thinking, executed, sources: dedupeSources(sources), model: finalModel })
+    if (!closed) send({ type: 'done', reply: reply || fallbackReply(executed), thinking, executed, sources: dedupeSources(sources), model: finalModel })
   } catch (e) {
     if (!closed) send({ type: 'error', error: String(e && e.message ? e.message : e) })
   } finally {
@@ -560,11 +682,18 @@ const server = http.createServer(async (req, res) => {
     if (route === '/bridge/hello' && req.method === 'POST') {
       const body = await readBody(req)
       const cid = 'p' + seq++
+      const tabId = typeof body.tabId === 'string' ? body.tabId : ''
+      // 同一标签页只保留最新实例: HMR 重载可能留下旧轮询, 不去重会让一条命令被多实例领走
+      if (tabId) {
+        for (const [oldId, old] of consumers) if (old.tabId === tabId) consumers.delete(oldId)
+      }
       consumers.set(cid, {
         commands: Array.isArray(body.commands) ? body.commands : [],
         lastSeen: Date.now(),
         path: body.path || '',
         version: body.version || '',
+        visible: body.visible !== false,
+        tabId,
       })
       return json(res, 200, { ok: true, consumerId: cid })
     }
@@ -572,7 +701,12 @@ const server = http.createServer(async (req, res) => {
       const cid = u.searchParams.get('id') || ''
       lastPollAt = Date.now()
       const c = consumers.get(cid)
-      if (c) c.lastSeen = Date.now()
+      if (!c) return json(res, 404, { ok: false, error: '未知实例 (桥已重启), 请重新注册' })
+      {
+        c.lastSeen = Date.now()
+        const v = u.searchParams.get('visible')
+        if (v !== null) c.visible = v === '1'
+      }
       const mine = []
       for (const [id, cmd] of pending.entries()) {
         if (!cmd.target || cmd.target === cid) {
@@ -586,7 +720,7 @@ const server = http.createServer(async (req, res) => {
       const now = Date.now()
       return json(res, 200, {
         consumers: [...consumers.entries()].map(([id, c]) => ({
-          id, commands: c.commands.length, idleMs: now - c.lastSeen, path: c.path, version: c.version,
+          id, commands: c.commands.length, idleMs: now - c.lastSeen, path: c.path, version: c.version, visible: !!c.visible,
         })),
       })
     }

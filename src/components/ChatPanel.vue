@@ -4,7 +4,7 @@
       {{ open ? '✕' : '🤖' }}
     </button>
 
-    <div v-if="open" class="chat-panel">
+    <div v-if="open" class="chat-panel" @paste="onPanelPaste" @dragover.prevent @drop.prevent="onDropImages">
       <!-- 顶部 -->
       <div class="chat-head">
         <button class="icon-btn" :class="{ active: historyOpen }" title="历史记录" @click="historyOpen = !historyOpen">🗂</button>
@@ -130,10 +130,12 @@
             <button class="rm" @click="pendingImages.splice(k, 1)">✕</button>
           </div>
           <span class="pending-hint">{{ pendingImages.length }}/6 张图片待发送</span>
+          <button class="btn small primary pending-build" title="按这张参考图自动建模"
+            :disabled="!!(activeConv && activeConv.busy)" @click="sendImageBuild">🖼 按图还原建模</button>
         </div>
         <div class="chat-input">
           <textarea ref="inputEl" v-model="input" rows="2"
-            :placeholder="activeConv && activeConv.busy ? '正在生成… (可点停止)' : '描述你想要的树… (Enter 发送 / Shift+Enter 换行 / 可粘贴图片)'"
+            :placeholder="activeConv && activeConv.busy ? '正在生成… (可点停止)' : '描述你想要的树… (Enter 发送 / Shift+Enter 换行 / 可粘贴、拖入图片)'"
             @keydown.enter.exact="onEnterKey" @paste="onPaste"></textarea>
           <div class="input-side">
             <button class="icon-btn" title="上传图片 (可识别)" :disabled="!!(activeConv && activeConv.busy)" @click="imageInput?.click()">🖼</button>
@@ -160,17 +162,20 @@
 
 <script setup>
 import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { bridgeConsumerId } from '../core/appApi.js'
 
 /* ------------------------------------------------------------------ */
 /* 常量 / 工具                                                         */
 /* ------------------------------------------------------------------ */
 const STORAGE_KEY = 'fasttree.chat.v1'
 const DEFAULT_MODELS = [
-  { id: 'deepseek-flash', label: 'DeepSeek Flash · 视觉+思考 🖼' },
-  { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro · 文本' },
+  { id: 'deepseek-flash', label: 'DeepSeek Flash · 视觉+思考 🖼', vision: true },
+  { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro · 文本', vision: false },
 ]
 const MAX_IMAGES = 6
 const MAX_EDIT_TEXT = 300
+// "按图还原建模" 快捷键发给大模型的标准指令: 强制走 观察→读参数→预设→精调→截图对比 的固定流程
+const REFERENCE_MODELING_PROMPT = `请参考这张图片，用现有功能尽可能还原建模：先识别树种/生长阶段/季节、树冠轮廓与树高冠幅比例、主干分叉、枝条走向与疏密、叶片形状与颜色、花/果/树皮与地面氛围；然后按 app.get_params → app.apply_preset → app.set_params 精调 → app.rebuild → app.screenshot 截图对比的顺序执行，最多再修 2 轮，最后汇报关键参数。`
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8) }
 function bridgeBase() {
@@ -541,10 +546,11 @@ function onEnterKey(e) {
   e.preventDefault()
   send()
 }
-async function send() {
+async function send(textOverride) {
   const conv = activeConv.value
   if (!conv || conv.busy) return
-  const text = input.value.trim()
+  // textOverride 用于"按图还原建模"快捷按钮: 直接把标准指令当作本轮输入
+  const text = (typeof textOverride === 'string' ? textOverride : input.value).trim()
   const imgs = pendingImages.value.slice()
   if (!text && !imgs.length) return
   input.value = ''
@@ -602,7 +608,7 @@ async function streamReply(conv, am, history) {
     res = await fetch(bridgeBase() + '/api/llm/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: am.model, search: am.search, messages: history }),
+      body: JSON.stringify({ model: am.model, search: am.search, messages: history, clientId: bridgeConsumerId() }),
       signal: ctrl.signal,
     })
   } catch (e) {
@@ -771,8 +777,29 @@ async function copyMessage(m) {
     statusText.value = '复制失败 (浏览器限制)'
   }
 }
+/** 当前模型是否支持图片输入; true/false 已知, null = 接口没给能力字段 */
+const currentVision = computed(() => {
+  const m = modelOptions.value.find((x) => x.id === model.value)
+  return m ? m.vision : null
+})
+/**
+ * 贴图后检查模型能力: 明确不支持时自动切到任一视觉模型;
+ * 一个都没有就提示用户手动切换, 避免把图片发给纯文本模型后被静默忽略/报错。
+ */
+function ensureVisionModel() {
+  if (currentVision.value !== false) return
+  const v = modelOptions.value.find((m) => m.vision === true)
+  if (v) {
+    model.value = v.id
+    if (activeConv.value) activeConv.value.model = v.id
+    statusText.value = `已切换到支持图片识别的模型：${v.label}`
+  } else {
+    statusText.value = '当前模型不支持图片识别，请切换到带 🖼 的模型'
+  }
+}
 async function addImages(files) {
   const list = Array.from(files || [])
+  if (!list.length) return
   for (const f of list) {
     if (pendingImages.value.length >= MAX_IMAGES) { statusText.value = `最多 ${MAX_IMAGES} 张图片`; break }
     try {
@@ -781,6 +808,7 @@ async function addImages(files) {
       pendingImages.value.push(im)
     } catch (e) { statusText.value = '图片读取失败: ' + ((e && e.message) || e) }
   }
+  if (pendingImages.value.length) ensureVisionModel()
 }
 function onPickImages(e) {
   addImages(e.target.files)
@@ -796,6 +824,22 @@ function onPaste(e) {
     }
   }
   if (files.length) { e.preventDefault(); addImages(files) }
+}
+/** 整个聊天面板都能接收粘贴: 输入框之外的区域收获图片, 输入框里的文本粘贴保持原样 */
+function onPanelPaste(e) {
+  if (e.defaultPrevented) return
+  onPaste(e)
+}
+/** 把图片拖进聊天面板 */
+function onDropImages(e) {
+  const files = Array.from(e.dataTransfer?.files || []).filter((f) => /^image\//.test(f.type))
+  if (files.length) addImages(files)
+}
+/** 一键按图还原: 用标准指令替代输入框内容 (输入框里已有的补充要求会拼在后面) */
+function sendImageBuild() {
+  if (!pendingImages.value.length) return
+  const extra = input.value.trim()
+  send(REFERENCE_MODELING_PROMPT + (extra ? '\n补充要求：' + extra : ''))
 }
 
 /* ------------------------------------------------------------------ */
@@ -882,6 +926,8 @@ async function fetchModels() {
     if (!j.ok || !Array.isArray(j.models) || !j.models.length) return
     modelOptions.value = j.models.map((m) => ({
       id: m.id,
+      // vision: true/false 来自上游能力字段; null = 上游没提供该字段 (按"未知"处理, 不误判成不支持)
+      vision: m.vision === true ? true : (m.vision === false ? false : null),
       label: `${m.name || m.id}${m.vision ? ' · 视觉+思考 🖼' : ''}`,
     }))
     if (!modelOptions.value.some((m) => m.id === model.value)) {
@@ -1071,6 +1117,7 @@ onBeforeUnmount(() => {
 .pending-img .rm { position: absolute; top: -5px; right: -5px; width: 15px; height: 15px; border-radius: 50%;
   border: 1px solid var(--line-2); background: #0b0e13; color: var(--fg-dim); font-size: 9px; line-height: 1; cursor: pointer; }
 .pending-hint { font-size: 10px; color: var(--fg-dim); }
+.pending-build { margin-left: auto; }
 .chat-input { padding: 7px 8px 5px; display: flex; gap: 6px; align-items: flex-end; }
 .chat-input textarea { flex: 1; resize: none; background: #0c1016; color: var(--fg); border: 1px solid var(--line-2);
   border-radius: 7px; font-size: 11.5px; padding: 6px 8px; font-family: inherit; max-height: 96px; }
