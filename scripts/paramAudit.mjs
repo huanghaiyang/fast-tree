@@ -185,6 +185,15 @@ for (const k of ['type', 'levels', 'perBranch', 'clusterCount', 'clusterRadius',
   }
 }
 
+// 空间引导力默认是空的: 审计"启用开关"或"对象列表"时, 先放一个真正能影响
+// 探针树的吸引子 (位置落在树冠范围内), 否则永远比较不出几何差异。
+const FORCE_PROBE = [{
+  type: 'attractor', shape: 'sphere', x: 1.5, y: 2.5, z: 0,
+  radius: 5, strength: 1.4, falloff: 1, size: 0.6, sizeY: 0.6,
+}]
+CONDITIONS['forces.enabled'] = { 'forces.items': FORCE_PROBE }
+CONDITIONS['forces.items'] = { 'forces.enabled': true }
+
 /** 需要 canvas/ImageLoader, Node 下无法判定 -> 在浏览器审计页里验证 */
 export const DOM_DEPENDENT = new Set([
   'bark.color', 'bark.color2', 'bark.bump', 'bark.uvScaleU', 'bark.uvScaleV',
@@ -274,6 +283,7 @@ const SPECIAL_PERTURB = {
   'trunk.knots': [9],              // 0/1 附近不明显
   'roots.count': [11],
   'bark.pipeline': ['skin'],
+  'forces.items': [FORCE_PROBE],   // 空数组扰动无效, 直接塞一个探针力场
 }
 
 /** 小树探针: 让每次审计重建都很快, 但必须包含带叶片的层级 */

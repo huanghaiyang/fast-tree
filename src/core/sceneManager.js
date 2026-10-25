@@ -244,6 +244,60 @@ export class TreeScene {
       }, 80)
     })
 
+    /* ---------------- ③.5 空间引导力可视化变换轴 ---------------- */
+    // 与单枝轴相互独立: 两个 helper 不会同时显示, 由 _gizmoOwner 决定归属。
+    // 拖动对象是力场根节点 (root), 它的 position/rotation/scale 直接映射到
+    // params.forces.items[i] 的 x/y/z、rotX/Y/Z、size/sizeY。
+    // 关键性能点: 拖动期间上层会 previewHold, 树不重建; 只更新这个轻量 gizmo。
+    this._gizmoOwner = 'branch'
+    this.forceGizmoState = { show: false, id: null, mode: 'translate' }
+    // Map<id, {root, solid, field, solidMat, fieldMat, solidKey, fieldKey, color}>
+    this._forceGizmos = new Map()
+    this._forceDragging = false
+    this._forceSyncing = false
+    this._forceDragStart = null
+    this._forcePicking = false
+    this.forceParams = null
+    this.forceControls = new TransformControls(this.camera, renderer.domElement)
+    this.forceControls.setSize(0.8)
+    this.forceControls.setMode('translate')
+    this.forceControls.setSpace('world')
+    this.forceHelper = this.forceControls.getHelper
+      ? this.forceControls.getHelper()
+      : this.forceControls
+    this.forceHelper.visible = false
+    this.scene.add(this.forceHelper)
+    this.forceControls.addEventListener('dragging-changed', (e) => {
+      this.controls.enabled = !e.value
+      this._forceDragging = !!e.value
+      if (e.value) {
+        const it = this._findForceItem()
+        this._forceDragStart = it
+          ? { size: it.size, sizeY: it.sizeY }
+          : null
+        this.transformHelper.visible = false
+        if (this.callbacks.onForceDragChange) this.callbacks.onForceDragChange(true)
+      } else {
+        // 松手: 先提交最后一帧, 再让上层恢复重建 (previewHold 归零会触发一次构建)。
+        this._commitForceGizmo()
+        if (this.callbacks.onForceDragChange) this.callbacks.onForceDragChange(false)
+        this.updateForceGizmos(this.forceParams)
+        this._syncForceGizmo()
+      }
+    })
+    this.forceControls.addEventListener('objectChange', () => {
+      if (this._forceSyncing) return
+      this._commitForceGizmo()
+    })
+    // 视口点选力场对象: 只在引导力面板打开时启用, 不干扰其他交互。
+    this._onForcePointerDown = (e) => {
+      if (!this._forcePicking || this._forceDragging || e.button !== 0) return
+      if (this.forceControls.axis) return
+      const id = this._pickForceAt(e)
+      if (id && this.callbacks.onForceSelect) this.callbacks.onForceSelect(id)
+    }
+    renderer.domElement.addEventListener('pointerdown', this._onForcePointerDown)
+
     /* ---------------- ④ 天空穹顶 + 星空 ---------------- */
     // --- 天空穹顶 (跟随相机的渐变球; 半径远小于远裁剪面, 避免被裁出硬边) ---
     this.skyMat = new THREE.ShaderMaterial({
@@ -324,6 +378,13 @@ export class TreeScene {
     this.grid.material.transparent = true
     this.grid.material.opacity = 0.55
     this.scene.add(this.grid)
+
+    /* ---------------- ⑥.5 空间引导力示意图 ----------------
+     * 吸引子/排斥子的线框球/立方体。它们只是视口提示, 不参与几何、导出与阴影;
+     * 内容由 updateForceGizmos(params.forces) 在每次 build 时重建。 */
+    this.forceGroup = new THREE.Group()
+    this.forceGroup.name = 'SpaceForces'
+    this.scene.add(this.forceGroup)
 
     /* ---------------- ⑦ 树的容器与状态字段 ---------------- */
     // --- 树 ---
@@ -658,6 +719,8 @@ export class TreeScene {
       this.treeGroup.add(this.flowerMesh)
     }
     /* ---------------- ④ 分块剔除 + 阴影 + 季节特效 ---------------- */
+    // 空间引导力示意图: 每次重建都按最新 params.forces 重挂一遍 (只是辅助显示)。
+    this.updateForceGizmos(params.forces)
     // 把合并几何切成空间块: 每块独立包围球, 相机视锥外的块由 Three 自动剔除。
     // 源网格仍在 treeGroup 中 (隐藏于默认相机层), 供导出/统计/粒子采样/LOD/线框复用。
     this._buildCullChunks()
@@ -700,7 +763,7 @@ export class TreeScene {
     this.skeleton = result.skeleton || null
     this._updateSkeletonOverlay(result.skeleton)
     // 重建后把变换轴重新贴到当前选中枝的最新枝基
-    if (this.branchGizmo.show) this._syncBranchGizmo()
+    if (this.branchGizmo.show && this._gizmoOwner === 'branch') this._syncBranchGizmo()
 
     if (opts.frameCamera !== false) this.frameCamera()
     // 重建后 LOD 缓存已清空, lodInfo 先只放 LOD0 一行; 之后 _ensureLod 会补 1/2。
@@ -853,6 +916,11 @@ export class TreeScene {
     if (opts.mode) this.branchGizmo.mode = opts.mode
     if (opts.space) this.branchGizmo.space = opts.space
     if (opts.show !== undefined) this.branchGizmo.show = !!opts.show
+    // 单枝轴显示时接管 gizmo 归属, 收起力场轴, 避免两条轴叠在视口里。
+    if (this.branchGizmo.show) {
+      this._gizmoOwner = 'branch'
+      this._hideForceGizmo()
+    }
     if (!this.branchGizmo.show || this.branchGizmo.index === null || this.branchGizmo.index === undefined) {
       this._hideBranchGizmo()
       return
@@ -869,6 +937,134 @@ export class TreeScene {
     this.transformControls.detach()
     if (this.transformHelper) this.transformHelper.visible = false
     this._gizmoDirty = false
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 空间引导力: 视口变换轴 + 点选                                      */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * 显示/隐藏力场对象的变换轴 (移动 / 缩放 / 旋转)。
+   * @param {Object} opts { show, id, mode } —— mode 取 translate/scale/rotate
+   * @sideeffect 接管 gizmo 归属并收起单枝轴; 或释放归属后恢复单枝轴
+   */
+  setForceTransformGizmo(opts = {}) {
+    if (!this.forceControls) return
+    if (opts.id !== undefined) this.forceGizmoState.id = opts.id
+    if (opts.mode) this.forceGizmoState.mode = opts.mode
+    if (opts.show !== undefined) this.forceGizmoState.show = !!opts.show
+    if (this.forceGizmoState.show && this.forceGizmoState.id) {
+      this._gizmoOwner = 'force'
+      this._hideBranchGizmo()
+      this._syncForceGizmo()
+    } else {
+      if (this._gizmoOwner === 'force') {
+        this._gizmoOwner = 'branch'
+        // 交还归属后, 若单枝轴仍处于"显示"状态, 立即恢复它。
+        if (this.branchGizmo.show) this._syncBranchGizmo()
+      }
+      this._hideForceGizmo()
+    }
+  }
+
+  /** 视口点选开关: 仅引导力面板打开时开启 */
+  setForcePicking(v) {
+    this._forcePicking = !!v
+  }
+
+  /** 收起力场变换轴 (detach + 隐藏 helper) */
+  _hideForceGizmo() {
+    if (!this.forceControls) return
+    this.forceControls.detach()
+    if (this.forceHelper) this.forceHelper.visible = false
+  }
+
+  /** 把变换轴贴到当前选中力场对象上 */
+  _syncForceGizmo() {
+    if (!this.forceControls || this._forceDragging) return
+    if (this._gizmoOwner !== 'force' || !this.forceGizmoState.show) {
+      this._hideForceGizmo()
+      return
+    }
+    const rec = this._forceGizmos.get(this.forceGizmoState.id)
+    if (!rec) {
+      this._hideForceGizmo()
+      return
+    }
+    this._forceSyncing = true
+    this.forceControls.setMode(this.forceGizmoState.mode)
+    this.forceControls.setSpace('world')
+    this.forceControls.attach(rec.root)
+    this.forceHelper.visible = true
+    this._forceSyncing = false
+  }
+
+  /** 当前选中的力场参数对象 (来自 updateForceGizmos 保存的最新引用) */
+  _findForceItem() {
+    const f = this.forceParams
+    const items = f && Array.isArray(f.items) ? f.items : []
+    return items.find((it) => it.id === this.forceGizmoState.id) || null
+  }
+
+  /**
+   * 把变换轴的当前姿态换算成 params 补丁, 抛给上层写入。
+   * 本函数不直接改参数, 与单枝轴的 _commitBranchGizmo 保持同一架构。
+   * 数值取整到 1e-3 / 0.1°, 给系统一个死区, 避免浮点噪声反复触发重建。
+   */
+  _commitForceGizmo() {
+    const rec = this._forceGizmos.get(this.forceGizmoState.id)
+    const it = this._findForceItem()
+    if (!rec || !it) return
+    const mode = this.forceControls.getMode()
+    const patch = {}
+    if (mode === 'translate') {
+      patch.x = +rec.root.position.x.toFixed(3)
+      patch.y = +rec.root.position.y.toFixed(3)
+      patch.z = +rec.root.position.z.toFixed(3)
+    } else if (mode === 'rotate') {
+      const e = new THREE.Euler().setFromQuaternion(rec.root.quaternion, 'XYZ')
+      patch.rotX = +(e.x * 180 / Math.PI).toFixed(1)
+      patch.rotY = +(e.y * 180 / Math.PI).toFixed(1)
+      patch.rotZ = +(e.z * 180 / Math.PI).toFixed(1)
+    } else if (mode === 'scale') {
+      const s = rec.root.scale
+      const start = this._forceDragStart || { size: it.size, sizeY: it.sizeY }
+      const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
+      const cube = it.type === 'repulsor' && it.shape === 'cube'
+      if (cube) {
+        // 立方体: 水平两轴取平均作为半宽, 竖向单独映射到半高。
+        patch.size = +clamp(start.size * (Math.abs(s.x) + Math.abs(s.z)) / 2, 0.02, 50).toFixed(3)
+        patch.sizeY = +clamp(start.sizeY * Math.abs(s.y), 0.02, 50).toFixed(3)
+      } else {
+        patch.size = +clamp(start.size * (Math.abs(s.x) + Math.abs(s.y) + Math.abs(s.z)) / 3, 0.02, 50).toFixed(3)
+      }
+    }
+    if (Object.keys(patch).length && this.callbacks.onForceEdit) {
+      this.callbacks.onForceEdit({ id: it.id, patch })
+    }
+  }
+
+  /**
+   * 在视口里拾取力场对象 (只测实体外层与影响范围两个网格)。
+   * @param {PointerEvent} e 原始指针事件
+   * @returns {string|null} 命中的力场 id
+   */
+  _pickForceAt(e) {
+    if (!this._raycaster) this._raycaster = new THREE.Raycaster()
+    const canvas = this.renderer.domElement
+    const rect = canvas.getBoundingClientRect()
+    if (!rect.width || !rect.height) return null
+    this._raycaster.setFromCamera({
+      x: ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      y: -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    }, this.camera)
+    const targets = []
+    for (const rec of this._forceGizmos.values()) {
+      targets.push(rec.field, rec.solid)
+    }
+    if (!targets.length) return null
+    const hits = this._raycaster.intersectObjects(targets, false)
+    return hits.length ? (hits[0].object.userData.forceId || null) : null
   }
 
   /**
@@ -1674,6 +1870,117 @@ export class TreeScene {
   }
 
   /**
+   * 更新空间引导力 (吸引子/排斥子) 的视口示意图。
+   *
+   * 性能要点 (用户反馈"调参数特别卡"的根因之一):
+   *   - 旧实现每次都删除并重建全部网格/材质，连续拖动滑块时会产生大量
+   *     GPU 缓冲分配/释放; 现在按 id 复用 root + 两个 mesh + 材质,
+   *     只在尺寸/形状/颜色真的变化时才替换 geometry / 改色。
+   *   - 树的几何重建由上层 previewHold 推迟到拖动结束, 这里只做轻量更新,
+   *     所以拖动过程中视口仍然跟手。
+   *
+   * 每个对象画两层:
+   *   ① 实体: 吸引子用球 (size 为半径), 排斥子按 shape 用球或立方体 (size/sizeY 为半尺寸);
+   *   ② 影响范围: 吸引子是半径 = radius 的线框球; 排斥子是从实体表面再向外 radius 的线框体。
+   * 关闭引导力时仍显示 (透明度减半), 方便先把障碍物摆好再启用。
+   * 这些网格只用于编辑时看清位置和范围, 不参与几何生成/导出, 也不投阴影。
+   *
+   * @param {Object} forces params.forces (enabled + items[])
+   * @sideeffect 复用/创建 this._forceGizmos 里的对象; 同步变换轴
+   */
+  updateForceGizmos(forces) {
+    const group = this.forceGroup
+    if (!group) return
+    // 始终保存最新引用, 让 _findForceItem 能读到"正在拖动"的那份参数。
+    this.forceParams = forces
+    // 拖动期间绝不能重建正在被 TransformControls 操控的 root, 否则拖拽会中断。
+    if (this._forceDragging) return
+    const f = forces && typeof forces === 'object' ? forces : null
+    const items = f && Array.isArray(f.items) ? f.items : []
+    // 关闭引导力时仍显示示意图 (方便先摆放再启用), 只把透明度压低作为"未生效"的提示。
+    const dim = f && f.enabled ? 1 : 0.45
+    group.visible = items.length > 0
+    const seen = new Set()
+    this._forceSyncing = true
+    for (const it of items) {
+      const id = it.id || `force-${seen.size}`
+      const attractor = it.type !== 'repulsor'
+      const cube = !attractor && it.shape === 'cube'
+      const size = Math.max(0.02, Number(it.size) || 0.6)
+      const sizeY = Math.max(0.02, Number(it.sizeY) || size)
+      const radius = Math.max(0.05, Number(it.radius) || 3)
+      seen.add(id)
+
+      let rec = this._forceGizmos.get(id)
+      if (!rec) {
+        const root = new THREE.Group()
+        root.name = `Force-${id}`
+        const solidMat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false })
+        const fieldMat = new THREE.MeshBasicMaterial({ wireframe: true, transparent: true, depthWrite: false })
+        const solid = new THREE.Mesh(new THREE.SphereGeometry(1, 18, 12), solidMat)
+        const field = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 12), fieldMat)
+        // 点选只认这两个网格; root 本身不参与 raycast。
+        solid.userData.forceId = id
+        field.userData.forceId = id
+        root.add(solid)
+        root.add(field)
+        group.add(root)
+        rec = { root, solid, field, solidMat, fieldMat, solidKey: '', fieldKey: '', color: null }
+        this._forceGizmos.set(id, rec)
+      }
+
+      const color = attractor ? 0x4ea8ff : 0xff7a45
+      if (rec.color !== color) {
+        rec.solidMat.color.setHex(color)
+        rec.fieldMat.color.setHex(color)
+        rec.color = color
+      }
+      rec.solidMat.opacity = 0.18 * dim
+      rec.fieldMat.opacity = 0.32 * dim
+
+      const solidKey = `${cube ? 'c' : 's'}|${size.toFixed(3)}|${cube ? sizeY.toFixed(3) : ''}`
+      if (rec.solidKey !== solidKey) {
+        rec.solid.geometry.dispose()
+        rec.solid.geometry = cube
+          ? new THREE.BoxGeometry(size * 2, sizeY * 2, size * 2)
+          : new THREE.SphereGeometry(size, 18, 12)
+        rec.solidKey = solidKey
+      }
+      const fieldKey = `${cube ? 'c' : 's'}|${size.toFixed(3)}|${sizeY.toFixed(3)}|${radius.toFixed(3)}|${attractor ? 'a' : 'r'}`
+      if (rec.fieldKey !== fieldKey) {
+        rec.field.geometry.dispose()
+        rec.field.geometry = cube
+          ? new THREE.BoxGeometry((size + radius) * 2, (sizeY + radius) * 2, (size + radius) * 2)
+          : new THREE.SphereGeometry(attractor ? radius : size + radius, 20, 12)
+        rec.fieldKey = fieldKey
+      }
+
+      const D2R = Math.PI / 180
+      rec.root.position.set(Number(it.x) || 0, Number(it.y) || 0, Number(it.z) || 0)
+      rec.root.rotation.set(
+        (Number(it.rotX) || 0) * D2R,
+        (Number(it.rotY) || 0) * D2R,
+        (Number(it.rotZ) || 0) * D2R,
+        'XYZ',
+      )
+      rec.root.scale.set(1, 1, 1)
+      rec.root.updateMatrixWorld(true)
+    }
+    // 删除已经不存在的对象 (逐个释放几何/材质)。
+    for (const [id, rec] of [...this._forceGizmos]) {
+      if (seen.has(id)) continue
+      group.remove(rec.root)
+      rec.solid.geometry.dispose()
+      rec.field.geometry.dispose()
+      rec.solidMat.dispose()
+      rec.fieldMat.dispose()
+      this._forceGizmos.delete(id)
+    }
+    this._forceSyncing = false
+    this._syncForceGizmo()
+  }
+
+  /**
    * 设置生长动画状态。
    *
    * 生长不是"几何重算", 而是顶点着色器里的一次插值:
@@ -2181,7 +2488,7 @@ export class TreeScene {
     if (this.leafMesh) box.expandByObject(this.leafMesh)
     if (box.isEmpty()) throw new Error('还没有可用的树')
     const bbox = { min: box.min, max: box.max }
-    const hide = [this.ground, this.grid, this.sky, this.particles, this.fallMesh, this.litterMesh, this.flowerMesh, this.flowerFallMesh, this.flowerLitterMesh, this._impostorGroup,
+    const hide = [this.ground, this.grid, this.forceGroup, this.sky, this.particles, this.fallMesh, this.litterMesh, this.flowerMesh, this.flowerFallMesh, this.flowerLitterMesh, this._impostorGroup,
       ...this._cullChunks.filter((c) => c.kind === 'flower').map((c) => c.mesh)]
     return generateImpostor({
       renderer: this.renderer,
@@ -2659,6 +2966,34 @@ export class TreeScene {
     this._depthMaterials.clear()
     disposeFruitExportMaterial(this._fruitExportMaterial)
     this._fruitExportMaterial = null
+    /* ---- 空间引导力: 变换轴 + 示意图 ---- */
+    if (this._onForcePointerDown && this.renderer) {
+      this.renderer.domElement.removeEventListener('pointerdown', this._onForcePointerDown)
+      this._onForcePointerDown = null
+    }
+    if (this.forceControls) {
+      this.forceControls.detach()
+      if (this.forceControls.dispose) this.forceControls.dispose()
+      this.forceControls = null
+    }
+    if (this.forceHelper) {
+      this.scene.remove(this.forceHelper)
+      this.forceHelper = null
+    }
+    if (this._forceGizmos) {
+      for (const rec of this._forceGizmos.values()) {
+        rec.solid.geometry.dispose()
+        rec.field.geometry.dispose()
+        rec.solidMat.dispose()
+        rec.fieldMat.dispose()
+      }
+      this._forceGizmos.clear()
+    }
+    if (this.forceGroup) {
+      this.forceGroup.children.length = 0
+      this.scene.remove(this.forceGroup)
+      this.forceGroup = null
+    }
     /* ---- 场景背景资源(地面 / 天空 / 星空) ---- */
     this.ground.geometry.dispose()
     this.groundMat.dispose()

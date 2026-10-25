@@ -3,6 +3,7 @@
  * 运行: npm run selftest
  */
 import { buildTree, selectionRanges } from '../src/core/treeBuilder.js'
+import { createForceField, normalizeForces, defaultForceItem } from '../src/core/forceField.js'
 import * as THREE from 'three'
 import { buildBarkSkin } from '../src/core/barkSkin.js'
 import { defaultParams, cloneParams, normalizeParams, ensureFeatureDefaults, MAX_LEVELS, GROUP_KEYS } from '../src/core/params.js'
@@ -2130,6 +2131,101 @@ console.log('\n[36] 子枝半径约束')
   check('子枝半径约束: L1 全部 <= 0.8×父枝', l1 > 0 && worstL1 <= 0.8001, `L1=${l1}, worst=${worstL1.toFixed(4)}`)
   check('子枝半径约束: 逐级收细确实触发', clampStats && clampStats.clamped > 0 && clampStats.maxRatio === 0.8,
     JSON.stringify(clampStats))
+}
+
+/* 37. 空间引导力 (Space Forces) */
+console.log('\n[37] 空间引导力 (Space Forces)')
+{
+  // 旧存档迁移: 没有 forces 键时补齐成 { enabled:false, items:[] }
+  const legacy = normalizeParams({ seed: 7 })
+  check('旧存档自动补齐 forces 结构',
+    legacy.forces && legacy.forces.enabled === false && Array.isArray(legacy.forces.items) && legacy.forces.items.length === 0,
+    JSON.stringify(legacy.forces))
+
+  // 脏数据清洗: 未知类型/形状回退, 负数半径与 NaN 被夹回合法范围
+  const dirty = normalizeForces({
+    enabled: 1,
+    items: [{ type: 'nope', shape: 'nope', x: 'a', y: null, z: undefined, radius: -1, strength: NaN, size: 0 }],
+  })
+  const di = dirty.items[0]
+  check('力场脏数据被清洗 (类型/形状回退, 数值有限)',
+    dirty.enabled === true && di.type === 'attractor' && di.shape === 'sphere' &&
+    Number.isFinite(di.x + di.y + di.z + di.radius + di.strength + di.size + di.sizeY +
+      di.rotX + di.rotY + di.rotZ) &&
+    di.radius >= 0.05 && di.size >= 0.02,
+    JSON.stringify(di))
+
+  const d1 = defaultForceItem('repulsor', 1)
+  check('默认排斥子可创建且结构完整',
+    d1.type === 'repulsor' && d1.shape === 'cube' &&
+    Number.isFinite(d1.x + d1.y + d1.z + d1.radius + d1.strength + d1.falloff + d1.size + d1.sizeY))
+
+  check('关闭 / 空对象 -> 不生成力场 (零开销)',
+    createForceField({ enabled: false, items: [d1] }) === null &&
+    createForceField({ enabled: true, items: [] }) === null)
+
+  /** 模拟 growFrames 的逐段推进: 施加一次力 -> 归一化 -> 前进 step */
+  const march = (field, steps, start, dir0, step) => {
+    const pos = { ...start }
+    const dir = { ...dir0 }
+    for (let i = 0; i < steps; i++) {
+      field.apply(pos, dir, step)
+      const len = Math.hypot(dir.x, dir.y, dir.z)
+      dir.x /= len; dir.y /= len; dir.z /= len
+      pos.x += dir.x * step; pos.y += dir.y * step; pos.z += dir.z * step
+    }
+    return { pos, dir }
+  }
+
+  // 吸引: 向上生长的枝条, 右侧 5m 处有吸引子 -> 应向 +X 弯曲
+  const attract = createForceField({
+    enabled: true,
+    items: [{ ...d1, type: 'attractor', shape: 'sphere', x: 5, y: 0, z: 0, radius: 10, strength: 1, falloff: 1 }],
+  })
+  const ap = march(attract, 20, { x: 0, y: 0, z: 0 }, { x: 0, y: 1, z: 0 }, 0.2).pos
+  check('吸引子让枝条朝它偏转', ap.x > 0.3, `x=${ap.x.toFixed(3)}`)
+
+  // 排斥: +X 方向有立方体障碍 -> 枝条应被推离
+  const repel = createForceField({
+    enabled: true,
+    items: [{ ...d1, type: 'repulsor', shape: 'cube', x: 0.9, y: 0, z: 0, size: 0.5, sizeY: 0.5, radius: 2, strength: 1.5, falloff: 1 }],
+  })
+  const rp = march(repel, 12, { x: 0, y: 0, z: 0 }, { x: 1, y: 0.6, z: 0 }, 0.2).pos
+  const freeRp = march({ apply() {} }, 12, { x: 0, y: 0, z: 0 }, { x: 1, y: 0.6, z: 0 }, 0.2).pos
+  check('排斥子让枝条远离障碍物 (相比无力场明显偏离)', rp.x < freeRp.x * 0.6,
+    `x=${rp.x.toFixed(3)} vs free=${freeRp.x.toFixed(3)}`)
+
+  // 旋转: 同一个立方体转 45° 后, 同一点受到的法线方向必须不同
+  const rotBase = {
+    ...d1, type: 'repulsor', shape: 'cube', x: 0.9, y: 0, z: 0,
+    size: 0.5, sizeY: 0.5, radius: 3, strength: 1.5, falloff: 1,
+  }
+  const fieldA = createForceField({ enabled: true, items: [{ ...rotBase, rotY: 0 }] })
+  const fieldB = createForceField({ enabled: true, items: [{ ...rotBase, rotY: 45 }] })
+  const dirA = { x: 1, y: 0, z: 0 }
+  const dirB = { x: 1, y: 0, z: 0 }
+  fieldA.apply({ x: 0.3, y: 0, z: 0.45 }, dirA, 0.2)
+  fieldB.apply({ x: 0.3, y: 0, z: 0.45 }, dirB, 0.2)
+  const rotDiff = Math.hypot(dirA.x - dirB.x, dirA.y - dirB.y, dirA.z - dirB.z)
+  check('立方体旋转参与排斥计算 (朝向改变 -> 法线改变)', rotDiff > 0.02, `Δ=${rotDiff.toFixed(4)}`)
+
+  // 整树: 同一棵树开启力场后几何必须变化, 且仍逐字节可复现
+  const baseP = composeTree('oak', 'mature', 'summer', 4242)
+  baseP.forces.enabled = false
+  const forcedP = composeTree('oak', 'mature', 'summer', 4242)
+  forcedP.forces = {
+    enabled: true,
+    items: [{ ...d1, type: 'repulsor', shape: 'cube', x: 1.2, y: 2.5, z: 0, size: 0.8, sizeY: 1.2, radius: 3, strength: 1.5, falloff: 1 }],
+  }
+  const h0 = geomHash(buildTree(baseP).barkGeometry)
+  const h1 = geomHash(buildTree(forcedP).barkGeometry)
+  const h2 = geomHash(buildTree(JSON.parse(JSON.stringify(forcedP))).barkGeometry)
+  const rotP = JSON.parse(JSON.stringify(forcedP))
+  rotP.forces.items[0].rotY = 45
+  const h3 = geomHash(buildTree(rotP).barkGeometry)
+  check('力场参与整树生成 (开关前后树皮几何不同)', h0 !== h1)
+  check('立方体旋转参与整树生成', h1 !== h3)
+  check('力场生成可复现 (同参数 -> 同一棵树)', h1 === h2)
 }
 
 /* 汇总 */

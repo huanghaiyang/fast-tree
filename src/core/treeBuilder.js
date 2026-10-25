@@ -25,6 +25,7 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { makeRng } from './rng.js'
+import { createForceField } from './forceField.js'
 import { createBarkSkeleton, addBarkBranch, finalizeBarkSkeleton, enforceChildBranchRadii } from './barkSkeleton.js'
 import { buildBarkSkin } from './barkSkin.js'
 import { buildSpeedtreeBark } from './speedtreeBark.js'
@@ -167,6 +168,9 @@ function frameBasisAt(frames, t) {
 export function buildTree(params, options = {}) {
   const t0 = now()
   const P = params
+  // 空间引导力: 把吸引子/排斥子变成逐段转向器; 未启用或没有对象时为 null。
+  // 只作用于树干与树枝 (树根在地表以下, 不受场景障碍物影响), 见 forceField.js。
+  const forceField = createForceField(P.forces)
   const branchParams = P.branches
   // 一体建模开关: 打开后枝条基部带一点极轻微的领口 (baseFlare), 让分叉看起来更"连续长出来"。
   const onePiece = !!(P.trunk && P.trunk.onePiece)
@@ -749,6 +753,7 @@ export function buildTree(params, options = {}) {
       curveVariance: cfg.curveVariance || 0,
       gravity: (cfg.gravity || 0) * (branchParams.gravityScale || 1) +
         (branchParams.phototropism || 0) + (cfg.upBias || 0),
+      forceField,
       twist: cfg.twist || 0,
       twistProfile: cfg.twistProfile || (P.branches && P.branches.twistProfile),
       gnarl: 0.18,
@@ -928,6 +933,7 @@ export function buildTree(params, options = {}) {
     curve: t.curve,
     curveVariance: t.curveVariance,
     gravity: 0,
+    forceField,
     twist: t.twist,
     twistProfile: t.twistProfile,
     gnarl: t.gnarl,

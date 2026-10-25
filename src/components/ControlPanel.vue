@@ -12,6 +12,7 @@
   <FlowerPanel v-else-if="activeTab === 'flower'" />
   <FruitPanel v-else-if="activeTab === 'fruit'" />
   <WindPanel v-else-if="activeTab === 'wind'" />
+  <ForcesPanel v-else-if="activeTab === 'forces'" />
   <MaterialPanel v-else-if="activeTab === 'material'" />
   <ScenePanel v-else-if="activeTab === 'scene'" />
   <ExportPanel v-else-if="activeTab === 'export'" />
@@ -29,6 +30,7 @@ import LeafPanel from './panels/LeafPanel.vue'
 import FlowerPanel from './panels/FlowerPanel.vue'
 import FruitPanel from './panels/FruitPanel.vue'
 import WindPanel from './panels/WindPanel.vue'
+import ForcesPanel from './panels/ForcesPanel.vue'
 import MaterialPanel from './panels/MaterialPanel.vue'
 import ScenePanel from './panels/ScenePanel.vue'
 import ExportPanel from './panels/ExportPanel.vue'
@@ -41,6 +43,7 @@ const tabs = [
   { id: 'flower', name: '花朵', icon: '🌸' },
     { id: 'fruit', name: '果实', icon: '🌰' },
   { id: 'wind', name: '风/生长', icon: '💨' },
+  { id: 'forces', name: '引导力', icon: '🧲' },
   { id: 'material', name: '材质', icon: '🎨' },
   { id: 'scene', name: '场景', icon: '🌅' },
   { id: 'export', name: '导出', icon: '📦' },

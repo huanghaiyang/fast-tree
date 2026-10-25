@@ -176,6 +176,9 @@ export function sampleFrame(frames, t) {
  * @param {number} [o.curveVariance=0] 每步弯曲的随机方差 (相对 1 的抖动幅度)
  * @param {number} [o.gravity=0] 总俯仰量 (弧度), 正 = 向上、负 = 下垂
  * @param {number} [o.gnarl=0] 不规则生长强度, 每步缓慢旋转弯曲平面
+ * @param {Object} [o.forceField] 空间引导力 (见 core/forceField.js):
+ *        每前进一段前调用 apply(pos, dir, stepLen) 就地叠加方向偏移;
+ *        传 null/省略 = 无力场, 走原来的生长路径。
  * @param {number} [o.twist=0] 基础扭转总量 (弧度), 沿 t 线性累加到 roll
  * @param {Array<number>} [o.twistProfile] 5 点扭曲曲线 (度), 叠加在基础扭转之上
  * @param {number} [o.roll0=0] 起始 roll (弧度), 让同一父枝上的子枝截面错开
@@ -230,6 +233,11 @@ export function growFrames(rng, o) {
     // gnarl 每步把弯曲轴绕当前方向扭一点, 于是整条枝不是平面曲线, 而是缓慢缠绕的空间曲线;
     // 2.2 是经验系数, 换算成"每段最多约 2.2·gnarl/segments 弧度"的手感。
     if (gnarl && rng) bendAxis.applyAxisAngle(dir, (rng.signed() * gnarl * 2.2) / segments)
+    // 3.5) 空间引导力: 吸引子/排斥子在该点产生的转向。
+    // 放在 normalize 之前、位置推进之前 —— 这样本段就按新方向前进,
+    // 曲线是逐段累积出来的, 而不是整枝刚性旋转。forceField 内部按 stepLen 缩放,
+    // 因此改变分段数不会改变大方向, 只会让同一条曲线更平滑。
+    if (o.forceField) o.forceField.apply(pos, dir, stepLen)
     // 4) 扭转由 roll 曲线控制 (上面按 t 直接计算), 这里只更新方向与弯曲轴
     dir.normalize()
     // 保持 bendAxis 垂直于 dir

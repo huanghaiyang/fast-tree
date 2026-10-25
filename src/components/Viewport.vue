@@ -208,6 +208,21 @@ onMounted(() => {
       const key = String(index)
       state.params.branchEdits[key] = { ...(state.params.branchEdits[key] || {}), ...patch }
     },
+    onForceEdit: ({ id, patch }) => {
+      // 视口轴拖动时实时写回力场参数 (拖动期间 previewHold, 树不会重建)
+      const items = state.params.forces && Array.isArray(state.params.forces.items)
+        ? state.params.forces.items : []
+      const it = items.find((x) => x.id === id)
+      if (it) Object.assign(it, patch)
+    },
+    onForceDragChange: (dragging) => {
+      // 拖动/松手配对增减, 松开后 scheduleRebuild 会统一重建一次树
+      state.previewHold = Math.max(0, (state.previewHold || 0) + (dragging ? 1 : -1))
+    },
+    onForceSelect: (id) => {
+      // 视口点选力场 -> 同步面板下拉框与变换轴
+      if (id && state.activeForceId !== id) state.activeForceId = id
+    },
   })
 
   sceneApi.exportGLB = (name) => scene.exportGLB(name)
@@ -221,6 +236,9 @@ onMounted(() => {
   sceneApi.getTwistScreen = (target, level) => (scene ? scene.projectTwistGuide(target, level) : null)
   sceneApi.setControlsEnabled = (v) => { if (scene) scene.controls.enabled = !!v }
   sceneApi.setBranchTransformGizmo = (opts) => { if (scene) scene.setBranchTransformGizmo(opts) }
+  sceneApi.setForceTransformGizmo = (opts) => { if (scene) scene.setForceTransformGizmo(opts) }
+  sceneApi.setForcePicking = (v) => { if (scene) scene.setForcePicking(!!v) }
+  sceneApi.updateForceGizmos = () => { if (scene) scene.updateForceGizmos(state.params.forces) }
 sceneApi.makeImpostor = (opts) => scene.makeImpostor(opts)
 sceneApi.setImpostorModel = (res) => scene.setImpostorPreview(res)
   // 验证/脚本用的同步重建 (应用内重建走 rAF, 后台标签页会被节流)
@@ -322,6 +340,11 @@ function setupWatchers() {
   watch(() => serializeGroup(state.params, 'geometry'), () => {
     if (state.previewHold > 0) { heldGeometry = true; return }
     scheduleRebuild(false)
+  })
+  // 空间引导力: 示意图与变换轴是轻量的, 即使树在 previewHold 期间暂停重建,
+  // 也要立刻跟手更新 (只动 gizmo, 不碰几何管线)。
+  watch(() => serializeGroup(state.params, 'forces'), () => {
+    scene?.updateForceGizmos(state.params.forces)
   })
   // 树皮几何管线虽然在 bark 材质组里, 但切换会改变整张树皮拓扑 -> 必须重建几何
   watch(() => state.params.bark && state.params.bark.pipeline, () => scheduleRebuild(false))

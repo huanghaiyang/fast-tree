@@ -72,6 +72,8 @@ export const state = reactive({
   // 生长动画播放开关 (与 params.growth.enabled 不同: 这个只是"暂停画面")
   playing: true,
   activeTab: 'auto',        // 当前参数标签页 (属性搜索跳转会改它)
+  // 空间引导力: 当前在视口/面板里选中的对象 id ('' = 未选中)
+  activeForceId: '',
   archetype: 'oak',
   autoType: null,      // 强制树种 (null = 随机)
   timeScale: 1,

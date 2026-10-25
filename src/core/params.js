@@ -24,6 +24,8 @@
  *   因此同一份 params + 同一 seed 必然生成同一棵树。
  */
 
+import { normalizeForces } from './forceField.js'
+
 /** 树枝最大层级数 (树干算第 0 层, 所以最多 5 级枝条 = L1..L5)。多处硬编码夹取都用它 */
 export const MAX_LEVELS = 5
 
@@ -403,6 +405,20 @@ export function defaultParams() {
     // { radiusScale, moveX, moveY, moveZ, rotX, rotY, rotZ, twist }
     branchEdits: {},
 
+    /* 空间引导力 (Space Forces / Attractors): 枝条生长时逐段转向。
+     * items[] 每项:
+     *   type   'attractor' 吸引子 (枝条主动靠近) | 'repulsor' 排斥子/障碍物 (枝条绕开)
+     *   shape  'sphere' 球 | 'cube' 立方体 (仅排斥子用形状测距)
+     *   x/y/z  世界坐标中的中心 (米); y=0 是地面
+     *   radius 影响半径 (米, 从实体表面算起)
+     *   strength 力场强度 0..2;  falloff 衰减指数 (越大越"靠近才生效")
+     *   size   实体尺寸 (球半径 / 立方体半宽深);  sizeY 立方体竖向半高
+     * 注意: 改这里会改变骨架 -> 必须归在 geometry 组, 改完重建整棵树。 */
+    forces: {
+      enabled: false,
+      items: [],
+    },
+
     /* 树皮材质: pipeline 决定走哪条几何管线 ——
      *   'speedtree' = 分枝管 + 领口 (默认, 多闭合分量)
      *   'skin'      = 单张连续蒙皮 (boundary = 0 的单连通面)
@@ -761,6 +777,8 @@ export function mergeParams(base, patch) {
 export function normalizeParams(p) {
   const out = mergeParams(defaultParams(), p || {})
   out.seed = Number.isFinite(out.seed) ? out.seed : 1
+  // 空间引导力: 旧存档没有这个键, 统一补齐成 { enabled, items[] } 并清洗脏值。
+  out.forces = normalizeForces(out.forces)
   if (!Array.isArray(out.branches.level)) out.branches.level = []
   while (out.branches.level.length < MAX_LEVELS) out.branches.level.push(defaultLevel(out.branches.level.length))
   out.branches.level = out.branches.level.slice(0, MAX_LEVELS)
@@ -780,7 +798,7 @@ export function normalizeParams(p) {
  * 放错组的代价: 把纯 uniform 参数放进 geometry 会导致拖滑杆时反复重建几何 (卡顿);
  * 反之把几何参数放进 material 则会出现"改了没反应"的 bug。 */
 // 影响几何拓扑/顶点数据的键 (seed 改变会整体换个体, 所以也在几何组)
-const GEOMETRY_KEYS = ['seed', 'auto', 'trunk', 'roots', 'branches', 'leaves', 'flower', 'fruit', 'lod', 'ao', 'branchEdits']
+const GEOMETRY_KEYS = ['seed', 'auto', 'trunk', 'roots', 'branches', 'leaves', 'flower', 'fruit', 'lod', 'ao', 'branchEdits', 'forces']
 // 只影响材质/着色器/合批实例的键 (落叶/粒子等是"另一个几何体", 重建代价低, 归到材质组)
 const MATERIAL_KEYS = ['bark', 'leafMat', 'custom', 'particles', 'fall', 'litter', 'flowerFall', 'flowerLitter']
 // 只进顶点着色器 uniform 的键
