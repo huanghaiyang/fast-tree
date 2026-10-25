@@ -6,8 +6,28 @@
       <button class="btn" :disabled="busy" @click="onPNG">📷 截图 PNG</button>
       <button class="btn" @click="onJSON">💾 保存参数 JSON</button>
       <button class="btn" @click="fileInput?.click()">📂 载入参数 JSON</button>
+      <button class="btn primary" :disabled="ftreeBusy" @click="onExportFtree">📦 导出 .ftree (含贴图)</button>
+      <button class="btn" @click="ftreeInput?.click()">📂 载入 .ftree</button>
     </div>
     <input ref="fileInput" type="file" accept=".json,application/json" hidden @change="onLoadJSON" />
+    <input ref="ftreeInput" type="file" accept=".ftree,application/zip,application/octet-stream" hidden @change="onImportFtree" />
+    <p v-if="ftreeStatus" class="muted" style="margin: 0">{{ ftreeStatus }}</p>
+    <div v-if="ftreeHistory.length" class="ftree-history">
+      <div class="history-head">
+        <label>.ftree 历史记录</label>
+        <button class="btn tiny" @click="clearHistory">清空</button>
+      </div>
+      <ul class="history-list">
+        <li v-for="h in ftreeHistory" :key="h.id" class="history-item">
+          <span class="h-action" :class="h.action">{{ h.action === 'export' ? '⬇ 导出' : '⬆ 导入' }}</span>
+          <span class="h-name" :title="h.name">{{ h.name }}</span>
+          <span class="h-meta">
+            seed {{ h.seed }} · {{ h.textureCount }} 贴图 · {{ formatSize(h.size) }}
+          </span>
+          <span class="h-date">{{ formatDate(h.date) }}</span>
+        </li>
+      </ul>
+    </div>
     <ExportPreviewDialog :open="previewOpen" :title="preview?.title || ''" :filename="preview?.filename || ''"
       :artifacts="preview?.artifacts || []" :nodes="preview?.nodes || []"
       @confirm="confirmExport" @cancel="cancelPreview" />
@@ -92,10 +112,10 @@ import SliderRow from '../ui/SliderRow.vue'
 import SelectRow from '../ui/SelectRow.vue'
 import ToggleRow from '../ui/ToggleRow.vue'
 import ExportPreviewDialog from '../ExportPreviewDialog.vue'
-import { state, sceneApi, totalTriangles, doGenerateImpostor, downloadImpostor, setImpostorPreview } from '../../store/treeStore.js'
+import { state, sceneApi, totalTriangles, doGenerateImpostor, downloadImpostor, setImpostorPreview,
+  importParamsJSON, doExportFtree, doImportFtree, clearFtreeHistory } from '../../store/treeStore.js'
 import { modelVertexCount } from '../../core/modelStats.js'
 import { buildParamsJSON, downloadBlob, downloadText, readTextFile } from '../../core/exporter.js'
-import { importParamsJSON } from '../../store/treeStore.js'
 
 const stats = computed(() => state.stats)
 const renderInfo = computed(() => state.renderInfo)
@@ -128,8 +148,53 @@ function onDownloadImpostor() {
 
 const status = ref('')
 const fileInput = ref(null)
+const ftreeInput = ref(null)
+const ftreeBusy = ref(false)
+const ftreeStatus = ref('')
+const ftreeHistory = computed(() => state.ftreeHistory || [])
 const previewOpen = ref(false)
 const preview = ref(null)
+
+/* ---- .ftree 工程文件 ---- */
+function formatSize(bytes) {
+  if (!bytes) return '0 B'
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / 1024 / 1024).toFixed(2) + ' MB'
+}
+function formatDate(iso) {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return iso
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+function onExportFtree() {
+  try {
+    const { filename, textureCount, size } = doExportFtree()
+    ftreeStatus.value = `已导出 ${filename} (${textureCount} 张贴图, ${formatSize(size)})`
+  } catch (e) {
+    ftreeStatus.value = '导出失败: ' + (e?.message || e)
+  }
+}
+async function onImportFtree(e) {
+  const f = e.target.files && e.target.files[0]
+  if (!f) return
+  ftreeBusy.value = true
+  ftreeStatus.value = '正在解析 ' + f.name + '…'
+  try {
+    const { seed, textureCount } = await doImportFtree(f)
+    state.frameVersion++
+    ftreeStatus.value = `已导入 ${f.name} (seed=${seed}, ${textureCount} 张贴图)`
+  } catch (err) {
+    ftreeStatus.value = '导入失败: ' + (err?.message || err)
+  } finally {
+    ftreeBusy.value = false
+    e.target.value = ''
+  }
+}
+function clearHistory() {
+  if (confirm('确定清空全部 .ftree 历史记录?')) clearFtreeHistory()
+}
 
 function revokePreviewUrls(p) {
   for (const url of (p && p.objectUrls) || []) {
@@ -251,4 +316,20 @@ async function onLoadJSON(e) {
 .kv b { color: var(--accent); font-weight: 600; }
 .kv .k { color: var(--fg-dim); }
 .help-list { margin: 0; padding-left: 16px; color: var(--fg-dim); font-size: 11.5px; line-height: 1.8; }
+.ftree-history { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+.history-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.history-head label { font-size: 12px; font-weight: 600; }
+.history-list { list-style: none; margin: 0; padding: 0; max-height: 180px; overflow-y: auto; }
+.history-item {
+  display: grid; grid-template-columns: auto 1fr auto auto; gap: 6px; align-items: center;
+  padding: 5px 6px; border-radius: 4px; font-size: 11px;
+}
+.history-item:hover { background: rgba(255,255,255,0.04); }
+.h-action { font-weight: 600; }
+.h-action.export { color: #6ec6ff; }
+.h-action.import { color: #b5e6a0; }
+.h-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+.h-meta { color: var(--fg-dim); }
+.h-date { color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.btn.tiny { padding: 2px 8px; font-size: 11px; }
 </style>

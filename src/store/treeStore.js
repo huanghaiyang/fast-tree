@@ -40,6 +40,8 @@ import { LEAF_CARDS, LEAF_CARD_BY_ID, leafCardsFor, leafCardRows, LEAF_CARD_BATC
 import { selectionRanges } from '../core/treeBuilder.js'
 import { makeRng } from '../core/rng.js'
 import { modelTriangleCount } from '../core/modelStats.js'
+// .ftree 工程文件: 压缩参数 + 外部贴图
+import { loadFtreeFile, exportFtree } from '../core/ftree.js'
 
 export const state = reactive({
   // 初始参数 = 默认树种 (oak) 的成熟/夏季预设 -> 一进页面就是带果实的橡树
@@ -95,6 +97,8 @@ export const state = reactive({
     dim: 0.35,         // dim 模式下非选中部分的压暗比例 0..1
     label: '',         // 选中摘要文本 (如 "树枝 L1 · 12 个节点"), 由 describeSelection 生成
   },
+  // .ftree 工程文件导出/导入历史 (localStorage 持久化, 最多保留 20 条)
+  ftreeHistory: [],
 })
 
 /* ------------------------------------------------------------------ */
@@ -978,6 +982,85 @@ export function importParamsJSON(text) {
   return state.params
 }
 
+/* ------------------------------------------------------------------ */
+/* .ftree 工程文件: 导出 / 导入 / 历史记录                              */
+/* ------------------------------------------------------------------ */
+
+const FTREE_HISTORY_KEY = 'fasttree-ftree-history'
+const FTREE_HISTORY_MAX = 20
+
+/** 从 localStorage 读取历史记录到 state (应用启动时调用) */
+export function loadFtreeHistory() {
+  try {
+    const raw = localStorage.getItem(FTREE_HISTORY_KEY)
+    if (!raw) return
+    const list = JSON.parse(raw)
+    if (Array.isArray(list)) state.ftreeHistory = list
+  } catch { /* ignore */ }
+}
+
+/** 把历史记录写回 localStorage (增删后调用) */
+function persistFtreeHistory() {
+  try {
+    localStorage.setItem(FTREE_HISTORY_KEY, JSON.stringify(state.ftreeHistory.slice(0, FTREE_HISTORY_MAX)))
+  } catch { /* ignore (隐私模式下 localStorage 可能抛错) */ }
+}
+
+/** 追加一条历史记录 (最新的在前), 超过上限丢弃最旧的 */
+function pushFtreeHistory(record) {
+  state.ftreeHistory.unshift(record)
+  if (state.ftreeHistory.length > FTREE_HISTORY_MAX) {
+    state.ftreeHistory.length = FTREE_HISTORY_MAX
+  }
+  persistFtreeHistory()
+}
+
+/** 清空全部历史记录 */
+export function clearFtreeHistory() {
+  state.ftreeHistory = []
+  persistFtreeHistory()
+}
+
+/**
+ * 导出当前参数为 .ftree 并下载, 同时记一条历史。
+ * @param {string} [filename] 自定义文件名
+ * @returns {{filename: string, textureCount: number, size: number}}
+ */
+export function doExportFtree(filename) {
+  const { textureCount, filename: name, bytes } = exportFtree(state.params, filename)
+  pushFtreeHistory({
+    id: `exp-${Date.now()}`,
+    action: 'export',
+    name: name,
+    seed: state.params.seed,
+    textureCount,
+    size: bytes.length,
+    date: new Date().toISOString(),
+  })
+  return { filename: name, textureCount, size: bytes.length }
+}
+
+/**
+ * 从文件导入 .ftree, 还原参数 + 贴图, 记一条历史。
+ * @param {File} file
+ * @returns {Promise<{seed: number, textureCount: number}>}
+ */
+export async function doImportFtree(file) {
+  const { params, seed, textureCount } = await loadFtreeFile(file)
+  pushUndo()
+  state.params = params
+  pushFtreeHistory({
+    id: `imp-${Date.now()}`,
+    action: 'import',
+    name: file.name,
+    seed,
+    textureCount,
+    size: file.size,
+    date: new Date().toISOString(),
+  })
+  return { seed, textureCount }
+}
+
 /**
  * 按当前种子重新推导一整套自动风参数 (不改变 intensity)。
  * 用于"种子换了但风没跟着变"的场景 (例如外部脚本直接改了 seed)。
@@ -1014,6 +1097,7 @@ if (typeof window !== 'undefined' && import.meta.env && import.meta.env.DEV) {
     applyFlowerCard, randomFlowerCard, randomizeFoliageAssets,
     fitLeafCardToTexture, fitFlowerCardToTexture,
     applyClassification, randomClassification, applyLeafCard, randomLeafCard,
+    doExportFtree, doImportFtree, clearFtreeHistory,
   }
 }
 
