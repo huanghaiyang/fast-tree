@@ -58,6 +58,15 @@ function lathe(profile, radial, uScale = 1) {
 export const FRUIT_TYPES = ['acorn', 'berry', 'cone', 'nut']
 
 /**
+ * 模板缓存: 键 = (type, radial, color, capColor)。
+ *
+ * 整树重建时这些参数通常没变, 但 buildFruitTemplate 每次都要 lathe + 法线重算
+ * (实测约占单次重建 5%), 缓存后重建直接复用。返回值被 pushFruitInstance **只读**使用,
+ * 调用方不要原地修改模板数组。上限 8 条: 调色/换类型时旧模板自动淘汰。
+ */
+const templateCache = new Map()
+
+/**
  * 单位果实模板: 总高 1 (沿 +Y), 中心在原点附近
  *
  * 组装顺序: 坚果主体 (旋转体) -> 可选壳斗帽 -> 可选果柄 -> 合并成单一索引缓冲。
@@ -76,8 +85,13 @@ export const FRUIT_TYPES = ['acorn', 'berry', 'cone', 'nut']
 export function buildFruitTemplate(o = {}) {
   const type = FRUIT_TYPES.includes(o.type) ? o.type : 'acorn'
   const radial = Math.max(5, Math.round(o.radial || 10))
-  const nutColor = new THREE.Color(o.color || '#c8a86a')
-  const capColor = new THREE.Color(o.capColor || '#8a6f45')
+  const colorHex = o.color || '#c8a86a'
+  const capHex = o.capColor || '#8a6f45'
+  const key = `${type}|${radial}|${colorHex}|${capHex}`
+  const cached = templateCache.get(key)
+  if (cached) return cached
+  const nutColor = new THREE.Color(colorHex)
+  const capColor = new THREE.Color(capHex)
 
   // 每种果实的母线 (r, y): 高度约 0..1, 果柄可忽略
   // 坚果: 底部圆钝(带小尖), 上部收窄插进壳斗帽; 顶部 y=+0.15 被帽子盖住
@@ -185,7 +199,7 @@ export function buildFruitTemplate(o = {}) {
     }
     vOffset += count
   }
-  return {
+  const tpl = {
     positions,
     normals: Array.from(n),
     uvs,
@@ -197,6 +211,10 @@ export function buildFruitTemplate(o = {}) {
     bottom: partBottom,
     centerY: 0,
   }
+  // 缓存命中率通常接近 100%; 上限 8 条防止反复调色时无限增长
+  if (templateCache.size >= 8) templateCache.clear()
+  templateCache.set(key, tpl)
+  return tpl
 }
 
 /**

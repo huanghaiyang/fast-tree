@@ -141,10 +141,14 @@ export function analyzeTopology(geometry, opts = {}) {
     const c = resolve(idx[t * 3 + 2])
     // 焊接后出现重复顶点的面 = 退化面 (零面积), 它不贡献几何但会污染边计数, 单独计数。
     if (a === b || b === c || c === a) degenerate++
-    for (const [u, v] of [[a, b], [b, c], [c, a]]) {
-      const k = edgeKey(u, v, vertexCount)
-      counts.set(k, (counts.get(k) || 0) + 1)
-    }
+    // 三次显式累加而不是 `for (const [u,v] of [[a,b],...])`:
+    // 后者每个三角面都会新建 3 个小数组 (14 万面 = 42 万个临时数组), GC 压力很大。
+    let k = edgeKey(a, b, vertexCount)
+    counts.set(k, (counts.get(k) || 0) + 1)
+    k = edgeKey(b, c, vertexCount)
+    counts.set(k, (counts.get(k) || 0) + 1)
+    k = edgeKey(c, a, vertexCount)
+    counts.set(k, (counts.get(k) || 0) + 1)
   }
   let boundary = 0
   let nonManifold = 0
@@ -223,6 +227,10 @@ export function analyzeTopology(geometry, opts = {}) {
       addLink(c, a, b)
     }
     const outMap = new Map()
+    // head 唯一性检查原本每顶点 new 一个 Set (9 万顶点 = 9 万个临时 Set)。
+    // 改成"时间戳数组": seenHead[顶点] === stamp 即表示本轮已出现, 全部分配一次。
+    const seenHead = new Int32Array(vertexCount)
+    let stamp = 0
     for (let v = 0; v < vertexCount; v++) {
       let cur = first[v]
       if (cur < 0) continue
@@ -241,10 +249,10 @@ export function analyzeTopology(geometry, opts = {}) {
       // link 边数必须与顶点度数一致 (每个入边恰好出现一次由 Map 的 key 唯一保证,
       // 这里再检查 head 唯一 => 每个 link 顶点出度=入度=1)
       if (outMap.size !== links) { nonManifoldVertices++; continue }
-      const headSeen = new Set()
+      stamp++
       for (const h of outMap.values()) {
-        if (headSeen.has(h)) { ok = false; break }
-        headSeen.add(h)
+        if (seenHead[h] === stamp) { ok = false; break }
+        seenHead[h] = stamp
       }
       if (!ok) { nonManifoldVertices++; continue }
       // link 必须连成 1 个环 (多个环 = 多个扇形在一点相接)。

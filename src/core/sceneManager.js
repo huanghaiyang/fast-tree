@@ -97,6 +97,39 @@ void main() {
 }`
 
 /**
+ * 给 TransformControls 绑定"开始拖动 / 结束拖动"。
+ *
+ * three 0.186 已经移除了 `dragging-changed` 事件, 改成只在真正按住轴柄时派发的
+ * `mouseDown` / `mouseUp`。旧代码只监听 `dragging-changed`, 在新版本里**永远不会触发**,
+ * 后果是: 拖动期间相机不锁 (同一个拖动既转相机又拖轴)、`previewHold` 不生效 (每次
+ * objectChange 都触发整树重建, 拖动极卡)、以及力场轴的 `_forceDragging` 恒为 false,
+ * 于是 `updateForceGizmos` 把 root.scale 重置成 1 —— 表现就是"拖动缩放轴调半径时来回回弹"。
+ *
+ * 两个事件名都挂上 (旧版本只有 `dragging-changed`, 新版本只有 `mouseDown/mouseUp`),
+ * 并用闭包标志去重, 保证两种版本都只回调一次。
+ *
+ * @param {TransformControls} controls 变换轴控制器
+ * @param {() => void} onStart 开始拖动
+ * @param {() => void} onEnd 结束拖动
+ */
+function bindTransformDrag(controls, onStart, onEnd) {
+  let dragging = false
+  const start = () => {
+    if (dragging) return
+    dragging = true
+    onStart()
+  }
+  const end = () => {
+    if (!dragging) return
+    dragging = false
+    onEnd()
+  }
+  controls.addEventListener('mouseDown', start)
+  controls.addEventListener('mouseUp', end)
+  controls.addEventListener('dragging-changed', (e) => (e.value ? start() : end()))
+}
+
+/**
  * Three.js 场景总控。一个页面通常只有一个实例(Viewport.vue 创建并挂到
  * window.__fastTreeScene 供 MCP 桥与调试使用)。
  *
@@ -226,12 +259,18 @@ export class TreeScene {
     // 减去基准才是用户施加的增量。
     this._gizmoBaseQuat = new THREE.Quaternion()
     // 拖动期间禁用轨道控制, 否则同一个鼠标拖动会同时转相机和拖轴。
-    this.transformControls.addEventListener('dragging-changed', (e) => {
-      this.controls.enabled = !e.value
-      this._gizmoDragging = !!e.value
-      // 松手时补一次"最终提交", 保证最后一帧的位移不丢。
-      if (!e.value) this._commitBranchGizmo()
-    })
+    // (用 bindTransformDrag 而不是直接监听 dragging-changed: 详见该函数注释)
+    bindTransformDrag(this.transformControls,
+      () => {
+        this.controls.enabled = false
+        this._gizmoDragging = true
+      },
+      () => {
+        this.controls.enabled = true
+        this._gizmoDragging = false
+        // 松手时补一次"最终提交", 保证最后一帧的位移不丢。
+        this._commitBranchGizmo()
+      })
     this.transformControls.addEventListener('objectChange', () => {
       if (this._gizmoSyncing) return
       this._gizmoDirty = true
@@ -267,10 +306,10 @@ export class TreeScene {
       : this.forceControls
     this.forceHelper.visible = false
     this.scene.add(this.forceHelper)
-    this.forceControls.addEventListener('dragging-changed', (e) => {
-      this.controls.enabled = !e.value
-      this._forceDragging = !!e.value
-      if (e.value) {
+    bindTransformDrag(this.forceControls,
+      () => {
+        this.controls.enabled = false
+        this._forceDragging = true
         const it = this._findForceItem()
         // 必须存**快照**而不是参数对象引用: 拖动过程中 _commitForceGizmo 会不停
         // 改写 it.size/sizeY/sizeZ, 若持有引用, 每帧就等于"用上一次的结果再乘一次",
@@ -280,17 +319,21 @@ export class TreeScene {
           : null
         this.transformHelper.visible = false
         if (this.callbacks.onForceDragChange) this.callbacks.onForceDragChange(true)
-      } else {
+      },
+      () => {
+        this.controls.enabled = true
+        this._forceDragging = false
         // 松手: 先提交最后一帧, 再让上层恢复重建 (previewHold 归零会触发一次构建)。
         this._commitForceGizmo()
         if (this.callbacks.onForceDragChange) this.callbacks.onForceDragChange(false)
         this.updateForceGizmos(this.forceParams)
         this._syncForceGizmo()
-      }
-    })
+      })
     this.forceControls.addEventListener('objectChange', () => {
       if (this._forceSyncing) return
       this._commitForceGizmo()
+      // 缩放轴拖动时补偿影响范围外圈, 避免松手瞬间半径"回弹" (见函数注释)。
+      this._compensateForceFieldDuringDrag()
     })
     // 视口点选力场对象: 只在引导力面板打开时启用, 不干扰其他交互。
     this._onForcePointerDown = (e) => {
@@ -1072,6 +1115,31 @@ export class TreeScene {
     if (Object.keys(patch).length && this.callbacks.onForceEdit) {
       this.callbacks.onForceEdit({ id: it.id, patch })
     }
+  }
+
+  /**
+   * 拖动缩放轴期间, 让"影响范围"外圈跟着实体放大, 但**半径增量保持不变**。
+   *
+   * TransformControls 缩放的是 root, 两个子网格 (solid / field) 会被整体放大 k 倍,
+   * 于是外圈的世界尺寸变成 (size + radius) * k; 而松手后 updateForceGizmos 会把它
+   * 重算成 size*k + radius —— 半径 > 0 时外圈会突然缩回, 看起来就是"影响范围回弹"。
+   * 拖动期间 updateForceGizmos 是早退的, 所以在这里把 field 的子缩放反向补 1/k:
+   * 世界尺寸 = size*k + radius, 与松手后的结果完全一致, 半径全程不变。
+   */
+  _compensateForceFieldDuringDrag() {
+    if (!this.forceControls || this.forceControls.getMode() !== 'scale') return
+    const rec = this._forceGizmos.get(this.forceGizmoState.id)
+    const it = this._findForceItem()
+    if (!rec || !it) return
+    const radius = Math.max(0.05, Number(it.radius) || 3)
+    const s = rec.root.scale
+    // |k| 可能是 0 (拖过原点) 或负数 (镜像); 用绝对值防止除零/符号翻转。
+    const extra = (v) => radius / Math.max(0.01, Math.abs(v))
+    rec.field.scale.set(
+      rec.solid.scale.x + extra(s.x),
+      rec.solid.scale.y + extra(s.y),
+      rec.solid.scale.z + extra(s.z),
+    )
   }
 
   /**

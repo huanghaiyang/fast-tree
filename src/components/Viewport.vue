@@ -197,7 +197,12 @@ onMounted(() => {
     onStats: (s) => { state.stats = s; state.ready = true },
     onShaderError: (msg) => { state.shaderError = msg },
     onFrame: (info) => {
-      state.renderInfo = { calls: info.calls, triangles: info.triangles }
+      // 这个回调每帧都来一次; 直接赋值会让 Vue 每秒调度 60 次响应式更新, 而数值
+      // 只在 LOD 切换 / 线框开关 / 参数重建时才变。做变化检测后几乎不再触发重渲染。
+      const prev = state.renderInfo
+      if (prev.calls !== info.calls || prev.triangles !== info.triangles) {
+        state.renderInfo = { calls: info.calls, triangles: info.triangles }
+      }
     },
     onGrowth: (v) => { state.params.growth.value = v },
     onModel: (m) => setNodeModel(m),
@@ -302,7 +307,10 @@ function scheduleRebuild(frame) {
 function rebuild(frame) {
   if (!scene) return
   state.busy = true
-  requestAnimationFrame(() => {
+  // 整树重建是同步的几百毫秒, 直接把 build 放进 rAF 回调会把这一帧占满, 浏览器来不及
+  // 绘制 "重建几何中…" 提示, 用户只看到画面冻结。rAF 之后再挂一个 0ms 定时器:
+  // 帧回调返回 -> 浏览器完成绘制 (提示上屏) -> 才进同步重建。
+  requestAnimationFrame(() => setTimeout(() => {
     if (!scene) return
     try {
       scene.build(state.params, { frameCamera: !!frame })
@@ -315,7 +323,7 @@ function rebuild(frame) {
     } finally {
       state.busy = false
     }
-  })
+  }, 0))
 }
 
 function customSignature() {
