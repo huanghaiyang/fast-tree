@@ -22,7 +22,7 @@ const FORCE_GAIN = 1.4
 /** 单步最大转角 (弧度): 0.5 ≈ 29°, 防止强场让枝条一步掉头 */
 const MAX_TURN = 0.5
 const TYPES = ['attractor', 'repulsor']
-const SHAPES = ['sphere', 'cube']
+const SHAPES = ['sphere', 'ellipsoid', 'cube']
 
 /**
  * 把一个力场对象的字段夹到合法范围。
@@ -54,6 +54,7 @@ export function defaultForceItem(type = 'attractor', index = 0) {
     falloff: 1,
     size: type === 'repulsor' ? 0.8 : 0.6,
     sizeY: type === 'repulsor' ? 1.6 : 0.6,
+    sizeZ: type === 'repulsor' ? 0.8 : 0.6,
     rotX: 0,
     rotY: 0,
     rotZ: 0,
@@ -73,6 +74,10 @@ export function normalizeForceItem(raw, index = 0) {
   const type = TYPES.includes(o.type) ? o.type : 'attractor'
   const shape = SHAPES.includes(o.shape) ? o.shape : 'sphere'
   const size = clamp(num(o.size, 0.6), 0.02, 50)
+  // 球体只认一个半径: 三个半轴强制相等, 避免旧存档里残留的 sizeY 让它变成"看不见的椭圆"。
+  const uniform = shape === 'sphere'
+  const sizeY = uniform ? size : clamp(num(o.sizeY, size), 0.02, 50)
+  const sizeZ = uniform ? size : clamp(num(o.sizeZ, size), 0.02, 50)
   return {
     id: typeof o.id === 'string' && o.id ? o.id : `force-${index + 1}`,
     type,
@@ -84,8 +89,9 @@ export function normalizeForceItem(raw, index = 0) {
     strength: clamp(num(o.strength, 0.6), 0, 2),
     falloff: clamp(num(o.falloff, 1), 0.2, 4),
     size,
-    sizeY: clamp(num(o.sizeY, size), 0.02, 50),
-    // 旋转 (角度): 只对立方体障碍的 SDF 有意义, 球体/吸引子旋转不改变力场。
+    sizeY,
+    sizeZ,
+    // 旋转 (角度): 椭球/立方体的 SDF 与法线会用到, 球体忽略。
     rotX: clamp(num(o.rotX, 0), -180, 180),
     rotY: clamp(num(o.rotY, 0), -180, 180),
     rotZ: clamp(num(o.rotZ, 0), -180, 180),
@@ -93,16 +99,18 @@ export function normalizeForceItem(raw, index = 0) {
 }
 
 /**
- * 清洗整个 forces 分组: 保证 { enabled, items[] } 结构完整。
+ * 清洗整个 forces 分组: 保证 { enabled, showHelpers, items[] } 结构完整。
  * items 上限 32 个 —— 再多会明显拖慢每次 growFrames 的逐段遍历, 也没有使用价值。
  * @param {Object} raw params.forces (可能缺失/残缺)
- * @returns {{enabled: boolean, items: Array<Object>}} 新对象
+ * @returns {{enabled: boolean, showHelpers: boolean, items: Array<Object>}} 新对象
  */
 export function normalizeForces(raw) {
   const o = raw && typeof raw === 'object' ? raw : {}
   const list = Array.isArray(o.items) ? o.items : []
   return {
     enabled: !!o.enabled,
+    // 视口示意图总开关: 默认显示, 只有显式 false 才隐藏 (旧存档按显示处理)。
+    showHelpers: o.showHelpers !== false,
     items: list.filter((it) => it && typeof it === 'object').slice(0, 32).map(normalizeForceItem),
   }
 }
@@ -130,65 +138,99 @@ function rotationMatrix(rx, ry, rz) {
 }
 
 /**
- * 立方体的有符号距离 + 外法线 (支持绕 X/Y/Z 旋转)。
- * 先在物体局部坐标里做轴对齐盒 SDF, 再把法线转回世界坐标。
- * d > 0 = 在盒子外 (到表面的距离); d < 0 = 在盒子内 (到最近面的负距离)。
- * 法线始终指向"从实体指向外部"的方向, 排斥力沿它推。
+ * 力场实体的有符号距离 + 外法线 (支持球 / 椭球 / 立方体, 并支持绕 X/Y/Z 旋转)。
+ *
+ * 统一约定:
+ *   d > 0 = 在实体外 (到表面的近似距离); d < 0 = 在实体内 (到最近表面的负距离);
+ *   法线 (nx,ny,nz) 始终指向"从实体朝外"的方向。
+ * 实现: 先把世界点用旋转矩阵的转置转到实体局部坐标, 在局部做 SDF, 再把法线转回世界。
+ * 椭球用归一化半径 k = |(x/a, y/b, z/c)| 近似, 距离取 (k-1)×最小半轴 —— 对细长椭球
+ * 略偏保守, 但分支绕行的手感稳定, 且不引入迭代求解。
+ *
  * @param {{x:number,y:number,z:number}} pos 当前点
- * @param {Object} it 力场对象 (含 x/y/z/size/sizeY, 以及预计算的 rot 矩阵)
+ * @param {Object} it 力场对象 (含 x/y/z/size/sizeY/sizeZ, 以及预计算的 rot 矩阵)
  * @returns {{d:number, nx:number, ny:number, nz:number}} 距离与世界空间法线
  */
-function cubeField(pos, it) {
-  const hx = it.size
-  const hy = it.sizeY
-  const hz = it.size
+function shapeField(pos, it) {
   const dx = pos.x - it.x
   const dy = pos.y - it.y
   const dz = pos.z - it.z
   const m = it.rot
   // 世界 -> 局部: 用旋转矩阵的转置。
-  const lx = m[0] * dx + m[3] * dy + m[6] * dz
-  const ly = m[1] * dx + m[4] * dy + m[7] * dz
-  const lz = m[2] * dx + m[5] * dy + m[8] * dz
-  const qx = Math.abs(lx) - hx
-  const qy = Math.abs(ly) - hy
-  const qz = Math.abs(lz) - hz
-  const ox = Math.max(qx, 0)
-  const oy = Math.max(qy, 0)
-  const oz = Math.max(qz, 0)
-  const outside = Math.sqrt(ox * ox + oy * oy + oz * oz)
-  let d
-  let nlx = 0
-  let nly = 0
-  let nlz = 0
-  if (outside > 1e-9) {
-    d = outside
-    nlx = (lx < 0 ? -ox : ox) / outside
-    nly = (ly < 0 ? -oy : oy) / outside
-    nlz = (lz < 0 ? -oz : oz) / outside
-  } else {
-    // 在盒子内部: 取穿透最浅的那个面作为出口方向。
-    const px = hx - Math.abs(lx)
-    const py = hy - Math.abs(ly)
-    const pz = hz - Math.abs(lz)
-    if (px <= py && px <= pz) {
-      d = -px
-      nlx = lx < 0 ? -1 : 1
-    } else if (py <= pz) {
-      d = -py
-      nly = ly < 0 ? -1 : 1
+  const lx = m ? m[0] * dx + m[3] * dy + m[6] * dz : dx
+  const ly = m ? m[1] * dx + m[4] * dy + m[7] * dz : dy
+  const lz = m ? m[2] * dx + m[5] * dy + m[8] * dz : dz
+  const toWorld = (nx, ny, nz) => (m
+    ? {
+        nx: m[0] * nx + m[1] * ny + m[2] * nz,
+        ny: m[3] * nx + m[4] * ny + m[5] * nz,
+        nz: m[6] * nx + m[7] * ny + m[8] * nz,
+      }
+    : { nx, ny, nz })
+
+  if (it.shape === 'cube') {
+    const hx = it.size
+    const hy = it.sizeY
+    const hz = it.sizeZ
+    const qx = Math.abs(lx) - hx
+    const qy = Math.abs(ly) - hy
+    const qz = Math.abs(lz) - hz
+    const ox = Math.max(qx, 0)
+    const oy = Math.max(qy, 0)
+    const oz = Math.max(qz, 0)
+    const outside = Math.sqrt(ox * ox + oy * oy + oz * oz)
+    let d
+    let nlx = 0
+    let nly = 1
+    let nlz = 0
+    if (outside > 1e-9) {
+      d = outside
+      nlx = (lx < 0 ? -ox : ox) / outside
+      nly = (ly < 0 ? -oy : oy) / outside
+      nlz = (lz < 0 ? -oz : oz) / outside
     } else {
-      d = -pz
-      nlz = lz < 0 ? -1 : 1
+      // 在盒子内部: 取穿透最浅的那个面作为出口方向。
+      const px = hx - Math.abs(lx)
+      const py = hy - Math.abs(ly)
+      const pz = hz - Math.abs(lz)
+      if (px <= py && px <= pz) {
+        d = -px
+        nlx = lx < 0 ? -1 : 1
+      } else if (py <= pz) {
+        d = -py
+        nly = ly < 0 ? -1 : 1
+      } else {
+        d = -pz
+        nlz = lz < 0 ? -1 : 1
+      }
     }
+    const n = toWorld(nlx, nly, nlz)
+    return { d, nx: n.nx, ny: n.ny, nz: n.nz }
   }
-  // 局部法线 -> 世界法线。
-  return {
-    d,
-    nx: m[0] * nlx + m[1] * nly + m[2] * nlz,
-    ny: m[3] * nlx + m[4] * nly + m[5] * nlz,
-    nz: m[6] * nlx + m[7] * nly + m[8] * nlz,
+
+  // 球 / 椭球 (球是 a=b=c 的退化椭球)
+  const ax = Math.max(1e-4, it.size)
+  const ay = Math.max(1e-4, it.sizeY)
+  const az = Math.max(1e-4, it.sizeZ)
+  const ux = lx / ax
+  const uy = ly / ay
+  const uz = lz / az
+  const k = Math.sqrt(ux * ux + uy * uy + uz * uz)
+  const minA = Math.min(ax, ay, az)
+  if (k < 1e-9) {
+    // 正好在中心: 任取 +Y, 距离按最小半轴算"内部"。
+    const n = toWorld(0, 1, 0)
+    return { d: -minA, nx: n.nx, ny: n.ny, nz: n.nz }
   }
+  let nlx = lx / (ax * ax)
+  let nly = ly / (ay * ay)
+  let nlz = lz / (az * az)
+  const nl = Math.sqrt(nlx * nlx + nly * nly + nlz * nlz) || 1
+  nlx /= nl
+  nly /= nl
+  nlz /= nl
+  const n = toWorld(nlx, nly, nlz)
+  return { d: (k - 1) * minA, nx: n.nx, ny: n.ny, nz: n.nz }
 }
 
 /**
@@ -196,7 +238,7 @@ function cubeField(pos, it) {
  * 返回 null 表示当前没有可用力场 (未启用 / 没有对象), 调用方可以跳过整段热路径。
  *
  * apply(pos, dir, stepLen) 会就地修改单位方向 dir:
- *   - 先累加所有力场对象在该点产生的方向偏移 (attractor 指向中心, repulsor 沿法线向外);
+ *   - 吸引子沿"指向实体中心"的方向拉, 排斥子沿实体外法线推 (两者都以实体表面测距);
  *   - 再用 MAX_TURN 限制单步转角;
  *   - 最后由 growFrames 统一 normalize。
  *
@@ -206,13 +248,13 @@ function cubeField(pos, it) {
 export function createForceField(forces) {
   const f = normalizeForces(forces)
   if (!f.enabled || !f.items.length) return null
-  // 预计算立方体障碍的旋转矩阵 (每段生长都会用到, 不能反复算 sin/cos)。
+  // 预计算椭球/立方体的旋转矩阵 (每段生长都会用到, 不能反复算 sin/cos)。
   const D2R = Math.PI / 180
   const items = f.items.map((it) => ({
     ...it,
-    rot: it.type === 'repulsor' && it.shape === 'cube'
-      ? rotationMatrix(it.rotX * D2R, it.rotY * D2R, it.rotZ * D2R)
-      : null,
+    rot: it.shape === 'sphere'
+      ? null
+      : rotationMatrix(it.rotX * D2R, it.rotY * D2R, it.rotZ * D2R),
   }))
 
   const apply = (pos, dir, stepLen) => {
@@ -221,53 +263,26 @@ export function createForceField(forces) {
     let ay = 0
     let az = 0
     for (const it of items) {
+      // 实体表面距离 + 外法线: 吸引子和排斥子共用同一套几何, 只是转向相反。
+      const s = shapeField(pos, it)
+      if (s.d >= it.radius) continue
+      // 影响半径从实体表面算起; 已在实体内部时额外加强逃逸/汇聚力度。
+      let w = 1 - Math.max(0, s.d) / it.radius
+      const minA = Math.min(it.size, it.sizeY, it.sizeZ)
+      if (s.d < 0) w = 1 + Math.min(2, -s.d / Math.max(0.05, minA)) * 0.8
+      w = Math.pow(w, it.falloff) * it.strength
+      if (w <= 0) continue
+      const g = w * stepLen * FORCE_GAIN
       if (it.type === 'attractor') {
-        // 吸引: 只受"影响半径"限制, 方向指向中心, 距离越近权重越大。
-        const dx = it.x - pos.x
-        const dy = it.y - pos.y
-        const dz = it.z - pos.z
-        const d = Math.sqrt(dx * dx + dy * dy + dz * dz)
-        if (d < 1e-6 || d > it.radius) continue
-        const w = Math.pow(1 - d / it.radius, it.falloff) * it.strength
-        if (w <= 0) continue
-        const g = (w * stepLen * FORCE_GAIN) / d
-        ax += dx * g
-        ay += dy * g
-        az += dz * g
+        // 向内: 外法线取反, 指向实体中心一侧。
+        ax -= s.nx * g
+        ay -= s.ny * g
+        az -= s.nz * g
       } else {
-        // 排斥: 使用"实体表面"而不是中心来测距 —— 球是到球面, 立方体是到盒面,
-        // 因此改实体尺寸 (size / sizeY) 会真的改变枝条绕行的通道宽度。
-        let d
-        let nx
-        let ny
-        let nz
-        if (it.shape === 'cube') {
-          const c = cubeField(pos, it)
-          d = c.d
-          nx = c.nx
-          ny = c.ny
-          nz = c.nz
-        } else {
-          const dx = pos.x - it.x
-          const dy = pos.y - it.y
-          const dz = pos.z - it.z
-          const dc = Math.sqrt(dx * dx + dy * dy + dz * dz)
-          if (dc < 1e-6) continue
-          d = dc - it.size
-          nx = dx / dc
-          ny = dy / dc
-          nz = dz / dc
-        }
-        // 影响半径从实体表面算起; 已在实体内部时额外加强逃逸力度。
-        if (d >= it.radius) continue
-        let w = 1 - Math.max(0, d) / it.radius
-        if (d < 0) w = 1 + Math.min(2, -d / Math.max(0.05, it.size)) * 0.8
-        w = Math.pow(w, it.falloff) * it.strength
-        if (w <= 0) continue
-        const g = w * stepLen * FORCE_GAIN
-        ax -= nx * g
-        ay -= ny * g
-        az -= nz * g
+        // 向外: 沿外法线把枝条推离障碍物 (之前方向写反了, 会把枝条吸进实体)。
+        ax += s.nx * g
+        ay += s.ny * g
+        az += s.nz * g
       }
     }
     const len = Math.sqrt(ax * ax + ay * ay + az * az)

@@ -3,7 +3,7 @@
  * 运行: npm run selftest
  */
 import { buildTree, selectionRanges } from '../src/core/treeBuilder.js'
-import { createForceField, normalizeForces, defaultForceItem } from '../src/core/forceField.js'
+import { createForceField, normalizeForces, normalizeForceItem, defaultForceItem } from '../src/core/forceField.js'
 import * as THREE from 'three'
 import { buildBarkSkin } from '../src/core/barkSkin.js'
 import { defaultParams, cloneParams, normalizeParams, ensureFeatureDefaults, MAX_LEVELS, GROUP_KEYS } from '../src/core/params.js'
@@ -2136,11 +2136,13 @@ console.log('\n[36] 子枝半径约束')
 /* 37. 空间引导力 (Space Forces) */
 console.log('\n[37] 空间引导力 (Space Forces)')
 {
-  // 旧存档迁移: 没有 forces 键时补齐成 { enabled:false, items:[] }
+  // 旧存档迁移: 没有 forces 键时补齐成 { enabled:false, showHelpers:true, items:[] }
   const legacy = normalizeParams({ seed: 7 })
   check('旧存档自动补齐 forces 结构',
-    legacy.forces && legacy.forces.enabled === false && Array.isArray(legacy.forces.items) && legacy.forces.items.length === 0,
+    legacy.forces && legacy.forces.enabled === false && legacy.forces.showHelpers === true &&
+    Array.isArray(legacy.forces.items) && legacy.forces.items.length === 0,
     JSON.stringify(legacy.forces))
+  check('旧存档自动补齐 scene.skeletonOnly', legacy.scene && legacy.scene.skeletonOnly === false)
 
   // 脏数据清洗: 未知类型/形状回退, 负数半径与 NaN 被夹回合法范围
   const dirty = normalizeForces({
@@ -2150,15 +2152,24 @@ console.log('\n[37] 空间引导力 (Space Forces)')
   const di = dirty.items[0]
   check('力场脏数据被清洗 (类型/形状回退, 数值有限)',
     dirty.enabled === true && di.type === 'attractor' && di.shape === 'sphere' &&
-    Number.isFinite(di.x + di.y + di.z + di.radius + di.strength + di.size + di.sizeY +
+    Number.isFinite(di.x + di.y + di.z + di.radius + di.strength + di.size + di.sizeY + di.sizeZ +
       di.rotX + di.rotY + di.rotZ) &&
     di.radius >= 0.05 && di.size >= 0.02,
     JSON.stringify(di))
 
+  // 形状语义: 球体三轴强制相等; 椭圆/立方体三轴独立
+  const sphereItem = normalizeForceItem({ shape: 'sphere', size: 1, sizeY: 2, sizeZ: 3 })
+  const ellipItem = normalizeForceItem({ shape: 'ellipsoid', size: 1, sizeY: 2, sizeZ: 3 })
+  check('球体三轴统一 / 椭圆三轴独立',
+    sphereItem.sizeY === 1 && sphereItem.sizeZ === 1 &&
+    ellipItem.sizeY === 2 && ellipItem.sizeZ === 3,
+    `sphere=${sphereItem.sizeY}/${sphereItem.sizeZ}, ellipsoid=${ellipItem.sizeY}/${ellipItem.sizeZ}`)
+
   const d1 = defaultForceItem('repulsor', 1)
   check('默认排斥子可创建且结构完整',
     d1.type === 'repulsor' && d1.shape === 'cube' &&
-    Number.isFinite(d1.x + d1.y + d1.z + d1.radius + d1.strength + d1.falloff + d1.size + d1.sizeY))
+    Number.isFinite(d1.x + d1.y + d1.z + d1.radius + d1.strength + d1.falloff +
+      d1.size + d1.sizeY + d1.sizeZ))
 
   check('关闭 / 空对象 -> 不生成力场 (零开销)',
     createForceField({ enabled: false, items: [d1] }) === null &&
@@ -2185,20 +2196,38 @@ console.log('\n[37] 空间引导力 (Space Forces)')
   const ap = march(attract, 20, { x: 0, y: 0, z: 0 }, { x: 0, y: 1, z: 0 }, 0.2).pos
   check('吸引子让枝条朝它偏转', ap.x > 0.3, `x=${ap.x.toFixed(3)}`)
 
-  // 排斥: +X 方向有立方体障碍 -> 枝条应被推离
+  // 排斥: +X 方向有立方体障碍 -> 枝条应被推离, 且不能穿进实体
   const repel = createForceField({
     enabled: true,
-    items: [{ ...d1, type: 'repulsor', shape: 'cube', x: 0.9, y: 0, z: 0, size: 0.5, sizeY: 0.5, radius: 2, strength: 1.5, falloff: 1 }],
+    items: [{ ...d1, type: 'repulsor', shape: 'cube', x: 0.9, y: 0, z: 0, size: 0.5, sizeY: 0.5, sizeZ: 0.5, radius: 2, strength: 1.5, falloff: 1 }],
   })
   const rp = march(repel, 12, { x: 0, y: 0, z: 0 }, { x: 1, y: 0.6, z: 0 }, 0.2).pos
   const freeRp = march({ apply() {} }, 12, { x: 0, y: 0, z: 0 }, { x: 1, y: 0.6, z: 0 }, 0.2).pos
-  check('排斥子让枝条远离障碍物 (相比无力场明显偏离)', rp.x < freeRp.x * 0.6,
+  check('排斥子把枝条推开 (方向正确, 不进入实体)',
+    rp.x < 0.3 && rp.x < freeRp.x * 0.6,
     `x=${rp.x.toFixed(3)} vs free=${freeRp.x.toFixed(3)}`)
+
+  // 椭圆: 同一个点, 椭球(沿 X 拉长)与球体产生的转向必须不同
+  const ellBase = { ...d1, type: 'repulsor', x: 0.9, y: 0, z: 0, radius: 3, strength: 1.5, falloff: 1 }
+  const fieldSphere = createForceField({
+    enabled: true,
+    items: [{ ...ellBase, shape: 'sphere', size: 0.5 }],
+  })
+  const fieldEllip = createForceField({
+    enabled: true,
+    items: [{ ...ellBase, shape: 'ellipsoid', size: 1.2, sizeY: 0.4, sizeZ: 0.4 }],
+  })
+  const eDirS = { x: 1, y: 0, z: 0 }
+  const eDirE = { x: 1, y: 0, z: 0 }
+  fieldSphere.apply({ x: 0.3, y: 0, z: 0.45 }, eDirS, 0.2)
+  fieldEllip.apply({ x: 0.3, y: 0, z: 0.45 }, eDirE, 0.2)
+  const ellDiff = Math.hypot(eDirS.x - eDirE.x, eDirS.y - eDirE.y, eDirS.z - eDirE.z)
+  check('椭球形状参与力场计算 (与球体转向不同)', ellDiff > 0.02, `Δ=${ellDiff.toFixed(4)}`)
 
   // 旋转: 同一个立方体转 45° 后, 同一点受到的法线方向必须不同
   const rotBase = {
     ...d1, type: 'repulsor', shape: 'cube', x: 0.9, y: 0, z: 0,
-    size: 0.5, sizeY: 0.5, radius: 3, strength: 1.5, falloff: 1,
+    size: 0.5, sizeY: 0.5, sizeZ: 0.5, radius: 3, strength: 1.5, falloff: 1,
   }
   const fieldA = createForceField({ enabled: true, items: [{ ...rotBase, rotY: 0 }] })
   const fieldB = createForceField({ enabled: true, items: [{ ...rotBase, rotY: 45 }] })
@@ -2223,8 +2252,16 @@ console.log('\n[37] 空间引导力 (Space Forces)')
   const rotP = JSON.parse(JSON.stringify(forcedP))
   rotP.forces.items[0].rotY = 45
   const h3 = geomHash(buildTree(rotP).barkGeometry)
+  const hiddenP = JSON.parse(JSON.stringify(forcedP))
+  hiddenP.forces.showHelpers = false
+  const h4 = geomHash(buildTree(hiddenP).barkGeometry)
+  const sizeZP = JSON.parse(JSON.stringify(forcedP))
+  sizeZP.forces.items[0].sizeZ = 2.2
+  const h5 = geomHash(buildTree(sizeZP).barkGeometry)
   check('力场参与整树生成 (开关前后树皮几何不同)', h0 !== h1)
   check('立方体旋转参与整树生成', h1 !== h3)
+  check('实体 Z 半轴参与整树生成', h1 !== h5)
+  check('显示引导力开关不改变几何 (只影响示意)', h1 === h4)
   check('力场生成可复现 (同参数 -> 同一棵树)', h1 === h2)
 }
 

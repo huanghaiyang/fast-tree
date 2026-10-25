@@ -272,8 +272,11 @@ export class TreeScene {
       this._forceDragging = !!e.value
       if (e.value) {
         const it = this._findForceItem()
+        // 必须存**快照**而不是参数对象引用: 拖动过程中 _commitForceGizmo 会不停
+        // 改写 it.size/sizeY/sizeZ, 若持有引用, 每帧就等于"用上一次的结果再乘一次",
+        // 缩放会指数级放大 (表现为缩放失控/松手后尺寸完全不对)。
         this._forceDragStart = it
-          ? { size: it.size, sizeY: it.sizeY }
+          ? { size: it.size, sizeY: it.sizeY, sizeZ: it.sizeZ, shape: it.shape }
           : null
         this.transformHelper.visible = false
         if (this.callbacks.onForceDragChange) this.callbacks.onForceDragChange(true)
@@ -414,6 +417,9 @@ export class TreeScene {
     // 阴影总开关与"是否每帧重算"缓存(updateScene 写入, applyShadowFlags 读取)
     this.shadowsEnabled = true
     this.dynamicShadows = true
+    // 仅显示骨架 (updateScene 写入): true = 隐藏叶片/花朵, 只留树皮枝条。
+    // 只影响可见性, 与 LOD 档位叠加生效, 不改几何/统计。
+    this.skeletonOnly = false
     // 动态 LOD: LOD0 = 上面的主网格; LOD1/2 首次需要时才构建并缓存
     // lastParams 是"重建参数快照", LOD 生成、导出拆件都从这里取参数。
     this.lastParams = null
@@ -723,6 +729,11 @@ export class TreeScene {
     this.updateForceGizmos(params.forces)
     // 把合并几何切成空间块: 每块独立包围球, 相机视锥外的块由 Three 自动剔除。
     // 源网格仍在 treeGroup 中 (隐藏于默认相机层), 供导出/统计/粒子采样/LOD/线框复用。
+    // 仅显示骨架时新网格默认可见, 必须先压掉叶片/花朵再切块, 否则分块仍按"可见"生成。
+    if (this.skeletonOnly) {
+      if (this.leafMesh) this.leafMesh.visible = false
+      if (this.flowerMesh) this.flowerMesh.visible = false
+    }
     this._buildCullChunks()
     this.applyShadowFlags()
     // 叶片粒子发射 (从叶片位置采样发射点)
@@ -791,6 +802,21 @@ export class TreeScene {
   setSkeletonVisible(v) {
     this.showSkeleton = !!v
     if (this.skeletonGroup) this.skeletonGroup.visible = this.showSkeleton
+  }
+
+  /**
+   * 仅显示骨架: 隐藏叶片/花朵, 只保留树皮枝条结构 (果实随花朵/树皮一起处理)。
+   *
+   * 只是可见性切换, 不动几何与统计; 与动态 LOD 叠加 —— 重跑一次 applyLod
+   * 就能让源网格、LOD 低模和视锥分块三套可见性同时按新标记收敛。
+   * @param {boolean} v true = 仅显示骨架
+   * @sideeffect 写 this.skeletonOnly; 重新计算网格可见性
+   */
+  setSkeletonOnly(v) {
+    const next = !!v
+    if (next === this.skeletonOnly) return
+    this.skeletonOnly = next
+    this.applyLod(this.lodLevel)
   }
 
   /**
@@ -982,7 +1008,8 @@ export class TreeScene {
   /** 把变换轴贴到当前选中力场对象上 */
   _syncForceGizmo() {
     if (!this.forceControls || this._forceDragging) return
-    if (this._gizmoOwner !== 'force' || !this.forceGizmoState.show) {
+    if (this._gizmoOwner !== 'force' || !this.forceGizmoState.show ||
+      !this.forceGroup || !this.forceGroup.visible) {
       this._hideForceGizmo()
       return
     }
@@ -1028,15 +1055,18 @@ export class TreeScene {
       patch.rotZ = +(e.z * 180 / Math.PI).toFixed(1)
     } else if (mode === 'scale') {
       const s = rec.root.scale
-      const start = this._forceDragStart || { size: it.size, sizeY: it.sizeY }
+      const start = this._forceDragStart || { size: it.size, sizeY: it.sizeY, sizeZ: it.sizeZ, shape: it.shape }
+      const sizeZ0 = Number.isFinite(start.sizeZ) ? start.sizeZ : start.size
       const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
-      const cube = it.type === 'repulsor' && it.shape === 'cube'
-      if (cube) {
-        // 立方体: 水平两轴取平均作为半宽, 竖向单独映射到半高。
-        patch.size = +clamp(start.size * (Math.abs(s.x) + Math.abs(s.z)) / 2, 0.02, 50).toFixed(3)
-        patch.sizeY = +clamp(start.sizeY * Math.abs(s.y), 0.02, 50).toFixed(3)
-      } else {
-        patch.size = +clamp(start.size * (Math.abs(s.x) + Math.abs(s.y) + Math.abs(s.z)) / 3, 0.02, 50).toFixed(3)
+      // 三个轴向各自映射到对应半轴: 椭球和立方体因此都能被非等比拉长/压扁。
+      patch.size = +clamp(Math.abs(start.size * s.x), 0.02, 50).toFixed(3)
+      patch.sizeY = +clamp(Math.abs(start.sizeY * s.y), 0.02, 50).toFixed(3)
+      patch.sizeZ = +clamp(Math.abs(sizeZ0 * s.z), 0.02, 50).toFixed(3)
+      // 球体被非等比缩放时自动升级为椭球, 否则下一次归一化会把 Y/Z 拉回 X。
+      if (start.shape === 'sphere') {
+        const hi = Math.max(patch.size, patch.sizeY, patch.sizeZ)
+        const lo = Math.max(1e-6, Math.min(patch.size, patch.sizeY, patch.sizeZ))
+        if (hi / lo > 1.01) patch.shape = 'ellipsoid'
       }
     }
     if (Object.keys(patch).length && this.callbacks.onForceEdit) {
@@ -1424,14 +1454,15 @@ export class TreeScene {
     this.lodLevel = target
     // 源网格本身永远"逻辑可见"(导出/统计要用), 真正渲染的是分块, 由下面同步。
     if (this.barkMesh) this.barkMesh.visible = target === 0
-    if (this.leafMesh) this.leafMesh.visible = target === 0
-    if (this.flowerMesh) this.flowerMesh.visible = target === 0
+    // 仅显示骨架时叶片/花朵一律隐藏, 与当前 LOD 档位叠加 (低模同样隐藏)。
+    if (this.leafMesh) this.leafMesh.visible = target === 0 && !this.skeletonOnly
+    if (this.flowerMesh) this.flowerMesh.visible = target === 0 && !this.skeletonOnly
     this._syncCullChunks(target)
     for (const e of this.lodCache.values()) {
       const on = e.level === target
       if (e.barkMesh) e.barkMesh.visible = on
-      if (e.leafMesh) e.leafMesh.visible = on
-      if (e.flowerMesh) e.flowerMesh.visible = on
+      if (e.leafMesh) e.leafMesh.visible = on && !this.skeletonOnly
+      if (e.flowerMesh) e.flowerMesh.visible = on && !this.skeletonOnly
     }
     // 阴影标记与档位相关(隔离模式会关投影), 切档后要重算一遍。
     this.applyShadowFlags()
@@ -1782,12 +1813,12 @@ export class TreeScene {
    *   - 太阳位置用球坐标: 方位角 azimuth、仰角 elevation(都是度, 0° 仰角 = 地平线),
    *     r 至少 12 米(树高的 2.4 倍), 保证平行光方向在树附近基本恒定。
    *
-   * @param {Object} s 场景参数分片；字段含 background / wireframe / gradient /
+   * @param {Object} s 场景参数分片；字段含 background / wireframe / skeletonOnly / gradient /
    *   skyTop / skyBottom / stars / ground / groundColor / grid / exposure /
    *   autoRotate / shadows / dynamicShadows / sunColor / sunIntensity / hemiSky /
    *   hemiGround / ambient / fog / fogColor / fogScale / sunAzimuth / sunElevation
    * @sideeffect 修改场景背景与雾、天空材质、星空材质、灯光与阴影开关、
-   *   renderer 曝光、轨道自动旋转、线框网格
+   *   renderer 曝光、轨道自动旋转、线框网格、叶片/花朵可见性
    */
   updateScene(s) {
     this.scene.background = new THREE.Color(s.background)
@@ -1797,6 +1828,9 @@ export class TreeScene {
       this._wireMode = wire
       if (this.barkMesh) this.applyWireframe(wire)
     }
+
+    // 仅显示骨架: 只切换叶片/花朵可见性, 与动态 LOD 叠加 (不改几何与统计)。
+    if (!!s.skeletonOnly !== this.skeletonOnly) this.setSkeletonOnly(!!s.skeletonOnly)
 
     // 渐变天空: 关掉时把穹顶整体隐藏, 露出 scene.background 的纯色背景。
     if (s.gradient) {
@@ -1899,15 +1933,18 @@ export class TreeScene {
     const items = f && Array.isArray(f.items) ? f.items : []
     // 关闭引导力时仍显示示意图 (方便先摆放再启用), 只把透明度压低作为"未生效"的提示。
     const dim = f && f.enabled ? 1 : 0.45
-    group.visible = items.length > 0
+    // 显示开关只影响示意图本身, 与"是否参与生长"相互独立。
+    group.visible = items.length > 0 && !(f && f.showHelpers === false)
     const seen = new Set()
     this._forceSyncing = true
     for (const it of items) {
       const id = it.id || `force-${seen.size}`
       const attractor = it.type !== 'repulsor'
-      const cube = !attractor && it.shape === 'cube'
-      const size = Math.max(0.02, Number(it.size) || 0.6)
-      const sizeY = Math.max(0.02, Number(it.sizeY) || size)
+      // 球 / 椭圆 / 立方体: 球和椭圆共用球面几何, 靠三轴缩放区分。
+      const shape = it.shape === 'cube' ? 'cube' : (it.shape === 'ellipsoid' ? 'ellipsoid' : 'sphere')
+      const sx = Math.max(0.02, Number(it.size) || 0.6)
+      const sy = Math.max(0.02, Number(it.sizeY) || sx)
+      const sz = Math.max(0.02, Number(it.sizeZ) || sx)
       const radius = Math.max(0.05, Number(it.radius) || 3)
       seen.add(id)
 
@@ -1917,15 +1954,17 @@ export class TreeScene {
         root.name = `Force-${id}`
         const solidMat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false })
         const fieldMat = new THREE.MeshBasicMaterial({ wireframe: true, transparent: true, depthWrite: false })
-        const solid = new THREE.Mesh(new THREE.SphereGeometry(1, 18, 12), solidMat)
-        const field = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 12), fieldMat)
+        // 实体和影响范围都用"单位几何 + 子对象缩放": 改尺寸只需改 scale,
+        // 不再每帧重建 BufferGeometry, 拖缩放轴时也能立刻看到体积变化。
+        const solid = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), solidMat)
+        const field = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), fieldMat)
         // 点选只认这两个网格; root 本身不参与 raycast。
         solid.userData.forceId = id
         field.userData.forceId = id
         root.add(solid)
         root.add(field)
         group.add(root)
-        rec = { root, solid, field, solidMat, fieldMat, solidKey: '', fieldKey: '', color: null }
+        rec = { root, solid, field, solidMat, fieldMat, geomKey: 'round', color: null }
         this._forceGizmos.set(id, rec)
       }
 
@@ -1935,25 +1974,25 @@ export class TreeScene {
         rec.fieldMat.color.setHex(color)
         rec.color = color
       }
-      rec.solidMat.opacity = 0.18 * dim
+      rec.solidMat.opacity = 0.22 * dim
       rec.fieldMat.opacity = 0.32 * dim
 
-      const solidKey = `${cube ? 'c' : 's'}|${size.toFixed(3)}|${cube ? sizeY.toFixed(3) : ''}`
-      if (rec.solidKey !== solidKey) {
+      // 只有形状切换才换几何 (立方体用单位盒, 其余用单位球), 尺寸变化只改缩放。
+      const geomKey = shape === 'cube' ? 'cube' : 'round'
+      if (rec.geomKey !== geomKey) {
+        const make = geomKey === 'cube'
+          ? () => new THREE.BoxGeometry(2, 2, 2)
+          : () => new THREE.SphereGeometry(1, 24, 16)
         rec.solid.geometry.dispose()
-        rec.solid.geometry = cube
-          ? new THREE.BoxGeometry(size * 2, sizeY * 2, size * 2)
-          : new THREE.SphereGeometry(size, 18, 12)
-        rec.solidKey = solidKey
-      }
-      const fieldKey = `${cube ? 'c' : 's'}|${size.toFixed(3)}|${sizeY.toFixed(3)}|${radius.toFixed(3)}|${attractor ? 'a' : 'r'}`
-      if (rec.fieldKey !== fieldKey) {
         rec.field.geometry.dispose()
-        rec.field.geometry = cube
-          ? new THREE.BoxGeometry((size + radius) * 2, (sizeY + radius) * 2, (size + radius) * 2)
-          : new THREE.SphereGeometry(attractor ? radius : size + radius, 20, 12)
-        rec.fieldKey = fieldKey
+        rec.solid.geometry = make()
+        rec.field.geometry = make()
+        rec.geomKey = geomKey
       }
+
+      // 实体 = (sx, sy, sz); 影响范围 = 实体的三个半轴各向外扩 radius。
+      rec.solid.scale.set(sx, sy, sz)
+      rec.field.scale.set(sx + radius, sy + radius, sz + radius)
 
       const D2R = Math.PI / 180
       rec.root.position.set(Number(it.x) || 0, Number(it.y) || 0, Number(it.z) || 0)
@@ -1963,6 +2002,7 @@ export class TreeScene {
         (Number(it.rotZ) || 0) * D2R,
         'XYZ',
       )
+      // 根节点的缩放留给变换轴拖拽使用 (上面的子网格缩放才是真实尺寸)。
       rec.root.scale.set(1, 1, 1)
       rec.root.updateMatrixWorld(true)
     }

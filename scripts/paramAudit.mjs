@@ -216,6 +216,8 @@ export const DOM_DEPENDENT = new Set([
   // 落叶堆积同样是场景级 (合批几何 + 地面贴图)
   'litter.enabled', 'litter.cardId', 'litter.count', 'litter.radius', 'litter.size', 'litter.thickness',
   'litter.color', 'litter.colorVariance', 'litter.alphaTest', 'litter.shade',
+  // 空间引导力的显示开关只控制视口示意网格, 与生长几何无关 (Node 侧看不出变化)
+  'forces.showHelpers',
 ])
 
 /** 由 store / 场景循环消费, 不直接进 uniform */

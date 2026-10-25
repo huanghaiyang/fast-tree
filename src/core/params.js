@@ -408,14 +408,18 @@ export function defaultParams() {
     /* 空间引导力 (Space Forces / Attractors): 枝条生长时逐段转向。
      * items[] 每项:
      *   type   'attractor' 吸引子 (枝条主动靠近) | 'repulsor' 排斥子/障碍物 (枝条绕开)
-     *   shape  'sphere' 球 | 'cube' 立方体 (仅排斥子用形状测距)
+     *   shape  'sphere' 球 | 'ellipsoid' 椭圆 (三轴独立) | 'cube' 立方体
      *   x/y/z  世界坐标中的中心 (米); y=0 是地面
      *   radius 影响半径 (米, 从实体表面算起)
      *   strength 力场强度 0..2;  falloff 衰减指数 (越大越"靠近才生效")
-     *   size   实体尺寸 (球半径 / 立方体半宽深);  sizeY 立方体竖向半高
+     *   size/sizeY/sizeZ 实体三个半轴 (米): 球三轴相等, 椭圆/立方体可独立
+     *   rotX/rotY/rotZ 实体旋转 (度, XYZ); 球体忽略
+     * showHelpers 只控制视口示意图显示, 不影响生长。
      * 注意: 改这里会改变骨架 -> 必须归在 geometry 组, 改完重建整棵树。 */
     forces: {
       enabled: false,
+      // 视口里是否绘制吸引子/排斥子示意球 (关掉只影响显示, 不影响生长)。
+      showHelpers: true,
       items: [],
     },
 
@@ -654,6 +658,7 @@ export function defaultParams() {
       fogScale: 1.0,      // 雾距离倍率: <1 雾更近, >1 雾更远
       shadows: true,
       dynamicShadows: true,  // 阴影是否每帧重算(跟随太阳角度/风场/生长); 关 = 冻结阴影省性能
+      skeletonOnly: false,   // 仅显示骨架: 隐藏叶片/花朵, 只看树皮枝条结构
       sunColor: '#fff2e0',
       sunAzimuth: 35,
       sunElevation: 40,

@@ -2,6 +2,7 @@
   <Section title="空间引导力" hint="Space Forces"
     @pointerdown="onPanelDown" @input="onPanelInput" @change="onPanelInput">
     <ToggleRow label="启用空间引导力" v-model="forces.enabled" />
+    <ToggleRow label="显示引导力示意" v-model="forces.showHelpers" />
     <p class="muted" style="margin: 2px 0 6px">
       吸引子让枝条主动靠近，排斥子（障碍物）让枝条绕开生长。位置单位为米，改完会重新生长整棵树。
     </p>
@@ -14,7 +15,7 @@
       <label>编辑对象</label>
       <select class="input" style="width: 132px" :value="activeId" @change="activeId = $event.target.value">
         <option v-for="(it, i) in forces.items" :key="it.id" :value="it.id">
-          {{ i + 1 }}. {{ it.type === 'attractor' ? '吸引子' : '排斥子' }} · {{ it.shape === 'sphere' ? '球' : '立方体' }}
+          {{ i + 1 }}. {{ it.type === 'attractor' ? '吸引子' : '排斥子' }} · {{ shapeLabel(it.shape) }}
         </option>
       </select>
     </div>
@@ -31,15 +32,21 @@
       </p>
 
       <SelectRow label="力场类型" v-model="active.type" :options="typeOptions" />
-      <SelectRow v-if="active.type === 'repulsor'" label="力场形状" v-model="active.shape" :options="shapeOptions" />
+      <SelectRow label="力场形状" :model-value="active.shape" :options="shapeOptions"
+        @update:model-value="setShape" />
       <SliderRow label="位置 X" v-model="active.x" :min="-20" :max="20" :step="0.1" unit="m" />
       <SliderRow label="位置 Y" v-model="active.y" :min="0" :max="20" :step="0.1" unit="m" />
       <SliderRow label="位置 Z" v-model="active.z" :min="-20" :max="20" :step="0.1" unit="m" />
       <SliderRow label="影响半径" v-model="active.radius" :min="0.2" :max="20" :step="0.1" unit="m" />
       <SliderRow label="力场强度" v-model="active.strength" :min="0" :max="2" :step="0.05" />
       <SliderRow label="衰减指数" v-model="active.falloff" :min="0.2" :max="4" :step="0.1" />
-      <SliderRow label="实体尺寸" v-model="active.size" :min="0.05" :max="5" :step="0.05" unit="m" />
-      <SliderRow v-if="canRotate" label="立方体高度" v-model="active.sizeY" :min="0.05" :max="10" :step="0.05" unit="m" />
+      <!-- 球体只有一个半径; 椭圆/立方体可分别改三个半轴 (也就是缩放轴拖出来的结果)。 -->
+      <SliderRow v-if="isSphere" label="实体尺寸" v-model="active.size" :min="0.05" :max="10" :step="0.05" unit="m" />
+      <template v-else>
+        <SliderRow label="实体尺寸 X" v-model="active.size" :min="0.05" :max="10" :step="0.05" unit="m" />
+        <SliderRow label="实体尺寸 Y" v-model="active.sizeY" :min="0.05" :max="10" :step="0.05" unit="m" />
+        <SliderRow label="实体尺寸 Z" v-model="active.sizeZ" :min="0.05" :max="10" :step="0.05" unit="m" />
+      </template>
       <template v-if="canRotate">
         <SliderRow label="旋转 X" v-model="active.rotX" :min="-180" :max="180" :step="1" unit="°" />
         <SliderRow label="旋转 Y" v-model="active.rotY" :min="-180" :max="180" :step="1" unit="°" />
@@ -73,7 +80,9 @@ const active = computed(() => {
   const list = forces.value && Array.isArray(forces.value.items) ? forces.value.items : []
   return list.find((it) => it.id === state.activeForceId) || null
 })
-const canRotate = computed(() => !!active.value && active.value.type === 'repulsor' && active.value.shape === 'cube')
+const isSphere = computed(() => !!active.value && active.value.shape === 'sphere')
+// 球体旋转不改变力场; 椭圆和立方体的旋转会改变 SDF 朝向, 因此可以转。
+const canRotate = computed(() => !!active.value && active.value.shape !== 'sphere')
 const gizmoMode = ref('translate')
 
 const typeOptions = [
@@ -82,8 +91,30 @@ const typeOptions = [
 ]
 const shapeOptions = [
   { value: 'sphere', label: '球体' },
+  { value: 'ellipsoid', label: '椭圆 (椭球)' },
   { value: 'cube', label: '立方体' },
 ]
+const SHAPE_LABEL = { sphere: '球体', ellipsoid: '椭圆', cube: '立方体' }
+function shapeLabel(shape) {
+  return SHAPE_LABEL[shape] || '球体'
+}
+
+/** 切换形状: 变回球体时把三个半轴统一, 避免留下"看不见的椭球参数"。 */
+function setShape(v) {
+  const it = active.value
+  if (!it) return
+  it.shape = v
+  if (v === 'sphere') {
+    it.sizeY = it.size
+    it.sizeZ = it.size
+  }
+  // 球体不支持旋转, 顺手清零, 免得以后切到椭圆时突然带着旧角度。
+  if (v === 'sphere') {
+    it.rotX = 0
+    it.rotY = 0
+    it.rotZ = 0
+  }
+}
 
 /* ---------------- 性能: 交互期间暂停重建 ----------------
  * 力场属于几何参数, 每次改动都会触发整棵树重建。滑块连续拖动时如果每帧重建,
@@ -178,6 +209,12 @@ watch(() => state.ready, () => {
 onMounted(() => {
   window.addEventListener('pointerup', onWindowPointerUp, true)
   window.addEventListener('pointercancel', onWindowPointerUp, true)
+  // 旧存档 / 热更新内存里可能还没有 sizeZ: 补齐默认值, 否则滑杆会显示 NaN。
+  for (const it of (forces.value && Array.isArray(forces.value.items) ? forces.value.items : [])) {
+    if (!Number.isFinite(Number(it.sizeZ))) it.sizeZ = Number(it.size) || 0.6
+    if (!Number.isFinite(Number(it.sizeY))) it.sizeY = Number(it.size) || 0.6
+    if (!it.shape) it.shape = 'sphere'
+  }
   if (sceneApi.setForcePicking) sceneApi.setForcePicking(true)
   syncGizmo()
   // 面板可能比 Viewport 的 sceneApi 先挂载: 下一帧再补一次接管
