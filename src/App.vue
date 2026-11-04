@@ -22,6 +22,9 @@
       <button class="btn" :class="{ active: showSkeleton }"
         title="显示/隐藏骨架图 (骨架节点 + 边; 快捷键 K)"
         @click="toggleSkeleton">🦴 骨架</button>
+      <button class="btn" :class="{ active: graphOpen }"
+        title="参数与函数调用关系图谱 (只读, 快捷键 G)"
+        @click="graphOpen = !graphOpen">🗺 图谱</button>
       <button class="btn" :class="{ active: state.nodePanelOpen }" title="模型节点面板 (N)"
         @click="toggleNodePanel()">🧩 节点</button>
       <span class="tag" :class="{ on: state.playing }" style="cursor: pointer" @click="state.playing = !state.playing">
@@ -39,6 +42,8 @@
 
     <NodeDock v-if="state.nodePanelOpen" />
 
+    <FunctionGraph v-if="graphOpen" @close="graphOpen = false" />
+
     <ParamTip />
   </div>
 </template>
@@ -51,6 +56,7 @@ import PropertySearch from './components/PropertySearch.vue'
 import ChatPanel from './components/ChatPanel.vue'
 import Viewport from './components/Viewport.vue'
 import NodeDock from './components/NodeDock.vue'
+import FunctionGraph from './components/FunctionGraph.vue'
 import ParamTip from './components/ParamTip.vue'
 import {
   state, randomizeSeed, setSeed, doAutoGenerate, sceneApi, pushUndo, toggleNodePanel,
@@ -74,6 +80,7 @@ function cycleWire() {
 
 /* 骨架显示: 只控制视口叠加层，不进入参数/审计/重建 */
 const showSkeleton = ref(false)
+const graphOpen = ref(false)
 function toggleSkeleton() {
   showSkeleton.value = !showSkeleton.value
   sceneApi.setSkeletonVisible?.(showSkeleton.value)
@@ -123,6 +130,10 @@ function onKeydown(e) {
   if (e.key === 'k' || e.key === 'K') {
     e.preventDefault()
     toggleSkeleton()
+  }
+  if (e.key === 'g' || e.key === 'G') {
+    e.preventDefault()
+    graphOpen.value = !graphOpen.value
   }
 }
 
