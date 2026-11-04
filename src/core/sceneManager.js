@@ -97,6 +97,19 @@ void main() {
 }`
 
 /**
+ * 骨架"按枝级着色"模式的调色板: L1..L5 依次 红 / 橙 / 黄 / 绿 / 蓝。
+ * 与默认的"同色系渐变"相比, 色相互相分开, 一眼就能数出几级枝;
+ * 树干/树根仍用原有特殊色, 不与枝级调色板混用。
+ */
+const SKELETON_LEVEL_COLORS = [
+  [1.0, 0.32, 0.36],   // L1 红
+  [1.0, 0.63, 0.22],   // L2 橙
+  [1.0, 0.90, 0.32],   // L3 黄
+  [0.36, 0.92, 0.46],  // L4 绿
+  [0.26, 0.66, 1.0],   // L5 蓝
+]
+
+/**
  * 给 TransformControls 绑定"开始拖动 / 结束拖动"。
  *
  * three 0.186 已经移除了 `dragging-changed` 事件, 改成只在真正按住轴柄时派发的
@@ -476,6 +489,10 @@ export class TreeScene {
     this.twistGuides = null
     this.skeletonGroup = null
     this.showSkeleton = false
+    // 骨架按枝级着色 (updateScene 写入): L1..L5 用不同色相, 默认沿用同色系渐变。
+    this.skeletonLevelColors = false
+    // 叠层构建时缓存的两套颜色数组 (base = 默认渐变, level = 按枝级), 切换时原地替换。
+    this._skeletonColorSets = null
     // three r186 起 THREE.Clock 已废弃, 这里自己计时
     // 单位: 秒(用 performance.now()/1000, 单调递增不受系统时间调整影响)。
     this.lastTime = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000
@@ -873,6 +890,29 @@ export class TreeScene {
   }
 
   /**
+   * 骨架"按枝级着色"开关: L1..L5 改用红/橙/黄/绿/蓝, 与默认的同色系渐变区分。
+   *
+   * 颜色在叠层构建时已经按两套算好 (_skeletonColorSets), 这里只把 color 属性
+   * 原地换成另一套数组, 不重建几何/材质, 所以切换是零成本、立即生效。
+   * @param {boolean} v true = 按枝级着色
+   */
+  setSkeletonLevelColors(v) {
+    const next = !!v
+    if (next === this.skeletonLevelColors) return
+    this.skeletonLevelColors = next
+    const sets = this._skeletonColorSets
+    if (!sets || !this.skeletonGroup) return
+    for (const obj of this.skeletonGroup.children) {
+      const src = obj.name === 'SkeletonEdges' ? sets.line : sets.point
+      const attr = obj.geometry && obj.geometry.getAttribute('color')
+      const arr = src && src[next ? 'level' : 'base']
+      if (!attr || !arr || arr.length !== attr.array.length) continue
+      attr.array.set(arr)
+      attr.needsUpdate = true
+    }
+  }
+
+  /**
    * 用树骨架数据重建"骨架叠层"对象(线段 + 节点球点云)。
    *
    * 数据形状: skeleton = { nodes:[{pos,branch}], edges:[{from,to,branch}],
@@ -881,7 +921,8 @@ export class TreeScene {
    * 配色规则(肉眼快速分辨枝级):
    *   主干 trunk → 暖黄 (1.0, 0.82, 0.25)
    *   根系 root  → 橙   (1.0, 0.55, 0.2)
-   *   普通枝     → 随 level 从青绿渐变到蓝 (level 1→5)
+   *   普通枝     → 默认随 level 从青绿渐变到蓝 (level 1→5);
+   *                skeletonLevelColors 开启时改用离散调色板 L1..L5 (红/橙/黄/绿/蓝)
    *   未知       → 亮青 (0.35, 0.95, 1.0)
    *   level 被夹在 1..5 再归一化: 再深的枝在视觉上已无区分意义, 合并为同色。
    *
@@ -901,35 +942,53 @@ export class TreeScene {
       })
       this.skeletonGroup = null
     }
+    this._skeletonColorSets = null
     if (!skeleton || !skeleton.nodes || !skeleton.edges) return
     const nodes = skeleton.nodes
     const branches = skeleton.branches
-    const colorOf = (branch) => {
+    // byLevel = true 时改用 L1..L5 的离散调色板 (红/橙/黄/绿/蓝);
+    // false 是原有的同色系渐变 (青绿 -> 蓝)。两套都在构建时算好, 切换时直接换数组。
+    const colorOf = (branch, byLevel) => {
       if (!branch) return [0.35, 0.95, 1.0]
       if (branch.type === 'trunk') return [1.0, 0.82, 0.25]
       if (branch.type === 'root') return [1.0, 0.55, 0.2]
       const lv = Math.min(5, Math.max(1, branch.level || 1))
+      if (byLevel) return SKELETON_LEVEL_COLORS[lv - 1]
       const t = (lv - 1) / 4
       return [0.25 + 0.15 * t, 0.9 - 0.15 * t, 1.0]
     }
     // 四个扁平数组直接对应两个 BufferGeometry 的 position/color 属性:
     // line* 用于 LineSegments(每条边 2 个顶点, 颜色也要复制两份),
     // point* 用于 Points(每个节点 1 个顶点)。
-    const linePos = [], lineCol = [], pointPos = [], pointCol = []
+    // base*/level* 是同一批数据的两种配色, 供"按枝级着色"开关原地切换。
+    const linePos = [], lineBaseCol = [], lineLevelCol = []
+    const pointPos = [], pointBaseCol = [], pointLevelCol = []
     for (const e of skeleton.edges) {
       const a = nodes[e.from], b = nodes[e.to]
       // 边界防御: 骨架里有悬空索引(理论上不该有)时跳过而不是产生 NaN 顶点,
       // 否则一个 NaN 就会让整个 BufferGeometry 的包围球失效、整层不渲染。
       if (!a || !b) continue
-      const c = colorOf(branches[e.branch])
+      const branch = branches[e.branch]
+      const cb = colorOf(branch, false)
+      const cl = colorOf(branch, true)
       linePos.push(a.pos.x, a.pos.y, a.pos.z, b.pos.x, b.pos.y, b.pos.z)
-      lineCol.push(c[0], c[1], c[2], c[0], c[1], c[2])
+      lineBaseCol.push(cb[0], cb[1], cb[2], cb[0], cb[1], cb[2])
+      lineLevelCol.push(cl[0], cl[1], cl[2], cl[0], cl[1], cl[2])
     }
     for (const n of nodes) {
-      const c = colorOf(branches[n.branch])
+      const branch = branches[n.branch]
+      const cb = colorOf(branch, false)
+      const cl = colorOf(branch, true)
       pointPos.push(n.pos.x, n.pos.y, n.pos.z)
-      pointCol.push(c[0], c[1], c[2])
+      pointBaseCol.push(cb[0], cb[1], cb[2])
+      pointLevelCol.push(cl[0], cl[1], cl[2])
     }
+    this._skeletonColorSets = {
+      line: { base: new Float32Array(lineBaseCol), level: new Float32Array(lineLevelCol) },
+      point: { base: new Float32Array(pointBaseCol), level: new Float32Array(pointLevelCol) },
+    }
+    const lineCol = this.skeletonLevelColors ? lineLevelCol : lineBaseCol
+    const pointCol = this.skeletonLevelColors ? pointLevelCol : pointBaseCol
     const group = new THREE.Group()
     group.name = 'SkeletonOverlay'
     group.visible = this.showSkeleton || this.skeletonOnly
@@ -1895,7 +1954,8 @@ export class TreeScene {
    *   - 太阳位置用球坐标: 方位角 azimuth、仰角 elevation(都是度, 0° 仰角 = 地平线),
    *     r 至少 12 米(树高的 2.4 倍), 保证平行光方向在树附近基本恒定。
    *
-   * @param {Object} s 场景参数分片；字段含 background / wireframe / skeletonOnly / gradient /
+   * @param {Object} s 场景参数分片；字段含 background / wireframe / skeletonOnly /
+   *   skeletonLevelColors / gradient /
    *   skyTop / skyBottom / stars / ground / groundColor / grid / exposure /
    *   autoRotate / shadows / dynamicShadows / sunColor / sunIntensity / hemiSky /
    *   hemiGround / ambient / fog / fogColor / fogScale / sunAzimuth / sunElevation
@@ -1913,6 +1973,8 @@ export class TreeScene {
 
     // 仅显示骨架: 只切换叶片/花朵可见性, 与动态 LOD 叠加 (不改几何与统计)。
     if (!!s.skeletonOnly !== this.skeletonOnly) this.setSkeletonOnly(!!s.skeletonOnly)
+    // 骨架配色: L1..L5 是否使用不同色相 (只换 color 属性, 不重建叠层)。
+    if (!!s.skeletonLevelColors !== this.skeletonLevelColors) this.setSkeletonLevelColors(!!s.skeletonLevelColors)
 
     // 渐变天空: 关掉时把穹顶整体隐藏, 露出 scene.background 的纯色背景。
     if (s.gradient) {

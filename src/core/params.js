@@ -679,7 +679,8 @@ export function defaultParams() {
       fogScale: 1.0,      // 雾距离倍率: <1 雾更近, >1 雾更远
       shadows: true,
       dynamicShadows: true,  // 阴影是否每帧重算(跟随太阳角度/风场/生长); 关 = 冻结阴影省性能
-      skeletonOnly: false,   // 仅显示骨架: 隐藏叶片/花朵, 只看树皮枝条结构
+      skeletonOnly: false,   // 仅显示骨架: 隐藏树皮/叶片/花果, 只看骨架线段与节点
+      skeletonLevelColors: false, // 骨架按枝级着色: L1~L5 用不同色相区分层级
       sunColor: '#fff2e0',
       sunAzimuth: 35,
       sunElevation: 40,

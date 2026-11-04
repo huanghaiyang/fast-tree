@@ -32,6 +32,8 @@
     <SelectRow label="线框展示 (三角面)" v-model="s.wireframe" :options="wireOptions" />
     <ToggleRow label="仅显示骨架" v-model="s.skeletonOnly" />
     <p v-if="s.skeletonOnly" class="muted" style="margin: 0 0 6px">已隐藏树皮、叶片与花果，只显示骨架线段与节点。</p>
+    <ToggleRow label="骨架按枝级着色" v-model="s.skeletonLevelColors" />
+    <p v-if="s.skeletonLevelColors" class="muted" style="margin: 0 0 6px">骨架开启时，L1~L5 各级枝依次用红 / 橙 / 黄 / 绿 / 蓝区分层级。</p>
     <ToggleRow label="雾" v-model="s.fog" />
     <template v-if="s.fog">
       <ColorRow label="雾颜色" v-model="s.fogColor" />
