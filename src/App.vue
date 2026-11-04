@@ -19,9 +19,9 @@
       <button class="btn" :class="{ active: wireMode !== 'off' }"
         :title="`线框展示 (展示三角面): 当前 ${wireLabel} — 点击依次切换 关闭 / 实体+线框 / 仅线框 (快捷键 W)`"
         @click="cycleWire">🕸 线框{{ wireMode === 'off' ? '' : wireMode === 'overlay' ? '·叠加' : '·仅' }}</button>
-      <button class="btn" :class="{ active: showSkeleton }"
-        title="显示/隐藏骨架图 (骨架节点 + 边; 快捷键 K)"
-        @click="toggleSkeleton">🦴 骨架</button>
+      <button class="btn" :class="{ active: showSkeleton || skeletonOnly }"
+        :title="`骨架显示 (当前: ${skeletonModeText}): 点击依次切换 关闭 / 叠加在树上 / 仅显示骨架 (快捷键 K)`"
+        @click="cycleSkeleton">🦴 骨架{{ skeletonOnly ? '·仅' : showSkeleton ? '·叠加' : '' }}</button>
       <button class="btn" :class="{ active: graphOpen }"
         title="参数与函数调用关系图谱 (只读, 快捷键 G)"
         @click="graphOpen = !graphOpen">🗺 图谱</button>
@@ -78,12 +78,27 @@ function cycleWire() {
   state.params.scene.wireframe = WIRE_MODES[(cur + 1) % WIRE_MODES.length]
 }
 
-/* 骨架显示: 只控制视口叠加层，不进入参数/审计/重建 */
+/* 骨架显示: 三态循环 关闭 → 叠加 → 仅骨架。
+   - 叠加: 只在树上加骨架线段/节点 (showSkeleton 仅控制视口叠层, 不进参数/审计);
+   - 仅骨架: 复用 params.scene.skeletonOnly, 隐藏树皮/叶片/花果, 只留骨架。 */
 const showSkeleton = ref(false)
+const skeletonOnly = computed(() => !!state.params.scene.skeletonOnly)
+const skeletonModeText = computed(() => (skeletonOnly.value ? '仅骨架' : showSkeleton.value ? '叠加' : '关闭'))
 const graphOpen = ref(false)
-function toggleSkeleton() {
-  showSkeleton.value = !showSkeleton.value
-  sceneApi.setSkeletonVisible?.(showSkeleton.value)
+function cycleSkeleton() {
+  if (skeletonOnly.value) {
+    // 仅骨架 -> 关闭 (骨架叠层与实体一起恢复)
+    state.params.scene.skeletonOnly = false
+    showSkeleton.value = false
+    sceneApi.setSkeletonVisible?.(false)
+  } else if (showSkeleton.value) {
+    // 叠加 -> 仅骨架 (骨架叠层保持显示, 网格由 updateScene 隐藏)
+    state.params.scene.skeletonOnly = true
+  } else {
+    // 关闭 -> 叠加
+    showSkeleton.value = true
+    sceneApi.setSkeletonVisible?.(true)
+  }
 }
 
 function onSeed(v) {
@@ -129,7 +144,7 @@ function onKeydown(e) {
   }
   if (e.key === 'k' || e.key === 'K') {
     e.preventDefault()
-    toggleSkeleton()
+    cycleSkeleton()
   }
   if (e.key === 'g' || e.key === 'G') {
     e.preventDefault()

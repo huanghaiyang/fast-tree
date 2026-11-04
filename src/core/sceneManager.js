@@ -772,8 +772,9 @@ export class TreeScene {
     this.updateForceGizmos(params.forces)
     // 把合并几何切成空间块: 每块独立包围球, 相机视锥外的块由 Three 自动剔除。
     // 源网格仍在 treeGroup 中 (隐藏于默认相机层), 供导出/统计/粒子采样/LOD/线框复用。
-    // 仅显示骨架时新网格默认可见, 必须先压掉叶片/花朵再切块, 否则分块仍按"可见"生成。
+    // 仅显示骨架时新网格默认可见, 必须先压掉树皮/叶片/花朵再切块, 否则分块仍按"可见"生成。
     if (this.skeletonOnly) {
+      this.barkMesh.visible = false
       if (this.leafMesh) this.leafMesh.visible = false
       if (this.flowerMesh) this.flowerMesh.visible = false
     }
@@ -844,21 +845,30 @@ export class TreeScene {
    */
   setSkeletonVisible(v) {
     this.showSkeleton = !!v
-    if (this.skeletonGroup) this.skeletonGroup.visible = this.showSkeleton
+    this._syncSkeletonVisibility()
   }
 
   /**
-   * 仅显示骨架: 隐藏叶片/花朵, 只保留树皮枝条结构 (果实随花朵/树皮一起处理)。
+   * 骨架叠层的统一可见性: 手动开关(叠加到树上) 或 "仅显示骨架" 模式 任一开启即显示。
+   * 后者把树皮/叶片全部隐藏, 此时如果叠层也跟着手动开关走, 画面会变成空的。
+   */
+  _syncSkeletonVisibility() {
+    if (this.skeletonGroup) this.skeletonGroup.visible = this.showSkeleton || this.skeletonOnly
+  }
+
+  /**
+   * 仅显示骨架: 隐藏树皮/叶片/花朵(含线框副本), 画面上只剩骨架线段与节点。
    *
    * 只是可见性切换, 不动几何与统计; 与动态 LOD 叠加 —— 重跑一次 applyLod
    * 就能让源网格、LOD 低模和视锥分块三套可见性同时按新标记收敛。
    * @param {boolean} v true = 仅显示骨架
-   * @sideeffect 写 this.skeletonOnly; 重新计算网格可见性
+   * @sideeffect 写 this.skeletonOnly; 重新计算网格可见性并强制显示骨架叠层
    */
   setSkeletonOnly(v) {
     const next = !!v
     if (next === this.skeletonOnly) return
     this.skeletonOnly = next
+    this._syncSkeletonVisibility()
     this.applyLod(this.lodLevel)
   }
 
@@ -922,7 +932,7 @@ export class TreeScene {
     }
     const group = new THREE.Group()
     group.name = 'SkeletonOverlay'
-    group.visible = this.showSkeleton
+    group.visible = this.showSkeleton || this.skeletonOnly
     if (linePos.length) {
       const g = new THREE.BufferGeometry()
       g.setAttribute('position', new THREE.Float32BufferAttribute(linePos, 3))
@@ -1521,14 +1531,18 @@ export class TreeScene {
     if (target > 0 && !this._ensureLod(target)) target = 0
     this.lodLevel = target
     // 源网格本身永远"逻辑可见"(导出/统计要用), 真正渲染的是分块, 由下面同步。
-    if (this.barkMesh) this.barkMesh.visible = target === 0
+    // 例外: "仅显示骨架"模式下树皮也要压掉, 否则骨架只是叠在实体上。
+    if (this.barkMesh) this.barkMesh.visible = target === 0 && !this.skeletonOnly
     // 仅显示骨架时叶片/花朵一律隐藏, 与当前 LOD 档位叠加 (低模同样隐藏)。
     if (this.leafMesh) this.leafMesh.visible = target === 0 && !this.skeletonOnly
     if (this.flowerMesh) this.flowerMesh.visible = target === 0 && !this.skeletonOnly
+    // 线框副本也是树皮/叶片的几何, 仅骨架模式下一起隐藏。
+    if (this.wireBark) this.wireBark.visible = !this.skeletonOnly
+    if (this.wireLeaf) this.wireLeaf.visible = !this.skeletonOnly
     this._syncCullChunks(target)
     for (const e of this.lodCache.values()) {
       const on = e.level === target
-      if (e.barkMesh) e.barkMesh.visible = on
+      if (e.barkMesh) e.barkMesh.visible = on && !this.skeletonOnly
       if (e.leafMesh) e.leafMesh.visible = on && !this.skeletonOnly
       if (e.flowerMesh) e.flowerMesh.visible = on && !this.skeletonOnly
     }
@@ -2183,8 +2197,9 @@ export class TreeScene {
     const solid = m === 'off'
     // 源网格的 visible 在这里被"重置为 true", 随后按模式再改;
     // 这一步是必要的, 因为上一次退出 only 模式时它是 false。
-    this.barkMesh.visible = true
-    if (this.leafMesh) this.leafMesh.visible = true
+    // 但"仅显示骨架"模式下不能重新打开, 否则切线框会把树皮又显示出来。
+    this.barkMesh.visible = !this.skeletonOnly
+    if (this.leafMesh) this.leafMesh.visible = !this.skeletonOnly
     if (solid) {
       this.barkMesh.material.wireframe = false
       if (this.leafMesh) this.leafMesh.material.wireframe = false
@@ -2192,8 +2207,8 @@ export class TreeScene {
       return
     }
     // overlay: 保留实体, 叠加线框; only: 只显示线框
-    this.barkMesh.visible = m === 'overlay'
-    if (this.leafMesh) this.leafMesh.visible = m === 'overlay'
+    this.barkMesh.visible = m === 'overlay' && !this.skeletonOnly
+    if (this.leafMesh) this.leafMesh.visible = m === 'overlay' && !this.skeletonOnly
     this._syncCullChunks(this.lodLevel)
     // mk: 造一个"共享几何 + 纯色线框材质"的副本网格。
     // color 只是区分树皮(青绿)与树叶(琥珀), 没有语义。
@@ -2217,9 +2232,11 @@ export class TreeScene {
       return mesh
     }
     this.wireBark = mk(this.barkMesh.geometry, 0x7fe0c0)
+    this.wireBark.visible = !this.skeletonOnly
     this.treeGroup.add(this.wireBark)
     if (this.leafMesh) {
       this.wireLeaf = mk(this.leafMesh.geometry, 0xffd166)
+      this.wireLeaf.visible = !this.skeletonOnly
       this.treeGroup.add(this.wireLeaf)
     }
   }

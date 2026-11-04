@@ -31,7 +31,7 @@
     <ToggleRow label="网格" v-model="s.grid" />
     <SelectRow label="线框展示 (三角面)" v-model="s.wireframe" :options="wireOptions" />
     <ToggleRow label="仅显示骨架" v-model="s.skeletonOnly" />
-    <p v-if="s.skeletonOnly" class="muted" style="margin: 0 0 6px">已隐藏叶片与花朵，仅保留树皮枝条结构。</p>
+    <p v-if="s.skeletonOnly" class="muted" style="margin: 0 0 6px">已隐藏树皮、叶片与花果，只显示骨架线段与节点。</p>
     <ToggleRow label="雾" v-model="s.fog" />
     <template v-if="s.fog">
       <ColorRow label="雾颜色" v-model="s.fogColor" />
