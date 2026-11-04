@@ -55,14 +55,21 @@
               <path v-for="e in fnPaths" :key="e.id" :d="e.d" class="edge call thin"
                 :class="{ hl: isHl(e) }" marker-end="url(#fg-arrow-call)" />
 
-              <!-- 参数节点 -->
+              <!-- 参数节点: 折叠时显示 2 个关键字段的实时值, 展开后列出全部字段 -->
               <g v-for="p in paramNodes" :key="'p-' + p.id" class="node param"
-                :class="{ hl: isHl({ kind: 'param', id: p.id }), dim: !paramHit(p), sel: sel && sel.kind === 'param' && sel.id === p.id }"
+                :class="{ hl: isHl({ kind: 'param', id: p.id }), dim: !paramHit(p), sel: sel && sel.kind === 'param' && sel.id === p.id, open: p.expanded }"
                 @mouseenter="hover = { kind: 'param', id: p.id }" @mouseleave="hover = null"
-                @click.stop="select({ kind: 'param', id: p.id })">
+                @click.stop="select({ kind: 'param', id: p.id })" @dblclick.stop="toggleParam(p.id)">
                 <rect :x="p.x" :y="p.y" :width="p.w" :height="p.h" rx="7" />
-                <text :x="p.x + 9" :y="p.y + 19" class="name">{{ p.id }}</text>
-                <text :x="p.x + p.w - 9" :y="p.y + 19" class="meta" text-anchor="end">{{ p.count }}</text>
+                <text :x="p.x + 9" :y="p.y + 16" class="name"
+                  @click.stop="toggleParam(p.id)">{{ p.expanded ? '▾' : '▸' }} {{ p.id }}</text>
+                <text :x="p.x + p.w - 9" :y="p.y + 16" class="meta" text-anchor="end">{{ p.count }}</text>
+                <text :x="p.x + 9" :y="p.y + 33" class="pval preview">{{ p.preview }}</text>
+                <g v-for="(row, ri) in p.rows" :key="row.full" class="pfield">
+                  <title>{{ row.full }} = {{ row.value }}</title>
+                  <text :x="p.x + 10" :y="p.y + 63 + ri * 15" class="pkey">{{ row.key }}</text>
+                  <text :x="p.x + p.w - 8" :y="p.y + 63 + ri * 15" class="pval" text-anchor="end">{{ row.value }}</text>
+                </g>
               </g>
 
               <!-- 模块卡片 -->
@@ -97,12 +104,12 @@
             <div class="d-head">
               <span class="k">参数组</span>
               <h3>{{ selectedParam.id }}</h3>
-              <span class="muted">{{ selectedParam.fields.length }} 个字段 · {{ groupFnCount(selectedParam.id) }} 个函数引用</span>
+              <span class="muted">{{ selectedFields.length }} 个字段 · {{ groupFnCount(selectedParam.id) }} 个函数引用</span>
             </div>
             <div class="d-sec">
-              <div class="d-sub">字段</div>
+              <div class="d-sub">字段（实时值）</div>
               <div class="d-list fields">
-                <div v-for="f in selectedParam.fields" :key="f.path" class="row">
+                <div v-for="f in selectedFields" :key="f.path" class="row">
                   <span class="mono">{{ f.path }}</span><span class="val">{{ f.value }}</span>
                 </div>
               </div>
@@ -216,6 +223,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { GRAPH_DATA } from '../core/graphData.generated.js'
+import { state } from '../store/treeStore.js'
 
 const emit = defineEmits(['close'])
 
@@ -292,6 +300,7 @@ const query = ref('')
 const hover = ref(null)
 const sel = ref(null)
 const expanded = reactive(new Set())
+const expandedParams = reactive(new Set())
 const visibleCats = reactive(new Set(CATEGORIES))
 const view = reactive({ x: 20, y: 20, s: 1 })
 const canvasRef = ref(null)
@@ -330,21 +339,102 @@ watch(q, (v) => {
   }
 })
 
+/* ------------------------- 实时参数值 (节点上显示) ------------------------- */
+const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v)
+
+/** 参数值的紧凑格式: 数字最多 3 位小数, 布尔/字符串原样, 数组显示元素个数。 */
+function fmtVal(v) {
+  if (typeof v === 'number') {
+    if (!Number.isFinite(v)) return String(v)
+    if (Number.isInteger(v) || Math.abs(v) >= 100) return String(v)
+    return String(Number(v.toFixed(3)))
+  }
+  if (typeof v === 'string') return v.length > 18 ? v.slice(0, 17) + '…' : v
+  if (typeof v === 'boolean') return v ? 'true' : 'false'
+  if (Array.isArray(v)) return `[${v.length}]`
+  return '{…}'
+}
+
+/**
+ * 展开参数对象为 "路径 -> 值"。
+ * 数组按第 0 个元素展开并加 `[]` 后缀 (branches.level[0..4] 结构相同, 不重复列 5 遍),
+ * 与 scripts/gen-graph.mjs 的展开规则保持一致。
+ */
+function flattenLive(obj, prefix, out, depth = 0) {
+  for (const [k, v] of Object.entries(obj)) {
+    const path = prefix ? `${prefix}.${k}` : k
+    if (Array.isArray(v)) {
+      if (v.length && isObj(v[0]) && depth < 3) flattenLive(v[0], path + '[]', out, depth + 1)
+      else out.push({ path, value: fmtVal(v) })
+    } else if (isObj(v)) {
+      if (depth >= 3) out.push({ path, value: '{…}' })
+      else flattenLive(v, path, out, depth + 1)
+    } else {
+      out.push({ path, value: fmtVal(v) })
+    }
+  }
+}
+
+/** 当前生效参数 (state.params) 的展开结果; 改动滑杆时图谱数字实时更新。 */
+const liveFieldsByGroup = computed(() => {
+  const map = new Map()
+  for (const p of DATA.params) {
+    const v = state.params?.[p.id]
+    const out = []
+    if (isObj(v)) flattenLive(v, '', out)
+    else if (v !== undefined) out.push({ path: p.id, value: fmtVal(v) })
+    else out.push(...p.fields) // 兜底: 用生成时的默认值
+    map.set(p.id, out)
+  }
+  return map
+})
+
+const leafName = (path) => path.split('.').pop().replace(/\[\]/g, '')
+const truncate = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
+
+/**
+ * 折叠态参数节点上的一行摘要: 取前两个"短标量"字段, 例如 `height 8 · radius 0.24`。
+ * 布尔/超长值不参与摘要, 避免一行里放不下。
+ */
+function previewLine(fields) {
+  const picked = fields
+    .filter((f) => f.value !== '{…}' && f.value.length <= 10 && !f.path.includes('[]'))
+    .slice(0, 2)
+  if (!picked.length) return '—'
+  return truncate(picked.map((f) => `${leafName(f.path)} ${f.value}`).join(' · '), 30)
+}
+
 /* ------------------------- 布局 (参数列 + 分类列) ------------------------- */
-const PARAM_W = 180
-const PARAM_H = 28
+const PARAM_W = 236
+const PARAM_MIN_H = 46
 const PARAM_GAP = 7
+const PARAM_ROW = 15
 const CARD_W = 216
 const CARD_GAP = 16
 const COL_GAP = 34
 const HEAD_H = 30
 
 const layout = computed(() => {
-  const params = DATA.params.map((p, i) => ({
-    id: p.id, x: 16, y: 20 + i * (PARAM_H + PARAM_GAP), w: PARAM_W, h: PARAM_H,
-    count: GROUP_REFS.get(p.id) ? GROUP_REFS.get(p.id).size : 0,
-  }))
-  const paramBottom = 20 + DATA.params.length * (PARAM_H + PARAM_GAP)
+  let py = 20
+  const params = []
+  for (const p of DATA.params) {
+    const fields = liveFieldsByGroup.value.get(p.id) || []
+    const isExp = expandedParams.has(p.id)
+    const rows = isExp ? fields.map((f) => ({
+      full: f.path,
+      key: truncate(f.path, 26),
+      value: f.value,
+    })) : []
+    const h = isExp ? PARAM_MIN_H + 6 + rows.length * PARAM_ROW + 8 : PARAM_MIN_H
+    params.push({
+      id: p.id, x: 16, y: py, w: PARAM_W, h, expanded: isExp,
+      count: GROUP_REFS.get(p.id) ? GROUP_REFS.get(p.id).size : 0,
+      rows,
+      preview: previewLine(fields),
+    })
+    py += h + PARAM_GAP
+  }
+  const paramBottom = py
   let x = 16 + PARAM_W + COL_GAP
   const cards = []
   for (const cat of CATEGORIES) {
@@ -398,7 +488,7 @@ const paramPaths = computed(() => {
       out.push({
         id: `pm:${p.id}:${modId}`,
         kind: 'param', from: p.id, to: modId, count,
-        d: curveH(p.x + p.w, p.y + p.h / 2, c.x, c.y + Math.min(HEAD_H, c.h) / 2 + (c.h > HEAD_H ? 0 : 2)),
+        d: curveH(p.x + p.w, p.y + 18, c.x, c.y + Math.min(HEAD_H, c.h) / 2 + (c.h > HEAD_H ? 0 : 2)),
       })
     }
   }
@@ -477,6 +567,7 @@ function isHl(e) {
 
 /* ------------------------- 详情访问器 ------------------------- */
 const selectedParam = computed(() => sel.value?.kind === 'param' ? DATA.params.find((p) => p.id === sel.value.id) : null)
+const selectedFields = computed(() => (sel.value?.kind === 'param' ? liveFieldsByGroup.value.get(sel.value.id) : null) || [])
 const selectedModule = computed(() => sel.value?.kind === 'module' ? MODULE_BY_ID.get(sel.value.id) : null)
 const selectedFn = computed(() => sel.value?.kind === 'fn' ? FN_BY_ID.get(sel.value.id) : null)
 
@@ -502,6 +593,11 @@ function select(s) { sel.value = s }
 function toggleModule(id) {
   if (expanded.has(id)) expanded.delete(id)
   else expanded.add(id)
+}
+/** 展开/收起参数节点上的字段值列表。 */
+function toggleParam(id) {
+  if (expandedParams.has(id)) expandedParams.delete(id)
+  else expandedParams.add(id)
 }
 function gotoModule(id) {
   if (!visibleCats.has(MODULE_BY_ID.get(id)?.category)) visibleCats.add(MODULE_BY_ID.get(id).category)
@@ -692,8 +788,12 @@ onBeforeUnmount(() => {
 .edge.hl { opacity: 0.95; stroke-width: 2; }
 
 .node.param rect { fill: #142133; stroke: #2f4d6b; }
-.node.param .name { fill: #cfe2ff; font-size: 12px; font-weight: 600; }
+.node.param .name { fill: #cfe2ff; font-size: 12px; font-weight: 600; cursor: pointer; }
 .node.param .meta { fill: #7bb7ff; font-size: 10px; }
+.node.param .preview { fill: #8fa6c4; font-size: 9px; opacity: 0.85; }
+.node.param .pfield .pkey { fill: #a9bdd8; font-size: 9px; }
+.node.param .pfield .pval { fill: #d6e4f5; font-size: 9px; }
+.node.param.open rect { fill: #16273c; }
 .node.param.hl rect { fill: #1b2f49; stroke: #7bb7ff; }
 .node.param.sel rect { stroke: #7bb7ff; stroke-width: 2; }
 
