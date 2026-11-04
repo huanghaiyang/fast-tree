@@ -231,6 +231,12 @@ uniform float uBackEnabled;
 uniform vec3 uBackColor;
 uniform float uHasBackMap;
 uniform sampler2D uBackMap;
+// --- 树皮苔藓 (只对树皮材质有意义; 叶片材质把 uMossEnabled 固定为 0) ---
+uniform float uMossEnabled;
+uniform float uMossCoverage;
+uniform float uMossScale;
+uniform float uMossHeightBias;
+uniform vec3 uMossColor;
 // --- 模型节点选中 ---
 uniform float uSelectMode;
 uniform vec3 uSelColor;
@@ -271,6 +277,26 @@ function fragmentBody(customFragment) {
       diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vColor.rgb, uVertexColorMix);
     #endif
     diffuseColor.rgb *= uTint;
+  }
+  // --- 苔藓: 按树皮 UV 的噪声斑块 + 高度偏置, 在树皮上叠加一层绿膜 ---
+  // 纯片元效果, 不增加几何; uMossEnabled=0 时整段在数值上为 0 (开销可忽略)。
+  // 叶片材质把 uMossEnabled 固定为 0, 因此同一段 GLSL 可以安全地共用。
+  if (uMossEnabled > 0.5) {
+    // UV 是树皮展开后的物理坐标, x=环向、y=纵向; 叠加两种频率的正弦得到不规则斑块。
+    float mossY = vTreeUv.y * uMossScale * 0.35;
+    float mossX = vTreeUv.x * uMossScale;
+    float mn = sin(mossX * 1.7 + mossY * 0.9) * sin(mossY * 2.3 - mossX * 0.6 + 1.7);
+    float mn2 = sin(mossY * 4.1 + 2.4) * 0.5;
+    float pat = mn * 0.65 + mn2 * 0.35 + 0.5;          // 约 0..1 的噪声
+    // 高度偏置: 树干越靠近地面越容易长苔藓 (uMossHeightBias 越大越明显)
+    // 注意: smoothstep 的 edge0 必须 < edge1, 否则 GLSL 结果是未定义的;
+    // 这里用 1 - smoothstep(下界, 上界, y) 表达"越往低处越大"。
+    float low = 1.0 - smoothstep(0.0, 2.4, vTreeUv.y);
+    float bias = uMossHeightBias * low;
+    // 覆盖率越高阈值越低 -> 苔藓面积越大
+    float thr = 1.0 - uMossCoverage * 0.95 + bias;
+    float mask = smoothstep(thr - 0.12, thr + 0.08, pat);
+    diffuseColor.rgb = mix(diffuseColor.rgb, uMossColor, mask * 0.9);
   }
   // --- 模型节点: 隔离 / 变暗 / 选中着色 ---
   if (uSelectMode > 1.5 && vTreeSelected < 0.5) {
@@ -665,6 +691,12 @@ export function perMaterialUniforms(params, isLeaf) {
     uBackColor: { value: new THREE.Color(m.backColor || '#b9d49a') },  // 默认背面是偏浅的黄绿
     uHasBackMap: { value: 0 },                               // 0 = 复用正面贴图
     uBackMap: { value: whitePixelTexture() },                // 先绑白色占位，见 whitePixelTexture()
+    // 苔藓: 只在树皮材质启用; 叶片材质固定为 0 (避免同一段 GLSL 影响叶子)
+    uMossEnabled: { value: isLeaf ? 0 : ((m.moss && m.moss.enabled) ? 1 : 0) },
+    uMossCoverage: { value: isLeaf ? 0 : (m.moss && m.moss.coverage !== undefined ? m.moss.coverage : 0.6) },
+    uMossScale: { value: isLeaf ? 1 : (m.moss && m.moss.scale !== undefined ? m.moss.scale : 6) },
+    uMossHeightBias: { value: isLeaf ? 0 : (m.moss && m.moss.heightBias !== undefined ? m.moss.heightBias : 0.35) },
+    uMossColor: { value: new THREE.Color(isLeaf ? '#ffffff' : ((m.moss && m.moss.color) || '#4c6b32')) },
   }
 }
 
@@ -1031,6 +1063,13 @@ export function updateBarkMaterial(mat, params, sharedUniforms) {
   u.uUvWarpScale.value = p.uvWarpScale === undefined ? 8 : p.uvWarpScale
   u.uVertexColorMix.value = p.vertexColorMix
   u.uTint.value.set(p.tint || '#ffffff')
+  // 苔藓 (只改 uniform, 不触发重新编译)
+  const moss = p.moss || {}
+  u.uMossEnabled.value = moss.enabled ? 1 : 0
+  u.uMossCoverage.value = moss.coverage === undefined ? 0.6 : moss.coverage
+  u.uMossScale.value = moss.scale === undefined ? 6 : moss.scale
+  u.uMossHeightBias.value = moss.heightBias === undefined ? 0.35 : moss.heightBias
+  u.uMossColor.value.set(moss.color || '#4c6b32')
 
   /* ---------------- ③ 贴图来源：照片贴图 或 程序化 ---------------- */
   if (p.texture) {

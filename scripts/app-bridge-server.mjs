@@ -202,7 +202,7 @@ const LLM_SYSTEM = `你是"快速树生成工具 (FastTree)"的建模助手。�
 - 用户说"还原/照着这张图建模/改成这样/和参考图一致/按图重建" -> 必须走下方参考图还原流程, 至少 set_params + rebuild + screenshot 各一次, 不能只给方案
 - 一句话里两者都有 ("识别并还原") -> 先简短描述要点, 再直接建模, 不要反问
 取值与语义 (都已确定, 不要靠 list_* 或试错去猜):
-- 树种 species: oak 橡树 / maple 枫树 / pine 松树 / birch 白桦 / willow 垂柳 / sakura 樱花 / shrub 灌木 / dead 枯树 (没有 banyan)
+- 树种 species: oak 橡树 / maple 枫树 / pine 松树 / birch 白桦 / willow 垂柳 / sakura 樱花 / shrub 灌木 / dead 枯树 / banyan 榕树
 - 生长阶段 stage: seedling 树苗 / sapling 幼树 / young 小树 / mature 大树 / ancient 古树
 - 季节 season: spring / summer / autumn / winter
 - leaves.shape (程序化叶形): oval 椭圆 / birch 桦叶 / lance 披针 / needle 针叶 / maple 枫(浅裂) / oak 橡叶 / palmate 掌状 5 裂 / cordate 心形
@@ -224,7 +224,7 @@ const LLM_SYSTEM = `你是"快速树生成工具 (FastTree)"的建模助手。�
 - 换树种/换参考图时先清掉上一轮残留的卡片贴图, 否则旧卡片会盖掉季节叶色: 在 set_params 里同时带 'leaves.cardMode':false、'leafMat.texture':''、'leafMat.tintMode':'season' (只有当参考图的叶片形态与某个卡片批次一致时才保留卡片)
 参考图还原流程 (用户发图, 或说"照着这张图/这棵树建模"时, 必须按顺序执行):
 1. 先在思考里定 3~6 条要点: 树种/生长阶段/季节, 树冠轮廓(圆/伞/塔/垂/不规则)与冠幅/树高比例, 主干分叉(高度/条数/角度), 枝条走向与疏密, 叶片形状/大小/颜色, 花或果, 树皮质感, 地面与天空氛围
-2. 第 1 轮: app.apply_preset 定树种+阶段+季节 (可用树种 oak/maple/pine/birch/willow/sakura/shrub/dead, 季节 spring/summer/autumn/winter); 需要完整键名时同一轮并行 app.get_params
+2. 第 1 轮: app.apply_preset 定树种+阶段+季节 (可用树种 oak/maple/pine/birch/willow/sakura/shrub/dead/banyan, 季节 spring/summer/autumn/winter); 需要完整键名时同一轮并行 app.get_params
 3. 第 2 轮: app.set_params 一次批量精调树形/枝条/叶/花/果/树皮/地面, 参考下方映射
 4. 第 3 轮: app.rebuild
 5. 第 4 轮: app.screenshot (默认 900px JPEG, 会作为图片回传给你), 与参考图对比轮廓/比例/疏密/颜色

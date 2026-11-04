@@ -38,6 +38,12 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { TransformControls } from 'three/addons/controls/TransformControls.js'
+// 后处理: Bloom(泛光) + DOF(景深)。按需惰性构建, 关闭时完全走直出路径。
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
+import { BokehPass } from 'three/addons/postprocessing/BokehPass.js'
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 import { buildTree } from './treeBuilder.js'
 import {
   createSharedUniforms, createBarkMaterial, createLeafMaterial, createFlowerMaterial,
@@ -596,6 +602,75 @@ export class TreeScene {
     this.renderer.setSize(w, h, false)
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
+    // 后处理开启时合成器也要跟着改尺寸, 否则会出现"画面缩在左下角"。
+    if (this._composer) this._composer.setSize(w, h)
+  }
+
+  /**
+   * 惰性构建后处理合成器 (Bloom + DOF)。
+   *
+   * 为什么不放在构造函数里: 后处理会多出 2~3 个全屏 pass 和两张 RT, 对"只看结构"
+   * 的用户是纯开销。只有 scene.bloomEnabled / dofEnabled 至少一个为真时才建,
+   * 关闭后仍保留实例 (再次开启不用重新编译 shader), 但 _renderFrame 走直出。
+   */
+  _ensureComposer() {
+    if (this._composer) return this._composer
+    const el = this.container
+    const w = Math.max(1, el.clientWidth)
+    const h = Math.max(1, el.clientHeight)
+    const composer = new EffectComposer(this.renderer)
+    composer.setSize(w, h)
+    composer.addPass(new RenderPass(this.scene, this.camera))
+    // DOF 放 Bloom 前: 先虚化背景, 再让高光泛光, 焦外光斑更自然。
+    const bokeh = new BokehPass(this.scene, this.camera, {
+      focus: this._post ? this._post.dofFocus : 12,
+      aperture: this._post ? this._post.dofAperture : 0.00002,
+      maxblur: this._post ? this._post.dofMaxBlur : 0.008,
+    })
+    composer.addPass(bokeh)
+    const bloom = new UnrealBloomPass(
+      new THREE.Vector2(w, h),
+      this._post ? this._post.bloomStrength : 0.55,
+      this._post ? this._post.bloomRadius : 0.4,
+      this._post ? this._post.bloomThreshold : 0.82,
+    )
+    composer.addPass(bloom)
+    // OutputPass 负责最终的色彩空间/tone mapping 转换 (r15x 之后必须显式加)。
+    composer.addPass(new OutputPass())
+    this._composer = composer
+    this._bokehPass = bokeh
+    this._bloomPass = bloom
+    return composer
+  }
+
+  /**
+   * 单帧渲染入口: 后处理开启时走 composer, 否则保持原来的直出路径。
+   * tick / 截图都走这里, 保证"所见即所存"。
+   */
+  _renderFrame() {
+    const s = this._post
+    if (!s || (!s.bloomEnabled && !s.dofEnabled)) {
+      this.renderer.render(this.scene, this.camera)
+      return
+    }
+    const composer = this._ensureComposer()
+    if (this._bokehPass) {
+      this._bokehPass.enabled = !!s.dofEnabled
+      const u = this._bokehPass.uniforms
+      if (u) {
+        // focus 传的是"对焦距离", aperture/maxblur 直接透传用户滑块
+        if (u.focus) u.focus.value = Math.max(0.1, s.dofFocus)
+        if (u.aperture) u.aperture.value = Math.max(0, s.dofAperture)
+        if (u.maxblur) u.maxblur.value = Math.max(0, s.dofMaxBlur)
+      }
+    }
+    if (this._bloomPass) {
+      this._bloomPass.enabled = !!s.bloomEnabled
+      this._bloomPass.strength = s.bloomStrength
+      this._bloomPass.radius = s.bloomRadius
+      this._bloomPass.threshold = s.bloomThreshold
+    }
+    composer.render()
   }
 
   /* ------------------------------------------------------------------ */
@@ -2044,6 +2119,17 @@ export class TreeScene {
     // 超过它的部分不再继续变亮(避免自发光过曝)。
     this.uniforms.uSunDir.value.copy(this.sun.position).normalize()
     this.uniforms.uSunColor.value.copy(this.sun.color).multiplyScalar(Math.min(1, this.sun.intensity / 2.5))
+    // 后处理开关与强度: 只在 _renderFrame 里读取, 不重建 composer (uniform/属性更新)
+    this._post = {
+      bloomEnabled: !!s.bloomEnabled,
+      bloomStrength: s.bloomStrength === undefined ? 0.55 : s.bloomStrength,
+      bloomRadius: s.bloomRadius === undefined ? 0.4 : s.bloomRadius,
+      bloomThreshold: s.bloomThreshold === undefined ? 0.82 : s.bloomThreshold,
+      dofEnabled: !!s.dofEnabled,
+      dofFocus: s.dofFocus === undefined ? 12 : s.dofFocus,
+      dofAperture: s.dofAperture === undefined ? 0.00002 : s.dofAperture,
+      dofMaxBlur: s.dofMaxBlur === undefined ? 0.008 : s.dofMaxBlur,
+    }
     this.applyShadowFlags()
   }
 
@@ -3012,7 +3098,7 @@ export class TreeScene {
     if (kind === 'glb') return buildGLBPreview(this.buildExportGroup(), name || `fasttree-${this.lastParams?.seed || 'tree'}.glb`)
     if (kind === 'obj') return buildOBJPreview(this.buildExportGroup(), name || `fasttree-${this.lastParams?.seed || 'tree'}.obj`)
     if (kind === 'png') {
-      this.renderer.render(this.scene, this.camera)
+      this._renderFrame()
       const el = this.renderer.domElement
       const dataUrl = el.toDataURL('image/png')
       return buildPNGPreview(dataUrl, name || `fasttree-${this.lastParams?.seed || 'tree'}.png`, el.width, el.height)
@@ -3028,7 +3114,7 @@ export class TreeScene {
    * @returns {*} exportScreenshot 的返回值
    */
   screenshot(name) {
-    this.renderer.render(this.scene, this.camera)
+    this._renderFrame()
     return exportScreenshot(this.renderer, name)
   }
 
@@ -3082,7 +3168,7 @@ export class TreeScene {
     this.controls.update()
     this.updateLod()
     this._syncCullChunks(this.lodLevel)
-    this.renderer.render(this.scene, this.camera)
+    this._renderFrame()
     // renderer.info.render 是"上一帧"的实际绘制统计(calls/triangles/points),
     // 交给 UI 的性能面板; 只有需要时才回调, 避免每帧都触发一次响应式更新。
     if (this.callbacks.onFrame) this.callbacks.onFrame(this.renderer.info.render)
@@ -3191,6 +3277,12 @@ export class TreeScene {
       this.starsMat.dispose()
     }
     /* ---- renderer 与 canvas ---- */
+    if (this._composer) {
+      this._composer.dispose()
+      this._composer = null
+      this._bokehPass = null
+      this._bloomPass = null
+    }
     this.renderer.dispose()
     if (this.renderer.domElement.parentNode) {
       this.renderer.domElement.parentNode.removeChild(this.renderer.domElement)

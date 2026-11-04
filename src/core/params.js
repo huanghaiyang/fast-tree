@@ -278,6 +278,60 @@ export function defaultParams() {
       autoStagger: true,   // 自动把方位重叠的根错开到不同高度, 避免窗口挤在一起
     },
 
+    /* 板根: 在树干基部生成放射状的高大"翼板" (榕树/雨林巨树的典型特征)。
+     * 与 trunk.flare 的圆鼓包不同, 这里用有限高度的窄角凸起, 像墙一样贴着地面向上收。
+     * 全部为 0/关闭 时不消耗随机数, 旧 seed 的树形不变。 */
+    buttress: {
+      enabled: false,
+      count: 7,            // 翼板数量 (放射状)
+      strength: 0.55,      // 外扩强度 (相对树干半径的增量)
+      height: 0.16,        // 翼板向上延伸的高度 (相对树干)
+      flare: 0.9,          // 翼板根部的地面外张量
+      sharpness: 2.6,      // 角向锐度: 越大越像窄墙, 越小越像圆鼓包
+    },
+
+    /* 气生根 / 支柱根: 从上部枝条垂下的根, 可垂到地面形成"柱" (榕树的标志性结构)。
+     * levels 是"哪几级枝条允许生气生根"的开关 (与 leaves.levels 同样按层下标)。
+     * 关闭时完全不消耗随机数。 */
+    aerialRoots: {
+      enabled: false,
+      levels: [false, true, true, true, true],
+      chance: 0.3,         // 每根合格枝条的气生根概率
+      count: 2,            // 每根合格枝条最多生成几条
+      thickness: 0.22,     // 基部半径 ÷ 枝条该处半径
+      length: 1.0,         // 垂到地面的比例 (1 = 直接落地)
+      maxLength: 9.0,      // 最大长度(米), 防止穿过镜头
+      droop: 0.9,          // 向下垂的强度
+      wobble: 0.5,         // 水平方向摆动幅度
+      segments: 9,         // 纵向分段
+      taper: 0.35,         // 梢/基半径
+    },
+
+    /* 附生植物: 枝干上的蕨类团 + 垂藤, 用叶卡片几何挂在枝条表面。
+     * 对榕树/雨林树种的"苔藓与蕨类附生"观感至关重要; 关闭时不消耗随机数。 */
+    epiphyte: {
+      enabled: false,
+      levels: [false, true, true, false, false],
+      ferns: 3,            // 每根合格枝条的蕨类团数量
+      vines: 2,            // 每根合格枝条的垂藤数量
+      chance: 0.35,
+      size: 0.55,          // 蕨叶长度(米)
+      vineLength: 1.4,     // 垂藤长度(米)
+      color: '#5d7a34',
+      colorTip: '#93b254',
+    },
+
+    /* 古树特征: 断枝与树洞。
+     * deadChance 概率把某根新枝变成"断枝"(短、无叶、深色);
+     * hollowDepth 在树干上挖出一处凹陷(树洞的骨架近似), hollowHeight 控制其高度。 */
+    oldTree: {
+      deadChance: 0,       // 每根枝条成为断枝的概率 0..1
+      deadLength: 0.45,    // 断枝长度 ÷ 原长度
+      hollowDepth: 0,      // 树洞凹陷深度 (相对半径) 0 = 关闭
+      hollowHeight: 0.32,  // 树洞在树干上的高度 (0..1)
+      hollowSize: 0.6,     // 树洞角向宽度 (弧度)
+    },
+
     /* 树枝: levels 是有效层数 (1..MAX_LEVELS), level[i] 是第 i+1 层的配置 (字段见 defaultLevel)。
      * 下面几个 *Scale 是全局乘算修正 —— 想整体压一下形状时改这里, 不必逐层调;
      * twistProfile 是视口句柄编辑出来的 5 控制点扭转曲线 (度), 叠加在每层 twist 之上。
@@ -294,6 +348,25 @@ export function defaultParams() {
       apicalDominance: 0.35,                  // 顶端优势: 越靠顶端枝条越短
       // 扭曲曲线: 沿每条枝条长度 5 个控制点 (t=0/25/50/75/100%) 的额外扭转角(度)
       twistProfile: [0, 0, 0, 0, 0],
+      // 分枝算法: levels = 传统逐层递归; sca = 空间殖民宽冠 (适合榕树/古榕的网状枝条)
+      mode: 'levels',
+      // 空间殖民 (Space Colonization Algorithm) 参数: 只在 mode='sca' 时生效
+      sca: {
+        attractors: 140,     // 树冠吸引点数量
+        crownWidth: 1.35,    // 冠幅 ÷ 树高 (榕树常 > 1)
+        crownHeight: 0.5,    // 冠高 ÷ 树高
+        crownDrop: 0.12,     // 冠中心相对分叉点的下移 (÷ 树高)
+        step: 0.045,         // 每步长度 ÷ 树高
+        killRadius: 0.16,    // 吸引点被消耗的半径 ÷ 树高
+        branchiness: 0.35,   // 分叉概率 (越大越密)
+        maxBranches: 90,     // 最大枝条段数 (性能上限)
+        startT: 0.52,        // 在树干上的起始高度 (分叉/发枝位置)
+        droop: 0.22,         // 枝条向下垂的偏置 (0..1)
+        wander: 0.28,        // 生长方向噪声幅度 (0..1)
+        collision: 0.16,      // 碰撞避让距离 ÷ 树高 (0 = 允许自由穿插)
+        radiusScale: 0.42,   // 主冠枝基部半径 ÷ 树干该处半径
+        taper: 0.18,         // 冠枝梢/基半径比
+      },
     },
 
     /* 树叶: 按"叶簇"挂在 branches.levels 指定的层上。
@@ -311,6 +384,7 @@ export function defaultParams() {
       clusterCount: 3,     // 每个位置的叶片数量
       clusterRadius: 0,    // 叶簇半径(米): 默认 0 = 叶簇不额外散开
       clusterSpread: 0,    // 叶簇离散度: 默认 0 = 叶片贴着取样点生长
+      clusterVolume: 0,    // 叶簇体积感: >0 时把簇内叶片分布到球壳上 (0 = 扁平散布)
       size: 0.42,          // 叶片长度(米)
       sizeVariance: 0.28,
       width: 0.78,         // 宽/长
@@ -470,6 +544,14 @@ export function defaultParams() {
       texture: '',         // 用户上传的贴图(dataURL)
       normalTexture: '',
       procedural: { enabled: true, style: 'rough', scale: 1.0, contrast: 0.5 },
+      // 苔藓: 在树皮着色器里按高度/噪声叠加一层绿膜 (只改材质, 不增加几何)
+      moss: {
+        enabled: false,
+        coverage: 0.6,     // 覆盖比例 0..1
+        scale: 6.0,        // 苔藓斑块频率
+        heightBias: 0.35,  // 偏向低处/背光面的程度
+        color: '#4c6b32',
+      },
     },
 
     /* 花朵: 独立于树叶的第二套植被系统 (复用同一套生成代码, 但参数完全独立)。
@@ -691,6 +773,15 @@ export function defaultParams() {
       hemiGround: '#3a2f24',
       stars: 0,           // 星空强度 0..1
       autoRotate: false,
+      // 后处理 (EffectComposer)。开启后每帧多一遍后期, 关闭时走原始直出。
+      bloomEnabled: false,
+      bloomStrength: 0.55,
+      bloomRadius: 0.4,
+      bloomThreshold: 0.82,
+      dofEnabled: false,
+      dofFocus: 12,       // 对焦距离 (米, 相对相机到树中心)
+      dofAperture: 0.00002,
+      dofMaxBlur: 0.008,
     },
 
     /* LOD: 细节倍率 + SpeedTree 式动态降级（相机拉远自动换低模, 拉近再切回）。
@@ -825,7 +916,7 @@ export function normalizeParams(p) {
  * 放错组的代价: 把纯 uniform 参数放进 geometry 会导致拖滑杆时反复重建几何 (卡顿);
  * 反之把几何参数放进 material 则会出现"改了没反应"的 bug。 */
 // 影响几何拓扑/顶点数据的键 (seed 改变会整体换个体, 所以也在几何组)
-const GEOMETRY_KEYS = ['seed', 'auto', 'trunk', 'roots', 'branches', 'leaves', 'flower', 'fruit', 'lod', 'ao', 'branchEdits', 'forces']
+const GEOMETRY_KEYS = ['seed', 'auto', 'trunk', 'roots', 'buttress', 'aerialRoots', 'epiphyte', 'oldTree', 'branches', 'leaves', 'flower', 'fruit', 'lod', 'ao', 'branchEdits', 'forces']
 // 只影响材质/着色器/合批实例的键 (落叶/粒子等是"另一个几何体", 重建代价低, 归到材质组)
 const MATERIAL_KEYS = ['bark', 'leafMat', 'custom', 'particles', 'fall', 'litter', 'flowerFall', 'flowerLitter']
 // 只进顶点着色器 uniform 的键

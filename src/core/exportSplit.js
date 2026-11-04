@@ -64,7 +64,8 @@ export function barkGroupName(node) {
   if (!node) return 'Bark_Other'
   if (node.type === 'fruit') return 'Bark_Fruit'
   if (node.type === 'trunk') return 'Bark_Trunk'
-  if (node.type === 'root') return 'Bark_Roots'
+  // 气生根/支柱根与地下树根同属根系, 导出时归并到 Bark_Roots
+  if (node.type === 'root' || node.type === 'aerial') return 'Bark_Roots'
   if (node.type === 'branch') {
     // 优先用 group 里的显式层级 (形如 "branch-L2"), 它比 node.level 更贴合真实分枝代数
     const m = /^branch-L(\d+)$/.exec(String(node.group || ''))

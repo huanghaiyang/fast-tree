@@ -1,4 +1,48 @@
 <template>
+  <Section title="分枝算法" hint="Algorithm">
+    <SelectRow label="分枝模式" v-model="b.mode" :options="modes"
+      hint="levels = 传统逐层递归; sca = 空间殖民宽冠 (榕树/古榕)" />
+    <template v-if="b.mode === 'sca'">
+      <SliderRow label="吸引点数量" v-model="s.attractors" :min="20" :max="420" :step="10" />
+      <SliderRow label="冠幅倍率 (÷树高)" v-model="s.crownWidth" :min="0.5" :max="2.8" :step="0.05" />
+      <SliderRow label="冠高倍率 (÷树高)" v-model="s.crownHeight" :min="0.2" :max="1.2" :step="0.02" />
+      <SliderRow label="冠中心下移" v-model="s.crownDrop" :min="0" :max="0.5" :step="0.01" />
+      <SliderRow label="生长步长 (÷树高)" v-model="s.step" :min="0.01" :max="0.12" :step="0.002" />
+      <SliderRow label="吸引点消耗半径" v-model="s.killRadius" :min="0.04" :max="0.4" :step="0.005" />
+      <SliderRow label="分叉概率" v-model="s.branchiness" :min="0" :max="0.9" :step="0.01" />
+      <SliderRow label="最大枝条数" v-model="s.maxBranches" :min="10" :max="240" :step="2" />
+      <SliderRow label="树干起始高度" v-model="s.startT" :min="0.2" :max="0.9" :step="0.01" />
+      <SliderRow label="下垂偏置" v-model="s.droop" :min="0" :max="1" :step="0.01" />
+      <SliderRow label="方向噪声" v-model="s.wander" :min="0" :max="1" :step="0.01" />
+      <SliderRow label="碰撞避让距离" v-model="s.collision" :min="0" :max="0.4" :step="0.005" hint="0 = 允许自由穿插" />
+      <SliderRow label="冠枝半径比" v-model="s.radiusScale" :min="0.1" :max="0.9" :step="0.01" />
+      <SliderRow label="冠枝锥度" v-model="s.taper" :min="0.05" :max="0.8" :step="0.01" />
+    </template>
+  </Section>
+
+  <Section title="气生根" hint="Aerial Roots" :default-collapsed="true">
+    <ToggleRow label="启用气生根" v-model="ar.enabled" />
+    <template v-if="ar.enabled">
+      <SliderRow label="每枝概率" v-model="ar.chance" :min="0" :max="1" :step="0.01" />
+      <SliderRow label="每枝数量上限" v-model="ar.count" :min="1" :max="6" :step="1" />
+      <SliderRow label="基部粗细 (÷枝条)" v-model="ar.thickness" :min="0.05" :max="0.8" :step="0.01" />
+      <SliderRow label="垂落长度比" v-model="ar.length" :min="0.1" :max="1.5" :step="0.01" hint="1 = 直接落地" />
+      <SliderRow label="最大长度" v-model="ar.maxLength" :min="1" :max="24" :step="0.5" unit="m" />
+      <SliderRow label="下垂强度" v-model="ar.droop" :min="0" :max="1" :step="0.01" />
+      <SliderRow label="横向摆动" v-model="ar.wobble" :min="0" :max="1.5" :step="0.01" />
+      <SliderRow label="纵向分段" v-model="ar.segments" :min="3" :max="20" :step="1" />
+      <SliderRow label="梢部/基部半径比" v-model="ar.taper" :min="0.05" :max="1" :step="0.01" />
+    </template>
+  </Section>
+
+  <Section title="古树特征" hint="Old Tree" :default-collapsed="true">
+    <SliderRow label="断枝概率" v-model="old.deadChance" :min="0" :max="1" :step="0.01" />
+    <SliderRow label="断枝保留长度" v-model="old.deadLength" :min="0.05" :max="1" :step="0.01" />
+    <SliderRow label="树洞深度" v-model="old.hollowDepth" :min="0" :max="0.9" :step="0.01" hint="0 = 关闭" />
+    <SliderRow label="树洞高度" v-model="old.hollowHeight" :min="0" :max="1" :step="0.01" />
+    <SliderRow label="树洞宽度" v-model="old.hollowSize" :min="0.1" :max="2" :step="0.01" />
+  </Section>
+
   <Section title="树枝层级" hint="Branch Levels">
     <SliderRow label="有效层级数" v-model="b.levels" :min="1" :max="5" :step="1"
       hint="树干算第 0 层; 每层的计数是「每根父枝上长几根」" />
@@ -84,12 +128,20 @@ import { computed, ref } from 'vue'
 import Section from '../ui/Section.vue'
 import SliderRow from '../ui/SliderRow.vue'
 import SelectRow from '../ui/SelectRow.vue'
+import ToggleRow from '../ui/ToggleRow.vue'
 import { state } from '../../store/treeStore.js'
 
 const b = state.params.branches
+const s = b.sca
+const ar = state.params.aerialRoots
+const old = state.params.oldTree
 const active = ref(0)
 const cfg = computed(() => b.level[Math.min(active.value, b.level.length - 1)])
 
+const modes = [
+  { value: 'levels', label: '逐层递归 (levels)' },
+  { value: 'sca', label: '空间殖民宽冠 (sca)' },
+]
 const crossSections = [
   { value: 'round', label: '圆 (round)' },
   { value: 'star', label: '星形 (star)' },

@@ -75,6 +75,8 @@ function perturbations(path, value) {
       round: ['star', 'square'], star: ['round'], square: ['round'],
       oval: ['needle', 'maple'], needle: ['oval'], maple: ['lance'], lance: ['oval'], birch: ['oval'],
       rough: ['birch', 'pine'], birch: ['rough'], pine: ['smooth'], smooth: ['rough'],
+      // 分枝算法只有三种合法取值, 直接互相切换
+      levels: ['sca'], sca: ['levels'],
     }
     if (map[value]) return map[value]
     return [value + ' /* audit */']
@@ -168,6 +170,57 @@ export const CONDITIONS = {
   'leaves.cardFold': { 'leaves.cardMode': true },
   // 开关本身要能看出效果: 先把挂果层级放到探针树有效的层级上
   'fruit.enabled': { 'fruit.levels': [false, true, true, false, false] },
+  // ---- 古榕/老树扩展参数 ----
+  // 板根: 只在启用时才改变树干基部几何
+  'buttress.count': { 'buttress.enabled': true },
+  'buttress.strength': { 'buttress.enabled': true },
+  'buttress.height': { 'buttress.enabled': true },
+  'buttress.flare': { 'buttress.enabled': true },
+  'buttress.sharpness': { 'buttress.enabled': true },
+  // 气生根: 只在启用时生效; 探针树有 L2, 默认 levels 的 L2 为 true
+  'aerialRoots.levels': { 'aerialRoots.enabled': true },
+  'aerialRoots.chance': { 'aerialRoots.enabled': true, 'aerialRoots.chance': 1 },
+  'aerialRoots.count': { 'aerialRoots.enabled': true, 'aerialRoots.chance': 1 },
+  'aerialRoots.thickness': { 'aerialRoots.enabled': true, 'aerialRoots.chance': 1 },
+  'aerialRoots.length': { 'aerialRoots.enabled': true, 'aerialRoots.chance': 1 },
+  'aerialRoots.maxLength': { 'aerialRoots.enabled': true, 'aerialRoots.chance': 1 },
+  'aerialRoots.droop': { 'aerialRoots.enabled': true, 'aerialRoots.chance': 1 },
+  'aerialRoots.wobble': { 'aerialRoots.enabled': true, 'aerialRoots.chance': 1 },
+  'aerialRoots.segments': { 'aerialRoots.enabled': true, 'aerialRoots.chance': 1 },
+  'aerialRoots.taper': { 'aerialRoots.enabled': true, 'aerialRoots.chance': 1 },
+  // 附生植物: 只在启用时挂在枝干上; 探针叶层 L1/L2 都在默认 levels 内
+  'epiphyte.levels': { 'epiphyte.enabled': true, 'epiphyte.chance': 1 },
+  'epiphyte.ferns': { 'epiphyte.enabled': true, 'epiphyte.chance': 1 },
+  'epiphyte.vines': { 'epiphyte.enabled': true, 'epiphyte.chance': 1 },
+  'epiphyte.chance': { 'epiphyte.enabled': true, 'epiphyte.chance': 1 },
+  'epiphyte.size': { 'epiphyte.enabled': true, 'epiphyte.chance': 1 },
+  'epiphyte.vineLength': { 'epiphyte.enabled': true, 'epiphyte.chance': 1 },
+  'epiphyte.color': { 'epiphyte.enabled': true, 'epiphyte.chance': 1 },
+  'epiphyte.colorTip': { 'epiphyte.enabled': true, 'epiphyte.chance': 1 },
+  // 断枝/树洞: 子参数需要先打开对应的主开关
+  'oldTree.deadLength': { 'oldTree.deadChance': 0.8 },
+  'oldTree.hollowHeight': { 'oldTree.hollowDepth': 0.6 },
+  'oldTree.hollowSize': { 'oldTree.hollowDepth': 0.6 },
+  // SCA: 所有子参数只在 mode='sca' 时参与几何
+  'branches.sca.attractors': { 'branches.mode': 'sca' },
+  'branches.sca.crownWidth': { 'branches.mode': 'sca' },
+  'branches.sca.crownHeight': { 'branches.mode': 'sca' },
+  'branches.sca.crownDrop': { 'branches.mode': 'sca' },
+  'branches.sca.step': { 'branches.mode': 'sca' },
+  'branches.sca.killRadius': { 'branches.mode': 'sca' },
+  'branches.sca.branchiness': { 'branches.mode': 'sca' },
+  'branches.sca.maxBranches': { 'branches.mode': 'sca' },
+  'branches.sca.startT': { 'branches.mode': 'sca' },
+  'branches.sca.droop': { 'branches.mode': 'sca' },
+  'branches.sca.wander': { 'branches.mode': 'sca' },
+  'branches.sca.collision': { 'branches.mode': 'sca' },
+  'branches.sca.radiusScale': { 'branches.mode': 'sca' },
+  'branches.sca.taper': { 'branches.mode': 'sca' },
+  // 苔藓: 只在启用时写入 bark 材质的 uniform
+  'bark.moss.coverage': { 'bark.moss.enabled': true },
+  'bark.moss.scale': { 'bark.moss.enabled': true },
+  'bark.moss.heightBias': { 'bark.moss.enabled': true },
+  'bark.moss.color': { 'bark.moss.enabled': true },
 }
 // 果实子参数只有在"启用果实 + 指定挂果层级"时才有效果
 // 注意: fruit.enabled 不加条件 (它本身就是要被扰动的开关);
@@ -425,6 +478,12 @@ function materialSignature(params) {
     un(m, 'uBackColor'),
     un(m, 'uHasBackMap'),
     texSig(m.userData.backMap),
+    // 苔藓系列 uniform (只对 bark 材质有值; leaf/flower 固定为 0)
+    un(m, 'uMossEnabled'),
+    un(m, 'uMossCoverage'),
+    un(m, 'uMossScale'),
+    un(m, 'uMossHeightBias'),
+    un(m, 'uMossColor'),
     typeof m.onBeforeCompile === 'function' ? 'obc' : 'none',
     typeof m.customProgramCacheKey === 'function' ? m.customProgramCacheKey() : '',
   ].join(':')

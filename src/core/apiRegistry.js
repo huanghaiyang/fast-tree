@@ -29,7 +29,7 @@
  * 必须与 src/core/species.js 的 SPECIES / GROWTH_STAGES / SEASONS 的 id 保持一致,
  * 否则 MCP 侧合法、应用侧查不到对应预设 (会静默回退到默认值)。
  */
-const SPECIES = ['oak', 'maple', 'pine', 'birch', 'willow', 'sakura', 'shrub', 'dead']
+const SPECIES = ['oak', 'maple', 'pine', 'birch', 'willow', 'sakura', 'shrub', 'dead', 'banyan']
 const STAGES = ['seedling', 'sapling', 'young', 'mature', 'ancient']
 const SEASONS = ['spring', 'summer', 'autumn', 'winter']
 // app.toggle 支持的开关目标; 顺序与 README/自检脚本里的列举顺序一致

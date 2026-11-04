@@ -56,6 +56,18 @@
     </div>
   </Section>
 
+  <Section title="苔藓" hint="Moss" :default-collapsed="true">
+    <ToggleRow label="启用苔藓" v-model="moss.enabled"
+      hint="在树皮着色器里叠加绿膜, 不增加几何" />
+    <template v-if="moss.enabled">
+      <SliderRow label="苔藓覆盖率" v-model="moss.coverage" :min="0" :max="1" :step="0.01" />
+      <SliderRow label="苔藓斑块频率" v-model="moss.scale" :min="1" :max="20" :step="0.5" />
+      <SliderRow label="苔藓高度偏置" v-model="moss.heightBias" :min="0" :max="1" :step="0.01"
+        hint="越大越低处越容易长苔藓" />
+      <ColorRow label="苔藓颜色" v-model="moss.color" />
+    </template>
+  </Section>
+
   <Section title="自定义 GLSL" hint="Custom Shader" :default-collapsed="true">
     <ToggleRow label="启用自己的 GLSL 片段" v-model="c.enabled" />
     <div class="row-head"><label>顶点片段 (在 begin_vertex + 风场之后执行)</label></div>
@@ -113,6 +125,7 @@ const alive = (list) => (list || []).filter((x) => !missing.value[x.url])
 /* ---------------- 内置树皮贴图 ---------------- */
 const barkBatch = ref('batch1')
 const barkRow = ref(1)
+const moss = state.params.bark.moss
 function useBark(bt) {
   if (!bt) return
   // 只改材质贴图: 属于 material 变更组 -> 由材质 watcher 更新 map, 不重建树、不重新取景

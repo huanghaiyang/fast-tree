@@ -80,7 +80,7 @@ export const PRESETS = SPECIES.map((sp) => ({
 
 /**
  * 按 id 查树种元数据。
- * @param {string} id 树种 id (oak/pine/birch/willow/sakura/shrub/dead)
+ * @param {string} id 树种 id (oak/pine/birch/willow/sakura/shrub/dead/banyan)
  * @returns {object|null} 命中的 PRESETS 条目; 未知 id 返回 null (调用方需自行兜底)
  */
 export function presetById(id) {
@@ -166,7 +166,7 @@ export function preserveUserBits(next, prev) {
  *   - 结果再过一遍 preserveUserBits, 保住贴图/GLSL/场景等"非形态"设置。
  *
  * @param {object|null} params 当前参数 (用于取 seed、风力与用户自定义内容)
- * @param {string} id 树种 id (oak/pine/birch/willow/sakura/shrub/dead)
+ * @param {string} id 树种 id (oak/pine/birch/willow/sakura/shrub/dead/banyan)
  * @param {string} [stage='mature'] 生长阶段 id (seedling/sapling/young/mature/ancient)
  * @param {string} [season='summer'] 季节 id (spring/summer/autumn/winter)
  * @returns {object} 完整参数树 (新对象; 入参 params 不被修改)
@@ -195,6 +195,7 @@ const LEAF_PALETTES = {
   sakura: ['#edaac4', '#f9dde6'],
   shrub: ['#5a9243', '#96c463'],
   dead: ['#7d7d6a', '#a3a38c'],
+  banyan: ['#3f6b2b', '#79a84c'],
 }
 
 /* 自动生成: 一个种子 => 一棵随机但合理的树                              */
@@ -207,8 +208,8 @@ const LEAF_PALETTES = {
  *     seedling / sapling / young / mature / ancient, 权重对应 5 个值
  *   - 季节:    由 SEASONS 派生 id, 顺序固定为 spring / summer / autumn / winter
  * 这些权重直接决定"点随机生成 10 次会看到什么", 改它们等于改产品的默认观感。 */
-const ARCHETYPE_IDS = ['oak', 'maple', 'pine', 'birch', 'willow', 'sakura', 'shrub', 'dead']
-const ARCHETYPE_WEIGHTS = [0.2, 0.13, 0.14, 0.14, 0.1, 0.11, 0.1, 0.08]
+const ARCHETYPE_IDS = ['oak', 'maple', 'pine', 'birch', 'willow', 'sakura', 'shrub', 'dead', 'banyan']
+const ARCHETYPE_WEIGHTS = [0.16, 0.12, 0.14, 0.13, 0.09, 0.09, 0.1, 0.08, 0.09]
 // 随机时"大树/小树"更常见, 树苗与古树是少数
 const STAGE_IDS = GROWTH_STAGES.map((s) => s.id)
 const STAGE_WEIGHTS = [0.1, 0.16, 0.24, 0.36, 0.14]

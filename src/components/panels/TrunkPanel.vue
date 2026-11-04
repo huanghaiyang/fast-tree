@@ -97,6 +97,19 @@
       </div>
     </template>
   </Section>
+
+  <Section title="板根" hint="Buttress Roots" :default-collapsed="true">
+    <ToggleRow label="启用板根" v-model="bt.enabled"
+      hint="树干基部像墙一样张开的翼板 (榕树/雨林巨树的特征)" />
+    <template v-if="bt.enabled">
+      <SliderRow label="翼板数量" v-model="bt.count" :min="2" :max="14" :step="1" />
+      <SliderRow label="翼板强度" v-model="bt.strength" :min="0" :max="1.2" :step="0.01" />
+      <SliderRow label="翼板高度" v-model="bt.height" :min="0.03" :max="0.5" :step="0.01" hint="相对树干高度" />
+      <SliderRow label="根部外张" v-model="bt.flare" :min="0" :max="2" :step="0.01" />
+      <SliderRow label="翼板锐度" v-model="bt.sharpness" :min="0.5" :max="6" :step="0.1"
+        hint="越大越窄、越像墙; 越小越像圆鼓包" />
+    </template>
+  </Section>
 </template>
 
 <script setup>
@@ -109,6 +122,7 @@ import { normalizeTwistProfile } from '../../core/twist.js'
 
 const t = state.params.trunk
 const r = state.params.roots
+const bt = state.params.buttress
 const f = state.params.trunk.fork
 const twistTargets = [
   { value: 'trunk', label: '树干' },

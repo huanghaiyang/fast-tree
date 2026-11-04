@@ -46,6 +46,23 @@
       <button class="btn small" @click="togglePlay">{{ playing ? '⏸ 暂停风' : '▶ 播放风' }}</button>
     </div>
   </Section>
+
+  <Section title="后处理" hint="Post FX" :default-collapsed="true">
+    <ToggleRow label="泛光 (Bloom)" v-model="s.bloomEnabled"
+      hint="让亮部渗出光晕, 逆光叶片/天空更通透" />
+    <template v-if="s.bloomEnabled">
+      <SliderRow label="泛光强度" v-model="s.bloomStrength" :min="0" :max="2" :step="0.01" />
+      <SliderRow label="泛光半径" v-model="s.bloomRadius" :min="0" :max="1" :step="0.01" />
+      <SliderRow label="泛光阈值" v-model="s.bloomThreshold" :min="0" :max="1" :step="0.01" />
+    </template>
+    <ToggleRow label="景深 (DOF)" v-model="s.dofEnabled"
+      hint="焦外虚化, 让前景枝条与远景树冠有层次" />
+    <template v-if="s.dofEnabled">
+      <SliderRow label="对焦距离" v-model="s.dofFocus" :min="1" :max="60" :step="0.5" unit="m" />
+      <SliderRow label="光圈 (aperture)" v-model="s.dofAperture" :min="0" :max="0.0002" :step="0.000005" />
+      <SliderRow label="最大虚化" v-model="s.dofMaxBlur" :min="0" :max="0.03" :step="0.001" />
+    </template>
+  </Section>
 </template>
 
 <script setup>

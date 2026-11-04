@@ -31,6 +31,7 @@ import { buildBarkSkin } from './barkSkin.js'
 import { buildSpeedtreeBark } from './speedtreeBark.js'
 import { buildLeafTemplate, buildLeafCardTemplate, pushLeafInstance } from './leaf.js'
 import { buildFruitTemplate, pushFruitInstance } from './fruit.js'
+import { growSpaceColonization } from './spaceColonization.js'
 import { buildOcclusionGrid, bakeOcclusion, bakeOcclusionByRanges } from './ambientOcclusion.js'
 import {
   GeoAcc, growFrames, sampleFrame, anyPerp, azimuthPerp, rotateTowardUp,
@@ -320,6 +321,8 @@ export function buildTree(params, options = {}) {
   // 随机子流纪律: 每个阶段/每层各自 fork, 改一处不会平移别处的随机序列。
   const leafRng = makeRng(P.seed, 'leaves')
   const fruitRng = makeRng(P.seed, 'fruit')
+  // 附生植物专属子流: 改苔藓/蕨类参数不会挪动叶片/果实的随机序列
+  const epiRng = makeRng(P.seed, 'epiphyte')
   // 叶片保留比例用"确定性抽样"而不是 rng.chance: 不同 LOD 只少画叶子,
   // 叶片位置/其余随机流完全不变 -> 远景/近景切换时树形不跳变
   // 实现: 对全局递增的 leafDrawIndex 取模, 命中才真正生成。
@@ -438,11 +441,27 @@ export function buildTree(params, options = {}) {
         const sideAxis = perp.clone().applyAxisAngle(dir, az)
         // 叶基半径 = 枝条半径 + 簇半径 × 散布系数 × sqrt(u)。
         // sqrt 让偏移量在圆盘面积上均匀分布 (否则叶片会往中心扎堆, 边缘稀疏)。
-        const leafR = fr.radius + L.clusterRadius * L.clusterSpread * Math.sqrt(rng.next())
-        // 位置 = 枝条表面上的点 + 径向偏移 + 沿枝轴的 ±3cm 抖动 (打散"排队"感)。
+        // clusterVolume > 0 时改为"球壳散布": 叶片在三维空间里包住枝条, 叶簇有体积感
+        // (榕树/雨林的叶团需要这一层, 纯平面散布会像贴纸)。默认 0 时随机序列不变。
+        const vol = L.clusterVolume > 0 ? clamp01(L.clusterVolume) : 0
         const pos = fr.pos.clone()
-          .addScaledVector(sideAxis, leafR)
-          .addScaledVector(dir, rng.range(-0.03, 0.03))
+        if (vol > 0) {
+          // 球面方向 (体积均匀) + 半径随 size 缩放
+          const vu = rng.range(-1, 1)
+          const vth = rng.range(0, Math.PI * 2)
+          const vs = Math.sqrt(Math.max(0, 1 - vu * vu))
+          const volR = Math.max(0.01, L.size * vol * 0.55) * Math.cbrt(rng.next())
+          pos.addScaledVector(
+            new THREE.Vector3(vs * Math.cos(vth), vu, vs * Math.sin(vth)),
+            volR,
+          )
+          pos.addScaledVector(sideAxis, fr.radius + 0.02)
+          pos.addScaledVector(dir, rng.range(-0.03, 0.03))
+        } else {
+          const leafR = fr.radius + L.clusterRadius * L.clusterSpread * Math.sqrt(rng.next())
+          pos.addScaledVector(sideAxis, leafR)
+            .addScaledVector(dir, rng.range(-0.03, 0.03))
+        }
 
         // --- 叶轴方向 ---
         // 叶轴 = 枝条切向, 先绕"垂直于枝轴的俯仰轴"压开 pitch 度 (叶柄从枝上翘起),
@@ -538,6 +557,104 @@ export function buildTree(params, options = {}) {
     // 叶簇数 ≈ 本枝实际生成的叶片数 / 每簇片数 (四舍五入, 至少 1)
     if (leafSlot >= 0 && slots[leafSlot]) {
       slots[leafSlot].meta.clusters = Math.max(1, Math.round((leafCount - leafStart) / Math.max(1, clusterCount)))
+    }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 附生植物 (蕨类团 + 垂藤)                                             */
+  /* ------------------------------------------------------------------ */
+  // 用叶卡片几何挂在枝条表面, 复用树叶材质 (不新增材质/网格)。
+  // 关闭时函数立即返回且不消耗任何随机数, 旧 seed 的树形完全不变。
+  let epiphyteCount = 0
+  const spawnEpiphytes = (frames, level, branchWind, parentSlot) => {
+    const E = P.epiphyte
+    if (!E || !E.enabled || !Array.isArray(E.levels) || !E.levels[level - 1]) return
+    if (!leafAcc || !leafTemplate || epiphyteCount > 4000) return
+    const rng = epiRng
+    const base = new THREE.Color(E.color)
+    const tip = new THREE.Color(E.colorTip)
+    let slot = -1
+    const ensureSlot = () => {
+      if (slot >= 0) return
+      slot = addSlot({
+        type: 'epiphyte', level, group: 'epiphyte',
+        name: `L${level} 附生植物 #${level + 1}`, parent: parentSlot, meta: { ferns: 0, vines: 0 },
+      })
+    }
+    /**
+     * 把一片"附生叶卡"实例化到 leafAcc。方向基由 stem/normal 施密特正交化得到,
+     * 与 spawnLeaves 的叶片坐标约定完全一致 (y=叶轴, z=叶面法线, x=宽度)。
+     */
+    const putCard = (pos, stem, nrm, size, phase, wind, origin) => {
+      const yA = stem.clone().normalize()
+      const zA = nrm.clone().addScaledVector(yA, -nrm.dot(yA))
+      if (zA.lengthSq() < 1e-8) anyPerp(yA, zA)
+      zA.normalize()
+      const xA = new THREE.Vector3().crossVectors(yA, zA).normalize()
+      const scale = new THREE.Vector3(size * 0.85, size, size * 0.85)
+      const v0 = leafAcc.vertexCount
+      pushLeafInstance(
+        leafAcc, leafTemplate, { x: xA, y: yA, z: zA }, scale, pos,
+        base, tip, Math.min(1, wind + 0.05), phase,
+        origin || pos.clone(), 0.72, 0.95, slot, null,
+      )
+      leafAoRanges.push([v0, leafAcc.vertexCount, pos.x, pos.y, pos.z])
+      aoSamples.push(pos.x, pos.y, pos.z)
+      epiphyteCount++
+    }
+
+    // ---- 蕨类团: 每个位置 4 片羽叶呈扇形张开 ----
+    const fernN = Math.max(0, Math.round(E.ferns))
+    for (let i = 0; i < fernN; i++) {
+      if (!rng.chance(E.chance === undefined ? 0.35 : E.chance)) continue
+      const fr = sampleFrame(frames, rng.range(0.12, 0.82))
+      if (!fr) continue
+      const az = rng.range(0, Math.PI * 2)
+      const radial = azimuthPerp(fr.dir, az, new THREE.Vector3())
+      if (radial.dot(UP) < -0.2) radial.negate()
+      ensureSlot()
+      const count = 4
+      for (let j = 0; j < count; j++) {
+        // 羽叶从附着点向外上方扇形展开 (0.2~0.9 的仰角)
+        const ang = (j / Math.max(1, count - 1) - 0.5) * 0.9
+        const stem = radial.clone().applyAxisAngle(fr.dir, ang)
+          .addScaledVector(UP, 0.55 + rng.signed() * 0.15)
+          .normalize()
+        const nrm = radial.clone().addScaledVector(fr.dir, rng.range(-0.3, 0.3)).normalize()
+        const size = Math.max(0.04, E.size * rng.range(0.7, 1.25))
+        const pos = fr.pos.clone()
+          .addScaledVector(radial, Math.max(0.004, fr.radius) * 0.95)
+          .addScaledVector(UP, 0.02 * j)
+        putCard(pos, stem, nrm, size, rng.range(0, Math.PI * 2), branchWind, fr.pos.clone())
+      }
+      if (slots[slot]) slots[slot].meta.ferns++
+    }
+
+    // ---- 垂藤: 从枝条垂下的一串小卡片, 带轻微钟摆摆动 ----
+    const vineN = Math.max(0, Math.round(E.vines))
+    for (let i = 0; i < vineN; i++) {
+      if (!rng.chance(E.chance === undefined ? 0.35 : E.chance)) continue
+      const fr = sampleFrame(frames, rng.range(0.25, 0.95))
+      if (!fr) continue
+      ensureSlot()
+      const az = rng.range(0, Math.PI * 2)
+      const radial = azimuthPerp(fr.dir, az, new THREE.Vector3())
+      if (radial.dot(UP) < 0) radial.negate()
+      const len = Math.max(0.1, (E.vineLength === undefined ? 1.4 : E.vineLength) * rng.range(0.7, 1.35))
+      const segs = 6
+      for (let j = 0; j <= segs; j++) {
+        const k = j / segs
+        // 下垂线: 起始点在枝条表面, 越往下越贴近竖直; 横向摆动按正弦衰减
+        const sway = Math.sin(k * Math.PI * 2.2 + i) * 0.12 * len
+        const pos = fr.pos.clone()
+          .addScaledVector(radial, Math.max(0.004, fr.radius) * 0.9 + sway)
+          .addScaledVector(UP, -len * k)
+        const stem = new THREE.Vector3(0, -1, 0).addScaledVector(radial, 0.25).normalize()
+        const nrm = radial.clone()
+        const size = Math.max(0.03, (E.size * 0.55) * (1 - k * 0.45) * rng.range(0.8, 1.2))
+        putCard(pos, stem, nrm, size, rng.range(0, Math.PI * 2), branchWind, fr.pos.clone())
+      }
+      if (slots[slot]) slots[slot].meta.vines++
     }
   }
 
@@ -773,6 +890,15 @@ export function buildTree(params, options = {}) {
     // 分支下标 = 当前已登记的分支数 (树干/树根也是分支, 各占一个下标)。
     const branchIndex = barkSkeleton.branches.length
     applyBranchEdit(frames, branchIndex)
+    // 断枝: 仅当 oldTree.deadChance > 0 时才抽随机数 (默认 0 -> 不消耗随机流)。
+    // 断枝被截短、不长子枝/叶/果, 并用深褐色顶点色, 形成古树的枯梢。
+    const deadChance = Math.max(0, Number(P.oldTree && P.oldTree.deadChance) || 0)
+    let dead = false
+    if (level >= 1 && deadChance > 0 && rng.chance(deadChance)) {
+      dead = true
+      const keep = Math.max(2, Math.round(frames.length * clamp01(P.oldTree.deadLength === undefined ? 0.45 : P.oldTree.deadLength)))
+      frames.splice(keep)
+    }
     // 每层取第一根枝条作为该层扭曲句柄的可视化引导线
     // (twistGuides 在树干之后声明, 但 buildBranch 只在树干建好后才被调用, 因此这里已初始化)
     if (level >= 1 && !twistGuides.branches[level]) twistGuides.branches[level] = sampleGuidePoints(frames)
@@ -781,7 +907,9 @@ export function buildTree(params, options = {}) {
     const radialSegments = Math.max(3, Math.round(cfg.radialSegments * ((P.lod && P.lod.barkDetail) || 1)))
     // 第 3 级及以上视为"嫩枝": 顶点色偏黄绿 (模拟幼枝的叶绿素), 更深层用中性灰白。
     const isYoung = level >= 3
-    const colorBase = isYoung ? new THREE.Color(0.82, 0.94, 0.74) : new THREE.Color(0.88, 0.88, 0.86)
+    const colorBase = dead
+      ? new THREE.Color(0.32, 0.24, 0.17)
+      : (isYoung ? new THREE.Color(0.82, 0.94, 0.74) : new THREE.Color(0.88, 0.88, 0.86))
     const growSpan = LEVEL_GROW[Math.min(level, LEVEL_GROW.length - 1)]
 
     // 节点登记: meta 里存的是"可读摘要", 供节点树/属性面板显示; branchIndex 用于反查骨架分支。
@@ -845,16 +973,246 @@ export function buildTree(params, options = {}) {
     // 递归顺序: 先长子枝 (建立父子关系), 再挂叶, 最后挂果 ——
     // 因为叶/果的节点父级是本枝, 而子枝的节点父级也是本枝, 顺序不影响 id 语义,
     // 但先长骨架可以让"叶子长在最终位置的枝条上"(子枝已把父枝撑开)。
-    if (level < branchParams.levels) spawnChildren(frames, level, length, rng, wind0, wind1, mySlot, myBranch)
+    if (!dead && level < branchParams.levels) spawnChildren(frames, level, length, rng, wind0, wind1, mySlot, myBranch)
     const leafIdx = level - 1
     // 花朵独立: 树叶关闭时仍要跑 spawnLeaves 采集开花位置 (只是不写入叶片几何)
-    if ((L.enabled || FL.enabled) && L.levels[leafIdx]) spawnLeaves(frames, level, wind1, mySlot)
-    if (F.enabled && effFruitLevels[leafIdx]) spawnFruit(frames, level, wind1, mySlot)
+    if (!dead && (L.enabled || FL.enabled) && L.levels[leafIdx]) spawnLeaves(frames, level, wind1, mySlot)
+    if (!dead && F.enabled && effFruitLevels[leafIdx]) spawnFruit(frames, level, wind1, mySlot)
+    // 附生植物 (蕨类/垂藤): 挂在枝条表面; 断枝也允许长一点, 但默认只对活枝生效
+    if (!dead) spawnEpiphytes(frames, level, wind1, mySlot)
   }
 
-  /* ------------------------------------------------------------------ */
-  /* 树干                                                                */
-  /* ------------------------------------------------------------------ */
+  /**
+   * 把 SCA 输出的折线链转成骨架帧 (pos/dir/radius/t/roll)。
+   *
+   * 为什么不用 growFrames: SCA 的每个点是"被吸引点牵引"出来的, 已经含了弯曲与分叉,
+   * 再套一层曲率模型会把冠形拉直。这里只补上蒙皮需要的帧字段与一点枝轴自转。
+   */
+  const chainToFrames = (chain, rng) => {
+    const pts = chain.points
+    const n = pts.length
+    const frames = []
+    let roll = rng.range(-0.6, 0.6)
+    for (let i = 0; i < n; i++) {
+      const a = pts[Math.max(0, i - 1)]
+      const b = pts[Math.min(n - 1, i + 1)]
+      const dir = b.clone().sub(a)
+      if (dir.lengthSq() < 1e-10) dir.set(0, 1, 0)
+      dir.normalize()
+      // 连续自转: 正弦相位 + 微随机, 让冠枝不是数学上的直管
+      roll += Math.sin(i * 0.9 + chain.startT * 9) * 0.05 + rng.range(-0.03, 0.03)
+      frames.push({
+        pos: pts[i].clone(),
+        dir,
+        radius: Math.max(0.0005, chain.radii[i] || 0.0005),
+        t: n > 1 ? i / (n - 1) : 0,
+        roll,
+        profileRoll: roll,
+      })
+    }
+    return frames
+  }
+
+  /**
+   * 按 SCA 链登记冠枝骨架。链的 parentChain 指向前一条已登记链, -1 表示挂在树干上。
+   * 这里不递归, 顺序遍历即可保证父链先登记。
+   */
+  const buildSpaceColonization = (trunkBranch, trunkSlot) => {
+    const scaRng = makeRng(P.seed, 'sca')
+    const result = growSpaceColonization(P, scaRng, trunkFramesAll)
+    const chains = result.chains
+    if (!chains.length) return
+    const deadRng = makeRng(P.seed, 'sca-dead')
+    const chainBranches = new Array(chains.length)
+    const chainSlots = new Array(chains.length)
+    const levelCounter = {}
+    const deadChance = Math.max(0, Number(OD.deadChance) || 0)
+
+    for (let ci = 0; ci < chains.length; ci++) {
+      const chain = chains[ci]
+      const parentBranch = chain.parentChain >= 0 ? chainBranches[chain.parentChain] : trunkBranch
+      const parentSlot = chain.parentChain >= 0 ? chainSlots[chain.parentChain] : trunkSlot
+      const level = Math.max(1, Math.min(5, chain.level))
+      const rng = makeRng(P.seed, `sca-chain-${ci}`)
+      const frames = chainToFrames(chain, rng)
+      // 断枝: 只截断叶梢链 (细枝), 主干级的粗冠枝不砍, 更像老树自然枯梢。
+      let dead = false
+      if (deadChance > 0 && chain.tip && deadRng.chance(deadChance)) {
+        dead = true
+        const keep = Math.max(2, Math.round(frames.length * clamp01(OD.deadLength === undefined ? 0.45 : OD.deadLength)))
+        frames.splice(keep)
+      }
+      const branchIndex = barkSkeleton.branches.length
+      applyBranchEdit(frames, branchIndex)
+      if (!twistGuides.branches[level]) twistGuides.branches[level] = sampleGuidePoints(frames)
+
+      const wind0 = clamp01(0.18 + (level - 1) * 0.08)
+      const wind1 = Math.min(1, wind0 + 0.26)
+      levelCounter[level] = (levelCounter[level] || 0) + 1
+      const slot = addSlot({
+        type: 'branch',
+        level,
+        group: `branch-L${level}`,
+        name: `L${level} 冠枝(SCA) #${levelCounter[level]}`,
+        parent: parentSlot,
+        meta: {
+          length: chain.points.length,
+          radius: chain.baseR,
+          segments: frames.length,
+          branchIndex,
+          sca: true,
+        },
+      })
+      const branch = addBarkBranch(barkSkeleton, {
+        frames,
+        parent: parentBranch || null,
+        slot,
+        type: 'branch',
+        level,
+        render: {
+          radialSegments: Math.max(3, Math.round((level <= 2 ? 8 : 5) * ((P.lod && P.lod.barkDetail) || 1))),
+          crossSection: 'round',
+          starDepth: 0,
+          color: dead
+            ? new THREE.Color(0.32, 0.24, 0.17)
+            : (level >= 3 ? new THREE.Color(0.82, 0.94, 0.74) : new THREE.Color(0.88, 0.88, 0.86)),
+          color2: new THREE.Color(1.0, 1.0, 1.0),
+          colorVariance: 0.05,
+          rng: rng.fork('bark'),
+          wind0,
+          wind1,
+          windCurve: 1.5,
+          grow: LEVEL_GROW[Math.min(level, LEVEL_GROW.length - 1)],
+          origin: frames[0].pos.clone(),
+          phase: rng.range(0, Math.PI * 2),
+          tipRound: dead ? 0.28 : 0.06,
+          baseFlare: 0,
+          baseFlareLen: level <= 2 ? 0.16 : 0.13,
+          vertexNoise: 0.05,
+          crossNoise: 0.04,
+        },
+      })
+      branchCount++
+      chainBranches[ci] = branch
+      chainSlots[ci] = slot
+
+      // 附生植物: 活枝 (含未到梢的粗枝) 都可能有蕨类/垂藤
+      if (!dead) spawnEpiphytes(frames, level, wind1, slot)
+      // 叶片/果实: 叶梢链必挂; 细级 (L4+) 的内侧链也挂一点, 让宽冠内部不空。
+      if ((chain.tip || level >= 4) && !dead && (L.enabled || FL.enabled) && L.levels[level - 1]) spawnLeaves(frames, level, wind1, slot)
+      if (chain.tip && !dead && F.enabled && effFruitLevels[level - 1]) spawnFruit(frames, level, wind1, slot)
+    }
+  }
+
+  /**
+   * 气生根 / 支柱根: 从上部枝条垂下的根, 可落地成柱。
+   * 逐帧手工生成折线 (不用 growFrames): 需要让每根根都朝地面, 并在落地处收细。
+   * 关闭时不消耗随机数。
+   */
+  const buildAerialRoots = () => {
+    const AR = P.aerialRoots
+    if (!AR || !AR.enabled) return
+    const rng = makeRng(P.seed, 'aerial')
+    // 用快照: 生成中会往 barkSkeleton 里追加气生根, 不能边遍历边 push。
+    // 这里同时存分支下标 i: addBarkBranch 的 parent 接收的是"分支索引", 不是对象。
+    const sources = []
+    barkSkeleton.branches.forEach((b, i) => {
+      if (b && b.type === 'branch' && b.level >= 1) sources.push({ b, i })
+    })
+    const levelsOn = Array.isArray(AR.levels) ? AR.levels : null
+    const perBranch = Math.max(1, Math.round(Number(AR.count) || 1))
+    let n = 0
+    for (const src of sources) {
+      const b = src.b
+      if (levelsOn && !levelsOn[Math.min(5, Math.max(1, b.level)) - 1]) continue
+      if (!rng.chance(Math.max(0, Number(AR.chance) || 0))) continue
+      for (let k = 0; k < perBranch; k++) {
+        const fr = sampleFrame(b.frames, rng.range(0.2, 0.96))
+        if (!fr) continue
+        const az = rng.range(0, Math.PI * 2)
+        const radial = azimuthPerp(fr.dir, az, new THREE.Vector3())
+        if (radial.y < 0) radial.y *= -1
+        const baseR = Math.max(0.0015, fr.radius * Math.max(0.01, Number(AR.thickness) || 0.22) * rng.vary(0.2))
+        // 垂落距离: 默认到地面; length<1 时悬空收尾; maxLength 防止根穿过镜头。
+        const groundDist = Math.max(0.3, fr.pos.y - 0.04)
+        const drop = Math.min(Math.max(0.2, Number(AR.maxLength) || 9), groundDist) *
+          Math.max(0.05, Number(AR.length === undefined ? 1 : AR.length))
+        const droop = clamp01(AR.droop === undefined ? 0.9 : AR.droop)
+        // 水平漂移: 越"不垂"(droop 小)根越斜向外; 抛物线让它落地时回收一点
+        const horiz = (0.15 + (1 - droop) * 0.8) * drop
+        const wobble = Math.max(0, Number(AR.wobble) || 0)
+        const segs = Math.max(3, Math.round(Number(AR.segments) || 9))
+        const taper = Math.max(0.05, Number(AR.taper) || 0.35)
+        const pts = []
+        const radii = []
+        const phase = rng.range(0, Math.PI * 2)
+        // 与径向垂直的水平侧向, 用于摆动
+        const side = new THREE.Vector3(-radial.z, 0, radial.x)
+        for (let j = 0; j <= segs; j++) {
+          const s = j / segs
+          const out = horiz * Math.sin(Math.PI * s * 0.55)
+          const sway = Math.sin(s * Math.PI * 2.4 + phase) * wobble * 0.18 * drop
+          pts.push(new THREE.Vector3(
+            fr.pos.x + radial.x * (Math.max(0.004, fr.radius) * 0.9 + out) + side.x * sway,
+            Math.max(0.03, fr.pos.y - drop * s),
+            fr.pos.z + radial.z * (Math.max(0.004, fr.radius) * 0.9 + out) + side.z * sway,
+          ))
+          radii.push(Math.max(0.0006, baseR * lerp(1, taper, s)))
+        }
+        // 手工帧
+        const frames = []
+        let roll = rng.range(-0.3, 0.3)
+        for (let j = 0; j <= segs; j++) {
+          const a = pts[Math.max(0, j - 1)]
+          const b = pts[Math.min(segs, j + 1)]
+          const dir = b.clone().sub(a)
+          if (dir.lengthSq() < 1e-10) dir.set(0, -1, 0)
+          dir.normalize()
+          roll += rng.range(-0.02, 0.02)
+          frames.push({ pos: pts[j], dir, radius: radii[j], t: j / segs, roll, profileRoll: roll })
+        }
+        const branchIndex = barkSkeleton.branches.length
+        applyBranchEdit(frames, branchIndex)
+        const slot = addSlot({
+          type: 'aerial', level: b.level, group: 'aerialRoots',
+          name: `L${b.level} 气生根 #${n + 1}`, parent: b.slot,
+          meta: { length: drop, radius: baseR, segments: segs, branchIndex },
+        })
+        addBarkBranch(barkSkeleton, {
+          frames,
+          parent: src.i,
+          slot,
+          type: 'aerial',
+          level: b.level,
+          render: {
+            // 气生根比同径枝条更圆更细, 横截面 5 段足够
+            radialSegments: 5,
+            crossSection: 'round',
+            starDepth: 0,
+            // 微偏灰绿色, 与"根从树冠垂下来"的观感一致
+            color: new THREE.Color(0.62, 0.66, 0.56),
+            color2: new THREE.Color(1.0, 1.0, 1.0),
+            colorVariance: 0.06,
+            rng: rng.fork('bark'),
+            wind0: 0.08,
+            wind1: 0.16,
+            windCurve: 1.2,
+            grow: [0.7, 1.0],
+            origin: frames[0].pos.clone(),
+            phase: rng.range(0, Math.PI * 2),
+            // 落地端做成圆头, 像真正的支柱根扎进土里
+            tipRound: 0.5,
+            baseFlare: 0,
+            baseFlareLen: 0.2,
+            vertexNoise: 0.04,
+            crossNoise: 0.03,
+          },
+        })
+        branchCount++
+        n++
+      }
+    }
+  }
   const t = P.trunk
   // 树干专属随机子流: 树干形状只依赖 (seed, 'trunk'), 与枝叶参数完全隔离。
   const trunkRng = makeRng(P.seed, 'trunk')
@@ -892,8 +1250,15 @@ export function buildTree(params, options = {}) {
   }
   // 根部"板根/表层根"的方位分布: 真实树木基部不是圆锥, 而是 4~6 条放射状凸起
   // (每条的方位固定, 这样同一棵树每次生成都一样)
-  const rootLobeCount = 5
+  // 板根参数: 打开时用"窄而高的翼板", 关闭时保持原来的 5 瓣圆鼓包。
+  const BT = P.buttress || {}
+  const buttressOn = !!BT.enabled
+  const rootLobeCount = buttressOn ? Math.max(1, Math.round(Number(BT.count) || 7)) : 5
   const rootLobePhase = trunkRng.range(0, Math.PI * 2)
+  const OD = P.oldTree || {}
+  const hollowDepth = Math.max(0, Number(OD.hollowDepth) || 0)
+  const hollowHeight = clamp01(OD.hollowHeight === undefined ? 0.32 : OD.hollowHeight)
+  const hollowSize = Math.max(0.08, Number(OD.hollowSize) || 0.6)
   /**
    * 树干半径调制函数: 给定归一化高度 tt 与绕轴方位 angle, 返回半径的乘数。
    *
@@ -911,14 +1276,32 @@ export function buildTree(params, options = {}) {
    */
   const trunkRadiusMod = (tt, angle) => {
     let m = 1
-    if (t.flare > 0 && t.flareHeight > 0 && tt < t.flareHeight) {
-      const u = tt / t.flareHeight            // 0 = 地面, 1 = 扩展区顶部
+    // 板根开启时用"翼板"版本: 高度可以超过 flareHeight, 角向更窄更尖。
+    // 关闭时严格走原来的 flare 分支 (不改变旧 seed 的树干)。
+    const influenceH = buttressOn
+      ? Math.max(t.flareHeight || 0, clamp01(BT.height === undefined ? 0.16 : BT.height))
+      : (t.flareHeight || 0)
+    if ((t.flare > 0 || buttressOn) && influenceH > 0 && tt < influenceH) {
+      const u = tt / influenceH            // 0 = 地面, 1 = 扩展区顶部
       // 1) 整体扩张: 幂次 >2 让底部更"鼓"、往上是弧形收进去 (圆锥形太假)
-      const baseFlare = 1 + t.flare * Math.pow(1 - u, 2.6)
+      const baseFlare = 1 + (t.flare || 0) * Math.pow(1 - u, 2.6)
       // 2) 放射状板根: 沿方位周期性加粗, 越靠近地面越明显
-      const lobe = Math.pow(Math.max(0, Math.cos(rootLobeCount * (angle - rootLobePhase))), 2.5)
-      const lobeAmp = t.flare * 0.55 * Math.pow(1 - u, 2.2)
+      const sharp = buttressOn ? Math.max(0.5, Number(BT.sharpness) || 2.6) : 2.5
+      const lobe = Math.pow(Math.max(0, Math.cos(rootLobeCount * (angle - rootLobePhase))), sharp)
+      // 翼板振幅 = 地面外张(flare) + 竖向强度(strength), 两者都随高度收细
+      const lobeAmp = buttressOn
+        ? (Number(BT.flare) || 0) * Math.pow(1 - u, 2.6) + (Number(BT.strength) || 0) * Math.pow(1 - u, 1.4)
+        : (t.flare || 0) * 0.55 * Math.pow(1 - u, 2.2)
       m *= baseFlare * (1 + lobeAmp * lobe)
+    }
+    // 树洞: 一处椭圆高斯凹陷 (只减不增)。位置由 hollowHeight/hollowSize 控制,
+    // 方位固定在板根相位旁边, 保证同一 seed 每次都在同一面。
+    if (hollowDepth > 0) {
+      const dt = (tt - hollowHeight) / 0.07
+      let da = Math.abs(angle - (rootLobePhase + 1.15))
+      if (da > Math.PI) da = Math.PI * 2 - da
+      const daN = da / hollowSize
+      m *= Math.max(0.18, 1 - hollowDepth * Math.exp(-(dt * dt + daN * daN)))
     }
     // ③ 节瘤: 二维高斯凸起。dt 用纵向 σ 归一, daN 用角向 σ 归一,
     //    指数里是两者的平方和 —— 即"到瘤中心的标准化距离²", 于是等高线是椭圆。
@@ -1290,12 +1673,19 @@ export function buildTree(params, options = {}) {
   // wind0/wind1 取树干的风柔度 (0.012 -> 0.2): L1 枝条的风属性从树干表面值起步,
   // 保证"树干不动、枝条开始摆"在视觉上是连续的。
   // clampEndT 传 null = 不在分布上额外截断 (L1 可以一路长到树梢)。
-  spawnChildren(trunkFrames, 0, t.height, trunkRng, 0.012, 0.2, trunkSlot, trunkBranch, null, {
-    frames: trunkFrames,
-    modifier: trunkModifier,
-    squashX: trunkSquashX,
-    squashZ: trunkSquashZ,
-  })
+  // 分枝算法分流: 'levels' 走传统逐层递归; 'sca' 用空间殖民生成宽冠网状骨架
+  // (榕树/古榕)。两种模式互斥, SCA 模式下不再递归 spawnChildren。
+  const scaMode = !!(P.branches && P.branches.mode === 'sca')
+  if (!scaMode) {
+    spawnChildren(trunkFrames, 0, t.height, trunkRng, 0.012, 0.2, trunkSlot, trunkBranch, null, {
+      frames: trunkFrames,
+      modifier: trunkModifier,
+      squashX: trunkSquashX,
+      squashZ: trunkSquashZ,
+    })
+  } else {
+    buildSpaceColonization(trunkBranch, trunkSlot)
+  }
 
   // 分叉主枝: 从主干内部伸出, 带领口融合; 主干自身继续向上作为主导枝
   if (forkOn) {
@@ -1432,8 +1822,11 @@ export function buildTree(params, options = {}) {
   }
 
   /* ------------------------------------------------------------------ */
-  /* 蒙皮 + 节点表                                                        */
+  /* 气生根 + 蒙皮 + 节点表                                               */
   /* ------------------------------------------------------------------ */
+  // 气生根必须在所有普通/SCA 冠枝登记完之后再生成, 这样它才能挂到最终枝条上;
+  // 但它本身不再产出子枝 (sources 只筛 type==='branch')。
+  buildAerialRoots()
   // 骨架图已完成 (含父子关系/贴合点) -> 一次性生成整张 2-manifold 树皮蒙皮。
   // 分叉在父环带上真实切孔并桥接, 树干基部与所有枝梢端盖封闭;
   // 不丢弃任何骨架分支, 不做最大连通过滤, 不用 SDF, 不逐枝建管再合并。
@@ -1697,6 +2090,7 @@ export function buildTree(params, options = {}) {
 const NODE_GROUPS = [
   { id: 'trunk', name: '树干', icon: '🪵', type: 'bark' },
   { id: 'roots', name: '树根', icon: '🪵', type: 'bark' },
+  { id: 'aerialRoots', name: '气生根', icon: '🌱', type: 'bark' },
   // ---- 树枝: 每级一组 (L1..L5)。level 字段让 UI 能按层折叠/批量显隐 ----
   { id: 'branch-L1', name: '树枝 L1', icon: '🌿', type: 'bark', level: 1 },
   { id: 'branch-L2', name: '树枝 L2', icon: '🌿', type: 'bark', level: 2 },
@@ -1709,6 +2103,7 @@ const NODE_GROUPS = [
   { id: 'leaves-L3', name: '树叶 L3', icon: '🍃', type: 'leaf', level: 3 },
   { id: 'leaves-L4', name: '树叶 L4', icon: '🍃', type: 'leaf', level: 4 },
   { id: 'leaves-L5', name: '树叶 L5', icon: '🍃', type: 'leaf', level: 5 },
+  { id: 'epiphyte', name: '附生植物', icon: '🌿', type: 'leaf' },
   // ---- 果实: 同样按枝层分组; 每根枝条的果实共用一个节点 (见 spawnFruit) ----
   { id: 'fruit-L1', name: '果实 L1', icon: '🌰', type: 'fruit', level: 1 },
   { id: 'fruit-L2', name: '果实 L2', icon: '🌰', type: 'fruit', level: 2 },

@@ -13,6 +13,8 @@
       <SliderRow label="每簇叶片数" v-model="L.clusterCount" :min="1" :max="12" :step="1" />
       <SliderRow label="叶簇半径" v-model="L.clusterRadius" :min="0" :max="1" :step="0.01" unit="m" />
       <SliderRow label="叶簇离散" v-model="L.clusterSpread" :min="0" :max="2" :step="0.02" />
+      <SliderRow label="叶簇体积感" v-model="L.clusterVolume" :min="0" :max="1.5" :step="0.01"
+        hint=">0 时把簇内叶片分布到球壳上, 叶团有体积; 0 = 扁平散布" />
       <SliderRow label="分布起始位置" v-model="L.startT" :min="0" :max="1" :step="0.01" />
       <SliderRow label="分布结束位置" v-model="L.endT" :min="0" :max="1" :step="0.01" />
       <ToggleRow label="树枝环绕生长" v-model="L.branchWrap"
@@ -103,6 +105,21 @@
       </p>
     </template>
   </Section>
+
+  <Section title="附生植物" hint="Epiphytes" :default-collapsed="true">
+    <ToggleRow label="启用附生植物" v-model="E.enabled"
+      hint="在枝干表面生成蕨类团与垂藤 (复用叶卡片几何)" />
+    <template v-if="E.enabled">
+      <SliderRow label="蕨类团数量" v-model="E.ferns" :min="0" :max="8" :step="1"
+        hint="每根合格枝条最多几团" />
+      <SliderRow label="垂藤数量" v-model="E.vines" :min="0" :max="8" :step="1" />
+      <SliderRow label="附生概率" v-model="E.chance" :min="0" :max="1" :step="0.01" />
+      <SliderRow label="蕨叶尺寸" v-model="E.size" :min="0.05" :max="1.5" :step="0.01" unit="m" />
+      <SliderRow label="垂藤长度" v-model="E.vineLength" :min="0.1" :max="5" :step="0.05" unit="m" />
+      <ColorRow label="蕨叶颜色 A" v-model="E.color" />
+      <ColorRow label="蕨叶颜色 B" v-model="E.colorTip" />
+    </template>
+  </Section>
 </template>
 
 <script setup>
@@ -120,6 +137,7 @@ import MaterialPreview from './MaterialPreview.vue'
 import { state } from '../../store/treeStore.js'
 
 const L = computed(() => state.params.leaves)
+const E = state.params.epiphyte
 const lod = computed(() => state.params.lod)
 const ao = computed(() => state.params.ao)
 const shapes = [

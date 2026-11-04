@@ -535,6 +535,88 @@ export const SPECIES = [
       bark: { color: '#57493a', color2: '#6f6152', roughness: 0.95, procedural: { enabled: true, style: 'rough', scale: 1.4, contrast: 0.8 } },
     }),
   },
+  {
+    /* 榕树 (古榕): 热带/亚热带常绿大乔木, 本项目的"古榕"形态目标:
+     *   - 超宽横展的低冠 (crownWidth 1.6 > 树高), 枝条扭曲穿插成网 (SCA 模式)
+     *   - 板根从基部像墙一样张开 (buttress)
+     *   - 气生根从枝条垂到地面, 变成支柱根/气生根柱 (aerialRoots)
+     *   - 枝干苔藓 + 蕨类/垂藤附生 (bark.moss + epiphyte)
+     *   - 断枝与树洞的老树特征 (oldTree)
+     * 为什么用 SCA: 传统逐层递归的枝条是"一棵树撑一把伞", 生不出古榕那种
+     * 多主枝、横展、相互穿插的冠形; SCA 让枝条被冠体积里的吸引点牵引, 更接近参考图。 */
+    id: 'banyan', name: '榕树', icon: '🌴',
+    desc: '低冠横展、气生根成柱、板根与苔藓附生的古榕',
+    evergreen: true,
+    variation: {
+      height: 0.3, radius: 0.3, curve: 0.45, lean: 0.14, gnarl: 0.5,
+      crown: 0.9, count: 0.3, leaf: 0.24, fork: 0.2, trunkShare: 0.14,
+    },
+    seasonal: {
+      // 常绿: 冬季仍保留大部分叶片, 只收一点密度并加深颜色
+      winter: { leafDensity: 0.78, palette: ['#3f6a2c', '#5d8a3e'], tipPalette: ['#7aa84d'] },
+      spring: { palette: ['#6fa448', '#8fc45e'], leafDensity: 0.9 },
+      autumn: { palette: ['#547f34', '#74a04c'], leafDensity: 0.92 },
+    },
+    patch: () => ({
+      trunk: {
+        // 古榕主干短而粗, 低处分出多条主枝; 不规则度高、节瘤多
+        height: 9.5, baseRadius: 0.72, taper: 0.055, radiusCurve: 1.55,
+        segments: 18, radialSegments: 18, curve: 0.34, curveVariance: 0.5,
+        lean: 0.06, leanDirection: 15, twist: 0.18, gnarl: 0.95,
+        flare: 1.2, flareHeight: 0.2, knots: 6, knotSize: 0.42, squash: 1.0,
+        // 分叉交给 SCA 冠枝处理, 避免与 SCA 的发枝种子里外重复
+        fork: { enabled: false },
+      },
+      roots: { enabled: false, count: 8, length: 0.24, radiusRatio: 0.44, pitch: 96, segments: 6, radialSegments: 6, curve: 0.8, sink: 0.15 },
+      buttress: { enabled: true, count: 8, strength: 0.7, height: 0.22, flare: 1.2, sharpness: 2.2 },
+      aerialRoots: {
+        enabled: true, levels: [false, true, true, true, true], chance: 0.38, count: 3,
+        thickness: 0.2, length: 1.0, maxLength: 10, droop: 0.92, wobble: 0.6,
+        segments: 10, taper: 0.38,
+      },
+      branches: {
+        levels: 5, apicalDominance: 0.22, phototropism: 0.02, gravityScale: 1.1,
+        lengthScale: 1.0, radiusScale: 1.0,
+        mode: 'sca',
+        sca: {
+          attractors: 180, crownWidth: 1.6, crownHeight: 0.46, crownDrop: 0.1,
+          step: 0.042, killRadius: 0.15, branchiness: 0.44, maxBranches: 110,
+          startT: 0.46, droop: 0.3, wander: 0.34, collision: 0.09,
+          radiusScale: 0.42, taper: 0.15,
+        },
+        level: levels(
+          { count: 4, pitch: 68, pitchVariance: 16, lengthRatio: 0.6, radiusRatio: 0.46, gravity: 0.04, segments: 10, radialSegments: 8, curve: 0.5 },
+          { count: 4, pitch: 54, lengthRatio: 0.62, radiusRatio: 0.5, gravity: -0.06, segments: 8, radialSegments: 6 },
+          { count: 3, pitch: 46, lengthRatio: 0.62, radiusRatio: 0.5, gravity: -0.12, segments: 6, radialSegments: 4 },
+          { count: 3, pitch: 42, lengthRatio: 0.6, radiusRatio: 0.5, gravity: -0.16, segments: 5 },
+          { count: 2, pitch: 38, lengthRatio: 0.58, radiusRatio: 0.5, gravity: -0.18, segments: 4 },
+        ),
+      },
+      epiphyte: {
+        enabled: true, levels: [false, true, true, true, false], ferns: 3, vines: 2,
+        chance: 0.42, size: 0.62, vineLength: 1.7, color: '#5d7a34', colorTip: '#93b254',
+      },
+      oldTree: { deadChance: 0.16, deadLength: 0.42, hollowDepth: 0.55, hollowHeight: 0.3, hollowSize: 0.55 },
+      leaves: {
+        enabled: true, levels: [false, true, true, true, true],
+        perBranch: 14, clusterCount: 4, clusterRadius: 0, clusterSpread: 0,
+        // clusterVolume: 叶簇球壳散布 -> 冠层有体积, 逆光时不是一层纸片
+        clusterVolume: 0.6,
+        size: 0.34, sizeVariance: 0.3, width: 0.8, shape: 'oval', segments: 5,
+        curl: 0.14, fold: 0.28, startT: 0, endT: 1.0,
+        pitch: -22, pitchVariance: 32, droop: 0.26, rollVariance: 180, faceUp: 0.5,
+        twist: 0.2, color: '#3f6b2b', colorTip: '#79a84c', colorVariance: 0.22, petiole: 0.08,
+        shapeMix: [{ shape: 'oval', weight: 6 }, { shape: 'lance', weight: 2 }, { shape: 'birch', weight: 1 }],
+      },
+      bark: {
+        color: '#625747', color2: '#8b7f6b', roughness: 0.95, metalness: 0.0,
+        uvScaleU: 1.0, uvScaleV: 0.5, bump: 1.4, normalScale: 1.3,
+        procedural: { enabled: true, style: 'rough', scale: 1.4, contrast: 0.78 },
+        moss: { enabled: true, coverage: 0.78, scale: 7.5, heightBias: 0.55, color: '#4c6b32' },
+      },
+      leafMat: { roughness: 0.68, metalness: 0.0, translucency: 0.42, emissive: 0.015 },
+    }),
+  },
 ]
 
 /**
