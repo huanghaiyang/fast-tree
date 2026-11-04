@@ -61,6 +61,45 @@ export function smoothstep(t) {
 }
 
 /**
+ * 一维有机噪声 (确定性, 无随机数消耗): 三层不同频率正弦叠加, 值域约 [-1,1]。
+ *
+ * 用途: 给枝条"趋势线 (spine)"施加连续、非周期重复的横向摆动, 打破笔直枝干。
+ * 选择正弦叠加而不是逐节点随机, 是因为相邻节点的偏移必须连续 —— 随机白噪声
+ * 会让枝干变成锯齿, 而多层正弦在宏观上缓慢起伏、微观上有细节, 最接近真实生长。
+ * seed 只改变各层相位, 因此同一个 seed 永远得到同一条曲线。
+ *
+ * @param {number} x 沿枝条的采样坐标 (通常用归一化 t 乘以频率)
+ * @param {number} [seed=0] 相位种子 (弧度)
+ * @returns {number} 约 -1..1 的噪声值
+ */
+export function organicNoise1(x, seed = 0) {
+  return (
+    Math.sin(x * 0.9 + seed) * 0.5 +
+    Math.sin(x * 2.2 + seed * 1.7 + 1.1) * 0.3 +
+    Math.sin(x * 5.3 + seed * 2.9 + 2.2) * 0.2
+  ) * 0.8
+}
+
+/**
+ * 二维环向噪声 (确定性): 角向只使用整数谐波, 因此天然满足 2π 周期 —— 树皮的
+ * 0/2π UV 接缝两侧取值相同, 不会出现一道缝。t 方向为平滑的低频变化。
+ *
+ * 用途: 让横截面不再完美圆形 (相对半径 ±1 的径向扰动), 以及让节瘤轮廓变形。
+ *
+ * @param {number} t 沿枝条的归一化位置 (0..1), 也用于纵向低频调制
+ * @param {number} angle 绕枝轴的方位角 (弧度)
+ * @param {number} [seed=0] 相位种子 (每个枝/节瘤不同)
+ * @returns {number} 约 -1..1 的噪声值
+ */
+export function organicRingNoise(t, angle, seed = 0) {
+  return (
+    Math.sin(angle * 2 + seed + t * 3.1) * 0.45 +
+    Math.sin(angle * 3 - seed * 0.7 + t * 5.7 + 1.3) * 0.3 +
+    Math.sin(angle * 5 + seed * 0.4 + t * 9.1 + 2.4) * 0.25
+  )
+}
+
+/**
  * 取任意与 dir 垂直的单位向量 (确定性, 无随机)。
  *
  * 做法: 选一个与 dir 夹角足够大的参考轴 (dir 接近竖直时用 +Y 会退化, 改装 +X),
@@ -189,6 +228,8 @@ export function sampleFrame(frames, t) {
  *        正负决定旋向; 与随机 Roll 叠加后仍能保留整体的手性
  * @param {number} [o.nodeJumbleBias=0] 节点级方向偏置 (度, 有符号): 每个节点沿枝干侧轴恒定偏转,
  *        总偏转量按分段均分; 让随机抖动整体带上固定的漂移方向
+ * @param {number} [o.spineNoise=0] 趋势线噪声 (相对节点半径): 用连续噪声给骨架施加横向摆动,
+ *        避免出现笔直枝干; 噪声偏移**不累积**进生长路径, 只作为对趋势线的扰动
  * @returns {Array<{pos: THREE.Vector3, dir: THREE.Vector3, radius: number, t: number, roll: number, profileRoll: number}>}
  *          骨架帧数组, 长度 segments+1
  */
@@ -229,6 +270,15 @@ export function growFrames(rng, o) {
   const nodeJumble = (o.nodeJumble || 0) * Math.PI / 180
   const nodeRollBias = (o.nodeRollBias || 0) * Math.PI / 180
   const nodeJumbleBias = (o.nodeJumbleBias || 0) * Math.PI / 180
+  // 趋势线噪声: 幅度相对该节点半径; 两个相位种子分别驱动两条正交轴的偏移。
+  // 与随机方差一样, 只在启用时才消耗随机数 (关闭时既有 seed 的树形不变)。
+  const spineNoise = o.spineNoise || 0
+  let spineSeedA = 0
+  let spineSeedB = 0
+  if (spineNoise > 0) {
+    spineSeedA = rng ? rng.range(0, Math.PI * 2) : 0
+    spineSeedB = rng ? rng.range(0, Math.PI * 2) : 0
+  }
   let rollNoise = 0
   // 临时向量: 复用避免在每段循环里反复 new Vector3 (这是热路径)。
   const sideAxis = new THREE.Vector3()
@@ -275,9 +325,12 @@ export function growFrames(rng, o) {
 
     // 节点位置偏移: 在 dir 的法平面内 (弯曲轴 + 侧轴) 各做一次随机位移,
     // 幅度按该节点半径缩放, 保证不同层级枝条的抖动比例一致。
+    // nodePos 记录"随机偏移后的生长点"(会累积进路径); 趋势线噪声只叠加到本帧, 不累积。
     let framePos = pos
+    let nodePos = null
     if (nodeOffset && rng && i > 0) {
-      framePos = pos.clone()
+      nodePos = pos.clone()
+      framePos = nodePos
       sideAxis.crossVectors(dir, bendAxis)
       if (sideAxis.lengthSq() > 1e-10) sideAxis.normalize()
       else sideAxis.set(0, 0, 0)
@@ -286,13 +339,25 @@ export function growFrames(rng, o) {
       framePos.addScaledVector(sideAxis, rng.signed() * amp)
     }
 
+    // 趋势线噪声: 连续、低频的横向摆动, 让枝干不笔直。
+    // 幅度随 t 渐入 (基部保持贴附, 不把枝条从父枝表面推开)。
+    if (spineNoise) {
+      if (framePos === pos) framePos = pos.clone()
+      sideAxis.crossVectors(dir, bendAxis)
+      if (sideAxis.lengthSq() > 1e-10) sideAxis.normalize()
+      else sideAxis.set(0, 0, 0)
+      const amp = radius * spineNoise * smoothstep(t * 3)
+      framePos.addScaledVector(bendAxis, organicNoise1(t * 4.2, spineSeedA) * amp)
+      framePos.addScaledVector(sideAxis, organicNoise1(t * 4.2, spineSeedB) * amp)
+    }
+
     // 基础扭转 (标量) + 扭曲曲线 (句柄编辑的额外角度) + 节点随机 roll + 有符号 roll 偏置
     const profileRoll = twistProfileOn ? sampleTwistProfile(twistProfile, t) * Math.PI / 180 : 0
     const roll = roll0 + twist * t + profileRoll + rollNoise + nodeRollBias * t
     frames.push({ pos: framePos.clone(), dir: dir.clone(), radius, t, roll, profileRoll })
     if (i === segments) break
-    // 偏移后的节点继续作为下一段的生长起点 (随机游走式摆动, 避免"锯齿回弹")。
-    if (framePos !== pos) pos.copy(framePos)
+    // 随机偏移后的节点继续作为下一段的生长起点 (随机游走式摆动, 避免"锯齿回弹")。
+    if (nodePos) pos.copy(nodePos)
 
     // 1) 弯曲: 越靠梢部弯得越明显
     // 权重 (0.35 + 1.3t): 基部只给 35% 的曲率、梢部给 165%, 这样树干笔直而枝梢自然下垂;

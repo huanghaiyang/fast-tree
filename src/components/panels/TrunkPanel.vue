@@ -65,6 +65,15 @@
       hint="沿树干高度的跨度；越小越像局部鼓包" />
     <SliderRow label="节瘤角向跨度" v-model="t.knotAngle" :min="0.1" :max="2" :step="0.05"
       hint="绕树干的角向半宽（弧度）；越小越不会形成一圈箍" />
+    <SliderRow label="节瘤噪声" v-model="t.knotNoise" :min="0" :max="1" :step="0.02"
+      hint="用噪声扰动瘤体轮廓（凸起幅度与瘤心），0 = 规则椭圆凸起" />
+  </Section>
+
+  <Section title="噪声变形" hint="Noise Deformation" :default-collapsed="true">
+    <SliderRow label="趋势线噪声" v-model="t.spineNoise" :min="0" :max="0.8" :step="0.01"
+      hint="连续噪声驱动的横向摆动（相对半径），避免树干笔直；0 = 关闭" />
+    <SliderRow label="横截面噪声" v-model="t.crossNoise" :min="0" :max="0.4" :step="0.01"
+      hint="环向噪声扰动半径（相对半径），避免完美圆形截面；0 = 关闭" />
   </Section>
 
   <Section title="树根" hint="Roots" :default-collapsed="true">

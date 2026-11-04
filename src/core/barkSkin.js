@@ -48,7 +48,7 @@
  *   - 单位: 米 (位置/半径), 内部角度一律弧度, 坐标是世界坐标 (生成阶段没有局部变换)。
  */
 import * as THREE from 'three'
-import { GeoAcc, anyPerp, clamp01 } from './mathUtils.js'
+import { GeoAcc, anyPerp, clamp01, organicRingNoise } from './mathUtils.js'
 import { validateSkin } from './meshTopology.js'
 
 const TAU = Math.PI * 2
@@ -137,6 +137,11 @@ function ringModifier(branch, ringIndex, angle) {
     mod *= 1 / Math.max(0.62, Math.max(Math.abs(Math.cos(angle)), Math.abs(Math.sin(angle))))
   }
   if (r.radiusModifier) mod *= r.radiusModifier(f.t, angle, f.radius)
+  // 横截面噪声: 同 speedtreeBark, 用环向噪声打破完美圆形截面 (0 = 关闭)。
+  const crossNoise = r.crossNoise || 0
+  if (crossNoise > 0) {
+    mod *= 1 + crossNoise * organicRingNoise(clamp01(f.t), angle, r.phase || 0)
+  }
   const bf = r.baseFlare || 0
   if (bf > 0) {
     const u = Math.min(1, Math.max(0, f.t / Math.max(1e-4, r.baseFlareLen === undefined ? 0.14 : r.baseFlareLen)))

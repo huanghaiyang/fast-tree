@@ -33,7 +33,7 @@
  */
 
 import * as THREE from 'three'
-import { GeoAcc, anyPerp, clamp01 } from './mathUtils.js'
+import { GeoAcc, anyPerp, clamp01, organicRingNoise } from './mathUtils.js'
 import { analyzeTopology, branchSkinCoverage } from './meshTopology.js'
 
 const TAU = Math.PI * 2
@@ -188,6 +188,12 @@ function ringModifier(branch, f, angle) {
     mod *= 1 / Math.max(0.62, Math.max(Math.abs(Math.cos(angle)), Math.abs(Math.sin(angle))))
   }
   if (r.radiusModifier) mod *= r.radiusModifier(f.t, angle, f.radius)
+  // 横截面噪声: 用环向噪声 (2π 周期) 对半径做 ±倍率扰动, 让截面不再完美圆形。
+  // 相位用该枝的 wind phase (每枝不同且确定性), 因此同一 seed 的树形稳定。
+  const crossNoise = r.crossNoise || 0
+  if (crossNoise > 0) {
+    mod *= 1 + crossNoise * organicRingNoise(clamp01(f.t), angle, r.phase || 0)
+  }
   const bf = r.baseFlare || 0
   if (bf > 0) {
     const u = clamp01(f.t / Math.max(1e-4, r.baseFlareLen === undefined ? 0.14 : r.baseFlareLen))

@@ -61,6 +61,10 @@
       hint="有符号: 沿枝长按比例累积的固定 roll, 正负决定整体旋向" />
     <SliderRow label="节点方向偏置" v-model="cfg.nodeJumbleBias" :min="-30" :max="30" :step="1" unit="°"
       hint="有符号: 恒定朝枝干侧向偏转, 让随机抖动带固定漂移方向" />
+    <SliderRow label="趋势线噪声" v-model="cfg.spineNoise" :min="0" :max="0.8" :step="0.01"
+      hint="连续噪声驱动的横向摆动 (相对半径): 打破笔直枝干; 0 = 关闭" />
+    <SliderRow label="横截面噪声" v-model="cfg.crossNoise" :min="0" :max="0.4" :step="0.01"
+      hint="环向噪声扰动半径 (相对半径): 打破完美圆形截面; 0 = 关闭" />
   </Section>
 
   <Section title="全局修正" hint="Global" :default-collapsed="true">

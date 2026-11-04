@@ -62,6 +62,8 @@ export const MAX_LEVELS = 5
  *   nodeJumble     节点级方向抖动 (度): 每个节点随机偏转生长方向, 产生自然的歪扭
  *   nodeRollBias   节点级 Roll 偏置 (度, 有符号): 沿枝长按比例累积的固定 roll, 决定整体旋向
  *   nodeJumbleBias 节点级方向偏置 (度, 有符号): 恒定朝枝干侧向偏转, 让抖动带固定漂移方向
+ *   spineNoise     趋势线噪声 (相对节点半径): 连续噪声驱动的横向摆动, 避免笔直枝干
+ *   crossNoise     横截面噪声 (相对半径): 环向噪声扰动径向, 避免完美圆形截面
  *                  (方差默认 0 = 关闭; 都为 0 时不消耗随机数, 历史树形保持不变)
  *
  * 消费方: treeBuilder.js 递归生长时读取 (几何骨架);
@@ -83,6 +85,7 @@ export function defaultLevel(i) {
       upBias: 0.06, segments: 9, radialSegments: 7,
       crossSection: 'round', starDepth: 0.2, windGain: 0.55,
       nodeRoll: 0, nodeOffset: 0, nodeJumble: 0, nodeRollBias: 0, nodeJumbleBias: 0,
+      spineNoise: 0, crossNoise: 0,
     },
     // L2
     {
@@ -94,6 +97,7 @@ export function defaultLevel(i) {
       upBias: 0.04, segments: 7, radialSegments: 5,
       crossSection: 'round', starDepth: 0.2, windGain: 0.75,
       nodeRoll: 0, nodeOffset: 0, nodeJumble: 0, nodeRollBias: 0, nodeJumbleBias: 0,
+      spineNoise: 0, crossNoise: 0,
     },
     // L3
     {
@@ -105,6 +109,7 @@ export function defaultLevel(i) {
       upBias: 0.02, segments: 5, radialSegments: 4,
       crossSection: 'round', starDepth: 0.2, windGain: 0.9,
       nodeRoll: 0, nodeOffset: 0, nodeJumble: 0, nodeRollBias: 0, nodeJumbleBias: 0,
+      spineNoise: 0, crossNoise: 0,
     },
     // L4
     {
@@ -116,6 +121,7 @@ export function defaultLevel(i) {
       upBias: 0.0, segments: 4, radialSegments: 4,
       crossSection: 'round', starDepth: 0.2, windGain: 1.0,
       nodeRoll: 0, nodeOffset: 0, nodeJumble: 0, nodeRollBias: 0, nodeJumbleBias: 0,
+      spineNoise: 0, crossNoise: 0,
     },
     // L5
     {
@@ -127,6 +133,7 @@ export function defaultLevel(i) {
       upBias: 0.0, segments: 3, radialSegments: 3,
       crossSection: 'round', starDepth: 0.2, windGain: 1.0,
       nodeRoll: 0, nodeOffset: 0, nodeJumble: 0, nodeRollBias: 0, nodeJumbleBias: 0,
+      spineNoise: 0, crossNoise: 0,
     },
   ]
   return JSON.parse(JSON.stringify(table[Math.min(i, table.length - 1)]))
@@ -231,6 +238,9 @@ export function defaultParams() {
       knotStrength: 0.75,   // 节瘤整体倍率 (1 = 原始强度, 0 = 关闭凸起)
       knotSpread: 0.05,     // 节瘤纵向跨度 (t 方向半宽)
       knotAngle: 0.7,       // 节瘤角向跨度 (弧度半宽)
+      knotNoise: 0,         // 节瘤噪声: 用环向噪声扰动瘤体轮廓, 0 = 规则高斯凸起
+      spineNoise: 0,        // 趋势线噪声: 相对半径的横向摆动幅度, 让树干不笔直
+      crossNoise: 0,        // 横截面噪声: 相对半径的径向扰动幅度, 让截面不是正圆
       squash: 1.0,          // 椭圆化 (1 = 圆)
       onePiece: false,      // 树干/树枝/树根一体建模: 导出合并为单个 Bark, 分支基部更融合
       fork: {

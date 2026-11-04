@@ -34,7 +34,7 @@ import { buildFruitTemplate, pushFruitInstance } from './fruit.js'
 import { buildOcclusionGrid, bakeOcclusion, bakeOcclusionByRanges } from './ambientOcclusion.js'
 import {
   GeoAcc, growFrames, sampleFrame, anyPerp, azimuthPerp, rotateTowardUp,
-  clamp01, lerp, boxInfo, UP,
+  clamp01, lerp, boxInfo, UP, organicRingNoise,
 } from './mathUtils.js'
 
 // UI 上的角度参数一律是"度", 进生成器后乘 DEG 转成弧度; 内部只保留弧度运算。
@@ -765,6 +765,8 @@ export function buildTree(params, options = {}) {
       // 节点级有符号偏置 (旋向 / 漂移方向)。
       nodeRollBias: cfg.nodeRollBias || 0,
       nodeJumbleBias: cfg.nodeJumbleBias || 0,
+      // 趋势线噪声: 连续噪声驱动的横向摆动, 让枝条不再笔直。
+      spineNoise: cfg.spineNoise || 0,
     })
     // 单枝编辑必须在 addBarkBranch 之前应用: 子枝 attach / 叶片 / 蒙皮窗口
     // 都从修改后的 frames 计算。
@@ -834,6 +836,8 @@ export function buildTree(params, options = {}) {
         baseFlareLen: (o.baseFlareLen === undefined ? (level === 1 ? 0.16 : 0.13) : o.baseFlareLen),
         // 顶点级噪声: 让管子表面不是完美光滑的旋转体, 5% 的径向扰动足以产生树皮质感。
         vertexNoise: 0.05,
+        // 横截面噪声: 用环向噪声进一步打破完美圆形截面 (0 = 关闭, 叠加在 vertexNoise 之上)。
+        crossNoise: cfg.crossNoise || 0,
       },
     })
     branchCount++
@@ -870,6 +874,9 @@ export function buildTree(params, options = {}) {
   const knotStrength = t.knotStrength === undefined ? 0.75 : Math.max(0, Number(t.knotStrength) || 0)
   const knotSpread = t.knotSpread === undefined ? 0.05 : Math.max(0.002, Number(t.knotSpread) || 0.05)
   const knotAngle = t.knotAngle === undefined ? 0.7 : Math.max(0.05, Number(t.knotAngle) || 0.7)
+  // 节瘤噪声: 0 = 规则二维高斯凸起; >0 时用环向噪声扰动瘤体轮廓 (幅值/中心),
+  // 使节瘤不再是完美椭圆, 更像真实树皮上不规则的瘤块。
+  const knotNoise = Math.max(0, Number(t.knotNoise) || 0)
   for (let i = 0; i < (t.knots || 0); i++) {
     // 位置与尺寸都用 trunkRng 一次性抽定: 同一 seed 下节瘤永远长在同一处。
     // size 再乘 0.5~1.5 的随机倍率, 避免所有瘤一样大。
@@ -879,6 +886,8 @@ export function buildTree(params, options = {}) {
       size: (t.knotSize || 0.3) * knotStrength * trunkRng.range(0.5, 1.5),
       spread: knotSpread * trunkRng.range(0.6, 1.4),
       aspread: knotAngle * trunkRng.range(0.6, 1.4),
+      // 噪声相位由序号派生 (不消耗随机数), 因此开启 knotNoise 不会挪动已有节瘤位置。
+      seed: i * 1.37 + 0.5,
     })
   }
   // 根部"板根/表层根"的方位分布: 真实树木基部不是圆锥, 而是 4~6 条放射状凸起
@@ -914,12 +923,15 @@ export function buildTree(params, options = {}) {
     // ③ 节瘤: 二维高斯凸起。dt 用纵向 σ 归一, daN 用角向 σ 归一,
     //    指数里是两者的平方和 —— 即"到瘤中心的标准化距离²", 于是等高线是椭圆。
     for (const k of knots) {
-      const dt = (tt - k.t) / k.spread
+      // 噪声: 轻微改变瘤心位置与凸起幅度, 让等高线从完美椭圆变成不规则形状。
+      const sn = knotNoise ? organicRingNoise(tt, angle, k.seed) : 0
+      const dt = (tt - (k.t + sn * knotNoise * k.spread * 0.45)) / k.spread
       let da = Math.abs(angle - k.angle)
       // 角向距离取环面上的最短弧 (0..π), 否则 0/2π 接缝两侧会出现一道沟。
       if (da > Math.PI) da = Math.PI * 2 - da
       const daN = da / k.aspread
-      m *= 1 + k.size * Math.exp(-(dt * dt + daN * daN))
+      const amp = k.size * (1 + sn * knotNoise * 0.75)
+      m *= 1 + amp * Math.exp(-(dt * dt + daN * daN))
     }
     return m
   }
@@ -945,6 +957,8 @@ export function buildTree(params, options = {}) {
     twistProfile: t.twistProfile,
     gnarl: t.gnarl,
     taperRatio: t.taper,
+    // 趋势线噪声: 连续噪声驱动的主干横向摆动, 避免笔直树干。
+    spineNoise: t.spineNoise || 0,
   })
   // 扭曲句柄用的引导线 (树干 + 每层代表枝的骨架采样)
   const twistGuides = { trunk: sampleGuidePoints(trunkFramesAll), branches: {} }
@@ -1020,6 +1034,8 @@ export function buildTree(params, options = {}) {
       radiusModifier: trunkModifier,
       // 树干噪声比枝条低 (0.03 vs 0.05): 大树干上过强的噪声会显得像熔岩表面。
       vertexNoise: 0.03,
+      // 横截面噪声: 打破树干的完美圆形截面 (0 = 关闭)。
+      crossNoise: t.crossNoise || 0,
       tipRound: 0.05,
     },
   })
