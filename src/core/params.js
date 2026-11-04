@@ -57,6 +57,12 @@ export const MAX_LEVELS = 5
  *   crossSection   截面形状: 'round' 圆 / 星形 / 方形 (省面数)
  *   starDepth      星形截面的棱深 (只在 crossSection 为星形时生效)
  *   windGain       该级枝条的柔度增益, 累加成顶点的 aWind (越大摆得越凶)
+ *   nodeRoll       节点级 Roll 随机方差 (度): 每个节点绕枝轴随机旋转的幅度
+ *   nodeOffset     节点级位置偏移 (相对该节点半径): 横向随机抖动幅度, 让枝管轮廓不规则
+ *   nodeJumble     节点级方向抖动 (度): 每个节点随机偏转生长方向, 产生自然的歪扭
+ *   nodeRollBias   节点级 Roll 偏置 (度, 有符号): 沿枝长按比例累积的固定 roll, 决定整体旋向
+ *   nodeJumbleBias 节点级方向偏置 (度, 有符号): 恒定朝枝干侧向偏转, 让抖动带固定漂移方向
+ *                  (方差默认 0 = 关闭; 都为 0 时不消耗随机数, 历史树形保持不变)
  *
  * 消费方: treeBuilder.js 递归生长时读取 (几何骨架);
  *         barkSkin / speedtreeBark 读取 segments / radialSegments / crossSection 定拓扑;
@@ -76,6 +82,7 @@ export function defaultLevel(i) {
       gravity: 0.06, twist: 0.25, phyllotaxis: 137.5, spread: 0.14,
       upBias: 0.06, segments: 9, radialSegments: 7,
       crossSection: 'round', starDepth: 0.2, windGain: 0.55,
+      nodeRoll: 0, nodeOffset: 0, nodeJumble: 0, nodeRollBias: 0, nodeJumbleBias: 0,
     },
     // L2
     {
@@ -86,6 +93,7 @@ export function defaultLevel(i) {
       gravity: 0.0, twist: 0.3, phyllotaxis: 137.5, spread: 0.25,
       upBias: 0.04, segments: 7, radialSegments: 5,
       crossSection: 'round', starDepth: 0.2, windGain: 0.75,
+      nodeRoll: 0, nodeOffset: 0, nodeJumble: 0, nodeRollBias: 0, nodeJumbleBias: 0,
     },
     // L3
     {
@@ -96,6 +104,7 @@ export function defaultLevel(i) {
       gravity: -0.04, twist: 0.35, phyllotaxis: 137.5, spread: 0.35,
       upBias: 0.02, segments: 5, radialSegments: 4,
       crossSection: 'round', starDepth: 0.2, windGain: 0.9,
+      nodeRoll: 0, nodeOffset: 0, nodeJumble: 0, nodeRollBias: 0, nodeJumbleBias: 0,
     },
     // L4
     {
@@ -106,6 +115,7 @@ export function defaultLevel(i) {
       gravity: -0.08, twist: 0.4, phyllotaxis: 137.5, spread: 0.45,
       upBias: 0.0, segments: 4, radialSegments: 4,
       crossSection: 'round', starDepth: 0.2, windGain: 1.0,
+      nodeRoll: 0, nodeOffset: 0, nodeJumble: 0, nodeRollBias: 0, nodeJumbleBias: 0,
     },
     // L5
     {
@@ -116,6 +126,7 @@ export function defaultLevel(i) {
       gravity: -0.1, twist: 0.45, phyllotaxis: 137.5, spread: 0.55,
       upBias: 0.0, segments: 3, radialSegments: 3,
       crossSection: 'round', starDepth: 0.2, windGain: 1.0,
+      nodeRoll: 0, nodeOffset: 0, nodeJumble: 0, nodeRollBias: 0, nodeJumbleBias: 0,
     },
   ]
   return JSON.parse(JSON.stringify(table[Math.min(i, table.length - 1)]))

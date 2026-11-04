@@ -50,6 +50,19 @@
     <SliderRow label="柔度增益 (随风摆动)" v-model="cfg.windGain" :min="0" :max="1.5" :step="0.01" />
   </Section>
 
+  <Section title="L{{ active + 1 }} 节点随机" hint="Node Variance" :default-collapsed="true">
+    <SliderRow label="节点 Roll 方差" v-model="cfg.nodeRoll" :min="0" :max="45" :step="1" unit="°"
+      hint="每个节点绕枝轴随机旋转的幅度: 让截面与侧枝朝向不再整齐" />
+    <SliderRow label="节点位置偏移" v-model="cfg.nodeOffset" :min="0" :max="0.6" :step="0.01"
+      hint="横向随机位移 (相对该节点半径): 让枝干轮廓不规则" />
+    <SliderRow label="节点方向抖动" v-model="cfg.nodeJumble" :min="0" :max="20" :step="1" unit="°"
+      hint="每个节点随机偏转生长方向: 产生更自然、更随机的外观" />
+    <SliderRow label="节点 Roll 偏置" v-model="cfg.nodeRollBias" :min="-90" :max="90" :step="1" unit="°"
+      hint="有符号: 沿枝长按比例累积的固定 roll, 正负决定整体旋向" />
+    <SliderRow label="节点方向偏置" v-model="cfg.nodeJumbleBias" :min="-30" :max="30" :step="1" unit="°"
+      hint="有符号: 恒定朝枝干侧向偏转, 让随机抖动带固定漂移方向" />
+  </Section>
+
   <Section title="全局修正" hint="Global" :default-collapsed="true">
     <SliderRow label="枝条长度倍率" v-model="b.lengthScale" :min="0.2" :max="2.5" :step="0.01" />
     <SliderRow label="枝条半径倍率" v-model="b.radiusScale" :min="0.2" :max="2.5" :step="0.01" />

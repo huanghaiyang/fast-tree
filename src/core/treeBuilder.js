@@ -758,6 +758,13 @@ export function buildTree(params, options = {}) {
       twistProfile: cfg.twistProfile || (P.branches && P.branches.twistProfile),
       gnarl: 0.18,
       taperRatio: cfg.taper,
+      // 节点级随机方差 (Roll / 位置偏移 / 方向抖动), 见 mathUtils.growFrames。
+      nodeRoll: cfg.nodeRoll || 0,
+      nodeOffset: cfg.nodeOffset || 0,
+      nodeJumble: cfg.nodeJumble || 0,
+      // 节点级有符号偏置 (旋向 / 漂移方向)。
+      nodeRollBias: cfg.nodeRollBias || 0,
+      nodeJumbleBias: cfg.nodeJumbleBias || 0,
     })
     // 单枝编辑必须在 addBarkBranch 之前应用: 子枝 attach / 叶片 / 蒙皮窗口
     // 都从修改后的 frames 计算。

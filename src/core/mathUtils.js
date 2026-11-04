@@ -182,6 +182,13 @@ export function sampleFrame(frames, t) {
  * @param {number} [o.twist=0] 基础扭转总量 (弧度), 沿 t 线性累加到 roll
  * @param {Array<number>} [o.twistProfile] 5 点扭曲曲线 (度), 叠加在基础扭转之上
  * @param {number} [o.roll0=0] 起始 roll (弧度), 让同一父枝上的子枝截面错开
+ * @param {number} [o.nodeRoll=0] 节点级 Roll 随机方差 (度): 每个节点绕枝轴随机旋转的幅度
+ * @param {number} [o.nodeOffset=0] 节点级位置偏移方差 (相对该节点半径): 横向随机抖动的幅度
+ * @param {number} [o.nodeJumble=0] 节点级方向抖动 (度): 每个节点随机偏转生长方向的幅度
+ * @param {number} [o.nodeRollBias=0] 节点级 Roll 偏置 (度, 有符号): 沿枝长按比例累积的固定 roll,
+ *        正负决定旋向; 与随机 Roll 叠加后仍能保留整体的手性
+ * @param {number} [o.nodeJumbleBias=0] 节点级方向偏置 (度, 有符号): 每个节点沿枝干侧轴恒定偏转,
+ *        总偏转量按分段均分; 让随机抖动整体带上固定的漂移方向
  * @returns {Array<{pos: THREE.Vector3, dir: THREE.Vector3, radius: number, t: number, roll: number, profileRoll: number}>}
  *          骨架帧数组, 长度 segments+1
  */
@@ -208,6 +215,23 @@ export function growFrames(rng, o) {
   const r0 = o.radius0
   const r1 = o.radius1 !== undefined ? o.radius1 : r0 * taperRatio
   const roll0 = o.roll0 || 0
+  // 节点级随机方差 (SpeedTree 的 Roll / Offset / Jumble):
+  //   nodeRoll   每个节点绕枝轴的随机 roll 增量 (度 -> 弧度), 累积到该节点的截面朝向;
+  //   nodeOffset 每个节点沿法平面随机位移 (以该节点半径为基准), 让枝管轮廓不规则;
+  //   nodeJumble 每个节点随机偏转生长方向 (度 -> 弧度), 产生更自然的歪扭。
+  // 节点级有符号偏置:
+  //   nodeRollBias   沿枝长线性累积的固定 roll (度), 决定整体手性/旋向;
+  //   nodeJumbleBias 每个节点沿枝干侧轴恒定偏转 (度), 让抖动整体带固定漂移方向。
+  // 随机项全为 0 时**不消耗任何随机数**, 保证关闭该功能时既有 seed 的历史树形逐字节不变;
+  // 两个偏置项是确定性的, 不需要消耗随机数。
+  const nodeRoll = (o.nodeRoll || 0) * Math.PI / 180
+  const nodeOffset = o.nodeOffset || 0
+  const nodeJumble = (o.nodeJumble || 0) * Math.PI / 180
+  const nodeRollBias = (o.nodeRollBias || 0) * Math.PI / 180
+  const nodeJumbleBias = (o.nodeJumbleBias || 0) * Math.PI / 180
+  let rollNoise = 0
+  // 临时向量: 复用避免在每段循环里反复 new Vector3 (这是热路径)。
+  const sideAxis = new THREE.Vector3()
 
   // i = 0..segments 共 segments+1 帧; 末帧只记录不推进, 因此循环内 i===segments 时 break。
   for (let i = 0; i <= segments; i++) {
@@ -215,11 +239,60 @@ export function growFrames(rng, o) {
     // 半径收细: r(t) = r1 + (r0-r1)·(1-t)^radiusCurve。
     // 下限 0.0006 米 (~0.6mm) 是防退化阈值 —— 半径趋 0 会让蒙皮的环坐标系与法线除零。
     const radius = Math.max(0.0006, r1 + (r0 - r1) * Math.pow(1 - t, radiusCurve))
-    // 基础扭转 (标量) + 扭曲曲线 (句柄编辑的额外角度)
+
+    // 节点方向抖动 (Jumble): 绕弯曲轴 + 其正交侧轴各转一个随机角。
+    // 首帧不抖动 —— 基部必须保持与父枝表面的贴附方向, 否则蒙皮切孔桥接会错位。
+    if (nodeJumble && rng && i > 0) {
+      dir.applyAxisAngle(bendAxis, rng.signed() * nodeJumble)
+      sideAxis.crossVectors(dir, bendAxis)
+      if (sideAxis.lengthSq() > 1e-10) {
+        sideAxis.normalize()
+        dir.applyAxisAngle(sideAxis, rng.signed() * nodeJumble)
+      }
+      dir.normalize()
+      // 抖动后重新把弯曲轴投影回 dir 的法平面, 保持后续弯曲/扭转的正交基连续。
+      bendAxis.addScaledVector(dir, -bendAxis.dot(dir))
+      if (bendAxis.lengthSq() < 1e-10) anyPerp(dir, bendAxis)
+      bendAxis.normalize()
+    }
+
+    // 节点方向偏置 (Jumble Bias): 沿枝干侧轴恒定的有符号偏转, 让随机抖动整体偏向同一侧。
+    // 总偏转量按 segments 均分, 因此与分段数无关; 首帧同样不偏转 (基部贴附方向不能动)。
+    if (nodeJumbleBias && i > 0) {
+      sideAxis.crossVectors(dir, bendAxis)
+      if (sideAxis.lengthSq() > 1e-10) {
+        sideAxis.normalize()
+        dir.applyAxisAngle(sideAxis, nodeJumbleBias / segments)
+        dir.normalize()
+        bendAxis.addScaledVector(dir, -bendAxis.dot(dir))
+        if (bendAxis.lengthSq() < 1e-10) anyPerp(dir, bendAxis)
+        bendAxis.normalize()
+      }
+    }
+
+    // 节点 Roll 方差: 累积式随机 roll 增量 (截面朝向逐节点随机旋转)。
+    if (nodeRoll && rng && i > 0) rollNoise += rng.signed() * nodeRoll
+
+    // 节点位置偏移: 在 dir 的法平面内 (弯曲轴 + 侧轴) 各做一次随机位移,
+    // 幅度按该节点半径缩放, 保证不同层级枝条的抖动比例一致。
+    let framePos = pos
+    if (nodeOffset && rng && i > 0) {
+      framePos = pos.clone()
+      sideAxis.crossVectors(dir, bendAxis)
+      if (sideAxis.lengthSq() > 1e-10) sideAxis.normalize()
+      else sideAxis.set(0, 0, 0)
+      const amp = radius * nodeOffset
+      framePos.addScaledVector(bendAxis, rng.signed() * amp)
+      framePos.addScaledVector(sideAxis, rng.signed() * amp)
+    }
+
+    // 基础扭转 (标量) + 扭曲曲线 (句柄编辑的额外角度) + 节点随机 roll + 有符号 roll 偏置
     const profileRoll = twistProfileOn ? sampleTwistProfile(twistProfile, t) * Math.PI / 180 : 0
-    const roll = roll0 + twist * t + profileRoll
-    frames.push({ pos: pos.clone(), dir: dir.clone(), radius, t, roll, profileRoll })
+    const roll = roll0 + twist * t + profileRoll + rollNoise + nodeRollBias * t
+    frames.push({ pos: framePos.clone(), dir: dir.clone(), radius, t, roll, profileRoll })
     if (i === segments) break
+    // 偏移后的节点继续作为下一段的生长起点 (随机游走式摆动, 避免"锯齿回弹")。
+    if (framePos !== pos) pos.copy(framePos)
 
     // 1) 弯曲: 越靠梢部弯得越明显
     // 权重 (0.35 + 1.3t): 基部只给 35% 的曲率、梢部给 165%, 这样树干笔直而枝梢自然下垂;
