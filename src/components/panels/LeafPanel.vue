@@ -118,6 +118,8 @@
       <SliderRow label="垂藤长度" v-model="E.vineLength" :min="0.1" :max="5" :step="0.05" unit="m" />
       <ColorRow label="蕨叶颜色 A" v-model="E.color" />
       <ColorRow label="蕨叶颜色 B" v-model="E.colorTip" />
+      <TextureRow label="自定义附生植物贴图" v-model="E.texture"
+        hint="只作用于附生卡片; 留空则沿用树叶贴图/程序化叶形" />
     </template>
   </Section>
 </template>
@@ -128,6 +130,7 @@ import Section from '../ui/Section.vue'
 import SliderRow from '../ui/SliderRow.vue'
 import ToggleRow from '../ui/ToggleRow.vue'
 import ColorRow from '../ui/ColorRow.vue'
+import TextureRow from '../ui/TextureRow.vue'
 import SelectRow from '../ui/SelectRow.vue'
 import LeafShapeGallery from '../LeafShapeGallery.vue'
 import LeafCardPicker from '../LeafCardPicker.vue'

@@ -375,6 +375,8 @@ export function buildTree(params, options = {}) {
   // 区间格式 [v0, v1, cx, cy, cz]: 顶点范围 + 实例中心 (世界坐标)。
   const leafAoRanges = []
   const flowerAoRanges = []
+  // 附生卡片的顶点区间: 几何 build 后据此写入 aEpiphyte 标记 (供着色器换用附生贴图)
+  const epiRanges = []
 
   /* ------------------------------------------------------------------ */
   /* 叶片                                                                */
@@ -600,6 +602,7 @@ export function buildTree(params, options = {}) {
       )
       leafAoRanges.push([v0, leafAcc.vertexCount, pos.x, pos.y, pos.z])
       aoSamples.push(pos.x, pos.y, pos.z)
+      epiRanges.push([v0, leafAcc.vertexCount])
       epiphyteCount++
     }
 
@@ -1871,6 +1874,14 @@ export function buildTree(params, options = {}) {
     }
   }
   const leafGeometry = leafAcc.vertexCount > 0 ? leafAcc.build() : null
+  // 附生卡片标记: 顶点顺序与写入顺序一致 (build 不做去重/重排), 直接按区间填 1。
+  // 着色器据此只给附生卡片采样 uEpiphyteMap, 普通叶子保持原贴图。
+  if (leafGeometry && epiRanges.length) {
+    const total = leafGeometry.attributes.position.count
+    const flags = new Float32Array(total)
+    for (const [a, b] of epiRanges) flags.fill(1, a, b)
+    leafGeometry.setAttribute('aEpiphyte', new THREE.BufferAttribute(flags, 1))
+  }
 
   /* ---- 花朵: 用花朵自己的设置独立采样 (层级/每枝数量/每簇数/分布起止/朝向) ---- */
   // 为什么放在蒙皮之后单独跑: 花朵参数与树叶完全独立, 且要复用"已长完的枝条帧"。

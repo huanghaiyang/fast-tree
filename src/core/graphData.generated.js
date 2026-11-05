@@ -372,6 +372,10 @@ export const GRAPH_DATA = {
         {
           "path": "colorTip",
           "value": "#93b254"
+        },
+        {
+          "path": "texture",
+          "value": ""
         }
       ]
     },
@@ -1123,6 +1127,14 @@ export const GRAPH_DATA = {
         {
           "path": "moss.color",
           "value": "#4c6b32"
+        },
+        {
+          "path": "moss.texture",
+          "value": ""
+        },
+        {
+          "path": "moss.textureRepeat",
+          "value": "2"
         }
       ]
     },
@@ -4007,7 +4019,7 @@ export const GRAPH_DATA = {
           "id": "materials:vertexBody",
           "name": "vertexBody",
           "module": "materials",
-          "line": 140,
+          "line": 144,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -4018,7 +4030,7 @@ export const GRAPH_DATA = {
           "id": "materials:fragmentBody",
           "name": "fragmentBody",
           "module": "materials",
-          "line": 268,
+          "line": 280,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -4029,7 +4041,7 @@ export const GRAPH_DATA = {
           "id": "materials:internalShaderSources",
           "name": "internalShaderSources",
           "module": "materials",
-          "line": 482,
+          "line": 513,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -4040,7 +4052,7 @@ export const GRAPH_DATA = {
           "id": "materials:resolveTintMix",
           "name": "resolveTintMix",
           "module": "materials",
-          "line": 505,
+          "line": 536,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -4051,7 +4063,7 @@ export const GRAPH_DATA = {
           "id": "materials:applyAutoNormal",
           "name": "applyAutoNormal",
           "module": "materials",
-          "line": 535,
+          "line": 566,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -4067,7 +4079,7 @@ export const GRAPH_DATA = {
           "id": "materials:hashCode",
           "name": "hashCode",
           "module": "materials",
-          "line": 594,
+          "line": 625,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -4078,7 +4090,7 @@ export const GRAPH_DATA = {
           "id": "materials:createSharedUniforms",
           "name": "createSharedUniforms",
           "module": "materials",
-          "line": 616,
+          "line": 647,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -4091,7 +4103,7 @@ export const GRAPH_DATA = {
           "id": "materials:perMaterialUniforms",
           "name": "perMaterialUniforms",
           "module": "materials",
-          "line": 666,
+          "line": 697,
           "exported": true,
           "parent": null,
           "calls": [
@@ -4111,7 +4123,7 @@ export const GRAPH_DATA = {
           "id": "materials:applyTreeShader",
           "name": "applyTreeShader",
           "module": "materials",
-          "line": 731,
+          "line": 769,
           "exported": false,
           "parent": null,
           "calls": [
@@ -4127,7 +4139,7 @@ export const GRAPH_DATA = {
           "id": "materials:createTreeDepthMaterial",
           "name": "createTreeDepthMaterial",
           "module": "materials",
-          "line": 831,
+          "line": 869,
           "exported": true,
           "parent": null,
           "calls": [
@@ -4142,7 +4154,7 @@ export const GRAPH_DATA = {
           "id": "materials:createBarkMaterial",
           "name": "createBarkMaterial",
           "module": "materials",
-          "line": 870,
+          "line": 908,
           "exported": true,
           "parent": null,
           "calls": [
@@ -4162,7 +4174,7 @@ export const GRAPH_DATA = {
           "id": "materials:flowerLeafParams",
           "name": "flowerLeafParams",
           "module": "materials",
-          "line": 907,
+          "line": 945,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -4176,7 +4188,7 @@ export const GRAPH_DATA = {
           "id": "materials:createFlowerMaterial",
           "name": "createFlowerMaterial",
           "module": "materials",
-          "line": 959,
+          "line": 997,
           "exported": true,
           "parent": null,
           "calls": [
@@ -4189,7 +4201,7 @@ export const GRAPH_DATA = {
           "id": "materials:updateFlowerMaterial",
           "name": "updateFlowerMaterial",
           "module": "materials",
-          "line": 976,
+          "line": 1014,
           "exported": true,
           "parent": null,
           "calls": [
@@ -4203,7 +4215,7 @@ export const GRAPH_DATA = {
           "id": "materials:createLeafMaterial",
           "name": "createLeafMaterial",
           "module": "materials",
-          "line": 996,
+          "line": 1034,
           "exported": true,
           "parent": null,
           "calls": [
@@ -4225,10 +4237,11 @@ export const GRAPH_DATA = {
           "id": "materials:updateBarkMaterial",
           "name": "updateBarkMaterial",
           "module": "materials",
-          "line": 1052,
+          "line": 1090,
           "exported": true,
           "parent": null,
           "calls": [
+            "materials:whitePixelTexture",
             "materials:clearAutoBarkTextures",
             "materials:applyAutoNormal"
           ],
@@ -4253,7 +4266,7 @@ export const GRAPH_DATA = {
           "id": "materials:clearAutoBarkTextures",
           "name": "clearAutoBarkTextures",
           "module": "materials",
-          "line": 1151,
+          "line": 1201,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -4266,7 +4279,7 @@ export const GRAPH_DATA = {
           "id": "materials:updateLeafMaterial",
           "name": "updateLeafMaterial",
           "module": "materials",
-          "line": 1185,
+          "line": 1235,
           "exported": true,
           "parent": null,
           "calls": [
@@ -4295,6 +4308,7 @@ export const GRAPH_DATA = {
             "wind:*",
             "leafMat:backColor",
             "leafMat:backTexture",
+            "epiphyte:*",
             "flower:textureU",
             "flower:textureV",
             "flower:textureRepeat",
@@ -4307,7 +4321,7 @@ export const GRAPH_DATA = {
           "id": "materials:updateWindUniforms",
           "name": "updateWindUniforms",
           "module": "materials",
-          "line": 1344,
+          "line": 1407,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -4318,7 +4332,7 @@ export const GRAPH_DATA = {
           "id": "materials:updateGrowthUniforms",
           "name": "updateGrowthUniforms",
           "module": "materials",
-          "line": 1370,
+          "line": 1433,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -4329,7 +4343,7 @@ export const GRAPH_DATA = {
           "id": "materials:updateMaterials",
           "name": "updateMaterials",
           "module": "materials",
-          "line": 1387,
+          "line": 1450,
           "exported": true,
           "parent": null,
           "calls": [
@@ -4348,7 +4362,7 @@ export const GRAPH_DATA = {
           "id": "materials:rebindCustomShader",
           "name": "rebindCustomShader",
           "module": "materials",
-          "line": 1417,
+          "line": 1480,
           "exported": true,
           "parent": null,
           "calls": [
@@ -4363,7 +4377,7 @@ export const GRAPH_DATA = {
           "id": "materials:invalidateTextureCaches",
           "name": "invalidateTextureCaches",
           "module": "materials",
-          "line": 1437,
+          "line": 1500,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -4790,7 +4804,7 @@ export const GRAPH_DATA = {
           "id": "paramDocs:normalize",
           "name": "normalize",
           "module": "paramDocs",
-          "line": 682,
+          "line": 685,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -4801,7 +4815,7 @@ export const GRAPH_DATA = {
           "id": "paramDocs:docFor",
           "name": "docFor",
           "module": "paramDocs",
-          "line": 707,
+          "line": 710,
           "exported": true,
           "parent": null,
           "calls": [
@@ -4879,7 +4893,7 @@ export const GRAPH_DATA = {
           "id": "params:cloneParams",
           "name": "cloneParams",
           "module": "params",
-          "line": 833,
+          "line": 838,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -4890,7 +4904,7 @@ export const GRAPH_DATA = {
           "id": "params:mergeParams",
           "name": "mergeParams",
           "module": "params",
-          "line": 855,
+          "line": 860,
           "exported": true,
           "parent": null,
           "calls": [
@@ -4904,7 +4918,7 @@ export const GRAPH_DATA = {
           "id": "params:walk",
           "name": "walk",
           "module": "params",
-          "line": 857,
+          "line": 862,
           "exported": false,
           "parent": "params:mergeParams",
           "calls": [],
@@ -4915,7 +4929,7 @@ export const GRAPH_DATA = {
           "id": "params:normalizeParams",
           "name": "normalizeParams",
           "module": "params",
-          "line": 895,
+          "line": 900,
           "exported": true,
           "parent": null,
           "calls": [
@@ -4930,7 +4944,7 @@ export const GRAPH_DATA = {
           "id": "params:pickStringify",
           "name": "pickStringify",
           "module": "params",
-          "line": 938,
+          "line": 943,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -4941,7 +4955,7 @@ export const GRAPH_DATA = {
           "id": "params:serializeGroup",
           "name": "serializeGroup",
           "module": "params",
-          "line": 952,
+          "line": 957,
           "exported": true,
           "parent": null,
           "calls": [
@@ -7821,7 +7835,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:spawnLeaves",
           "name": "spawnLeaves",
           "module": "treeBuilder",
-          "line": 396,
+          "line": 398,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [
@@ -7867,7 +7881,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:spawnEpiphytes",
           "name": "spawnEpiphytes",
           "module": "treeBuilder",
-          "line": 569,
+          "line": 571,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [
@@ -7887,7 +7901,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:ensureSlot",
           "name": "ensureSlot",
           "module": "treeBuilder",
-          "line": 577,
+          "line": 579,
           "exported": false,
           "parent": "treeBuilder:spawnEpiphytes",
           "calls": [
@@ -7900,7 +7914,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:putCard",
           "name": "putCard",
           "module": "treeBuilder",
-          "line": 588,
+          "line": 590,
           "exported": false,
           "parent": "treeBuilder:spawnEpiphytes",
           "calls": [
@@ -7916,7 +7930,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:spawnChildren",
           "name": "spawnChildren",
           "module": "treeBuilder",
-          "line": 684,
+          "line": 687,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [
@@ -7950,7 +7964,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:branchEditOf",
           "name": "branchEditOf",
           "module": "treeBuilder",
-          "line": 778,
+          "line": 781,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [],
@@ -7961,7 +7975,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:applyBranchEdit",
           "name": "applyBranchEdit",
           "module": "treeBuilder",
-          "line": 795,
+          "line": 798,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [
@@ -7976,7 +7990,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:buildBranch",
           "name": "buildBranch",
           "module": "treeBuilder",
-          "line": 857,
+          "line": 860,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [
@@ -8027,7 +8041,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:chainToFrames",
           "name": "chainToFrames",
           "module": "treeBuilder",
-          "line": 991,
+          "line": 994,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [],
@@ -8038,7 +8052,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:buildSpaceColonization",
           "name": "buildSpaceColonization",
           "module": "treeBuilder",
-          "line": 1020,
+          "line": 1023,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [
@@ -8069,7 +8083,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:buildAerialRoots",
           "name": "buildAerialRoots",
           "module": "treeBuilder",
-          "line": 1112,
+          "line": 1115,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [
@@ -8093,7 +8107,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:trunkRadiusMod",
           "name": "trunkRadiusMod",
           "module": "treeBuilder",
-          "line": 1277,
+          "line": 1280,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [
@@ -8112,7 +8126,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:spawnFruit",
           "name": "spawnFruit",
           "module": "treeBuilder",
-          "line": 1577,
+          "line": 1580,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [
@@ -8145,7 +8159,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:projectTOnTrunk",
           "name": "projectTOnTrunk",
           "module": "treeBuilder",
-          "line": 1727,
+          "line": 1730,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [],
@@ -8156,7 +8170,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:sampleGuidePoints",
           "name": "sampleGuidePoints",
           "module": "treeBuilder",
-          "line": 2130,
+          "line": 2141,
           "exported": false,
           "parent": null,
           "calls": [
@@ -8169,7 +8183,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:emptyBox",
           "name": "emptyBox",
           "module": "treeBuilder",
-          "line": 2147,
+          "line": 2158,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -8180,7 +8194,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:unionBox",
           "name": "unionBox",
           "module": "treeBuilder",
-          "line": 2158,
+          "line": 2169,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -8191,7 +8205,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:finalizeNodes",
           "name": "finalizeNodes",
           "module": "treeBuilder",
-          "line": 2183,
+          "line": 2194,
           "exported": true,
           "parent": null,
           "calls": [
@@ -8205,7 +8219,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:measure",
           "name": "measure",
           "module": "treeBuilder",
-          "line": 2221,
+          "line": 2232,
           "exported": false,
           "parent": "treeBuilder:finalizeNodes",
           "calls": [
@@ -8219,7 +8233,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:selectionRanges",
           "name": "selectionRanges",
           "module": "treeBuilder",
-          "line": 2355,
+          "line": 2366,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -8230,7 +8244,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:estimateScale",
           "name": "estimateScale",
           "module": "treeBuilder",
-          "line": 2398,
+          "line": 2409,
           "exported": true,
           "parent": null,
           "calls": [
@@ -8248,7 +8262,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:cnt",
           "name": "cnt",
           "module": "treeBuilder",
-          "line": 2401,
+          "line": 2412,
           "exported": false,
           "parent": "treeBuilder:estimateScale",
           "calls": [],
@@ -8263,7 +8277,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:subtree",
           "name": "subtree",
           "module": "treeBuilder",
-          "line": 2410,
+          "line": 2421,
           "exported": false,
           "parent": "treeBuilder:estimateScale",
           "calls": [
@@ -8276,7 +8290,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:countAt",
           "name": "countAt",
           "module": "treeBuilder",
-          "line": 2422,
+          "line": 2433,
           "exported": false,
           "parent": "treeBuilder:estimateScale",
           "calls": [
@@ -9617,6 +9631,10 @@ export const GRAPH_DATA = {
     {
       "from": "materials:createLeafMaterial",
       "to": "materials:updateLeafMaterial"
+    },
+    {
+      "from": "materials:updateBarkMaterial",
+      "to": "materials:whitePixelTexture"
     },
     {
       "from": "materials:updateBarkMaterial",
@@ -11375,6 +11393,11 @@ export const GRAPH_DATA = {
     {
       "group": "leafMat",
       "key": "backTexture",
+      "to": "materials:updateLeafMaterial"
+    },
+    {
+      "group": "epiphyte",
+      "key": "*",
       "to": "materials:updateLeafMaterial"
     },
     {

@@ -319,6 +319,8 @@ export function defaultParams() {
       vineLength: 1.4,     // 垂藤长度(米)
       color: '#5d7a34',
       colorTip: '#93b254',
+      // 自定义附生贴图 (dataURL); 为空时用树叶材质的贴图/程序化叶形
+      texture: '',
     },
 
     /* 古树特征: 断枝与树洞。
@@ -551,6 +553,9 @@ export function defaultParams() {
         scale: 6.0,        // 苔藓斑块频率
         heightBias: 0.35,  // 偏向低处/背光面的程度
         color: '#4c6b32',
+        // 自定义苔藓贴图 (dataURL); 为空时用上面的程序化斑块. 贴图亮度/alpha 决定形状.
+        texture: '',
+        textureRepeat: 2,  // 贴图在树皮 UV 上的平铺次数
       },
     },
 

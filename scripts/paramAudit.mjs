@@ -253,6 +253,8 @@ export const DOM_DEPENDENT = new Set([
   'bark.procedural.enabled', 'bark.procedural.style', 'bark.procedural.scale', 'bark.procedural.contrast',
   'bark.texture', 'bark.normalTexture', 'bark.normalFromAlbedo', 'bark.uvWarp', 'bark.uvWarpScale',
   'leafMat.texture', 'leafMat.normalTexture', 'leafMat.normalFromAlbedo',
+  // 苔藓/附生层自定义贴图: 需要 ImageLoader (Node 侧无法加载)
+  'bark.moss.texture', 'epiphyte.texture',
   'leafMat.textureU', 'leafMat.textureV',
   'leafMat.textureRepeatU', 'leafMat.textureRepeatV', 'leafMat.textureRotation',
   'leafMat.backTexture',
@@ -484,6 +486,8 @@ function materialSignature(params) {
     un(m, 'uMossScale'),
     un(m, 'uMossHeightBias'),
     un(m, 'uMossColor'),
+    un(m, 'uMossTexRepeat'),
+    un(m, 'uEpiphyteEnabled'),
     typeof m.onBeforeCompile === 'function' ? 'obc' : 'none',
     typeof m.customProgramCacheKey === 'function' ? m.customProgramCacheKey() : '',
   ].join(':')

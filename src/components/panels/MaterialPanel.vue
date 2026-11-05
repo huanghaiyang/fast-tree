@@ -65,6 +65,9 @@
       <SliderRow label="苔藓高度偏置" v-model="moss.heightBias" :min="0" :max="1" :step="0.01"
         hint="越大越低处越容易长苔藓" />
       <ColorRow label="苔藓颜色" v-model="moss.color" />
+      <TextureRow label="自定义苔藓贴图" v-model="moss.texture" />
+      <SliderRow v-if="moss.texture" label="苔藓贴图平铺" v-model="moss.textureRepeat"
+        :min="0.5" :max="8" :step="0.1" hint="贴图在树皮 UV 上的重复次数" />
     </template>
   </Section>
 

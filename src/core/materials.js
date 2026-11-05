@@ -79,6 +79,9 @@ attribute float aPhase;
 attribute vec3 aOrigin;
 attribute vec2 aGrow;
 attribute float aNodeId;
+// 附生植物标记: 只有树叶几何会写入 (1 = 附生卡片); 其它几何没有这个属性时
+// WebGL 使用默认值 0, 因此树皮/花/果的着色器可以安全共用这段声明。
+attribute float aEpiphyte;
 uniform float uTime;
 uniform vec2 uWindDir;
 uniform float uWindStrength;
@@ -108,6 +111,7 @@ uniform float uSelRangeCount;
 varying vec2 vTreeUv;
 varying float vTreeWind;
 varying float vTreeSelected;
+varying float vTreeEpiphyte;
 
 // 罗德里格旋转: 绕任意轴 (叶片用固定水平轴做铰链式俯仰, 不做绕垂直轴自转)
 vec3 treeRotate(vec3 v, vec3 axis, float angle) {
@@ -148,6 +152,7 @@ function vertexBody(customVertex) {
   #else
     vTreeUv = vec2(0.0);
   #endif
+  vTreeEpiphyte = aEpiphyte;
   vec4 treeWorld = modelMatrix * vec4(treePos, 1.0);
   float flex = pow(clamp(aWind, 0.0, 1.0), uFlexFalloff);
   vTreeWind = flex;
@@ -237,6 +242,12 @@ uniform float uMossCoverage;
 uniform float uMossScale;
 uniform float uMossHeightBias;
 uniform vec3 uMossColor;
+uniform float uMossTexEnabled;
+uniform float uMossTexRepeat;
+uniform sampler2D uMossMap;
+// --- 附生植物贴图 (只在树叶材质的附生卡片上生效; 其它材质 uEpiphyteEnabled=0) ---
+uniform float uEpiphyteEnabled;
+uniform sampler2D uEpiphyteMap;
 // --- 模型节点选中 ---
 uniform float uSelectMode;
 uniform vec3 uSelColor;
@@ -245,6 +256,7 @@ uniform float uSelDim;
 varying vec2 vTreeUv;
 varying float vTreeWind;
 varying float vTreeSelected;
+varying float vTreeEpiphyte;
 `
 
 /**
@@ -296,7 +308,16 @@ function fragmentBody(customFragment) {
     // 覆盖率越高阈值越低 -> 苔藓面积越大
     float thr = 1.0 - uMossCoverage * 0.95 + bias;
     float mask = smoothstep(thr - 0.12, thr + 0.08, pat);
-    diffuseColor.rgb = mix(diffuseColor.rgb, uMossColor, mask * 0.9);
+    vec3 treeMossCol = uMossColor;
+    if (uMossTexEnabled > 0.5) {
+      // 自定义苔藓贴图: 贴图颜色直接作为苔藓色, 亮度/alpha 进一步收紧覆盖形状
+      // (贴图越暗/越透明的地方越不长苔藓), 让照片素材也能自然过渡到树皮。
+      vec4 mossTexel = texture2D(uMossMap, vTreeUv * uMossTexRepeat);
+      float lum = dot(mossTexel.rgb, vec3(0.299, 0.587, 0.114));
+      mask *= smoothstep(0.04, 0.75, max(lum, mossTexel.a));
+      treeMossCol = mossTexel.rgb;
+    }
+    diffuseColor.rgb = mix(diffuseColor.rgb, treeMossCol, mask * 0.9);
   }
   // --- 模型节点: 隔离 / 变暗 / 选中着色 ---
   if (uSelectMode > 1.5 && vTreeSelected < 0.5) {
@@ -467,6 +488,16 @@ const LEAF_BACK_MAP_FRAGMENT = /* glsl */`
   } else {
     diffuseColor *= treeFrontTexel;
   }
+#endif
+// 附生卡片: 额外叠一层独立贴图 (只在 aEpiphyte=1 的顶点上生效)。
+// 颜色与 alpha 一起乘, 这样叶形/镂空直接由贴图 alpha 决定, 且仍受后续染色/选中影响。
+// 放在 USE_MAP 内: vMapUv 只在有贴图时存在, 没有贴图时附生卡片退回普通叶材质。
+#ifdef USE_MAP
+if (uEpiphyteEnabled > 0.5 && vTreeEpiphyte > 0.5) {
+  vec4 treeEpiTexel = texture2D( uEpiphyteMap, vMapUv );
+  diffuseColor.rgb *= treeEpiTexel.rgb;
+  diffuseColor.a *= treeEpiTexel.a;
+}
 #endif
 `
 
@@ -697,6 +728,13 @@ export function perMaterialUniforms(params, isLeaf) {
     uMossScale: { value: isLeaf ? 1 : (m.moss && m.moss.scale !== undefined ? m.moss.scale : 6) },
     uMossHeightBias: { value: isLeaf ? 0 : (m.moss && m.moss.heightBias !== undefined ? m.moss.heightBias : 0.35) },
     uMossColor: { value: new THREE.Color(isLeaf ? '#ffffff' : ((m.moss && m.moss.color) || '#4c6b32')) },
+    // 自定义苔藓贴图 (只对树皮材质; 默认绑白图 = 关闭). updateBarkMaterial 负责换图.
+    uMossTexEnabled: { value: 0 },
+    uMossTexRepeat: { value: (m.moss && m.moss.textureRepeat !== undefined) ? m.moss.textureRepeat : 2 },
+    uMossMap: { value: whitePixelTexture() },
+    // 附生植物贴图 (只对树叶材质; 其它材质固定关闭)
+    uEpiphyteEnabled: { value: 0 },
+    uEpiphyteMap: { value: whitePixelTexture() },
   }
 }
 
@@ -1070,6 +1108,18 @@ export function updateBarkMaterial(mat, params, sharedUniforms) {
   u.uMossScale.value = moss.scale === undefined ? 6 : moss.scale
   u.uMossHeightBias.value = moss.heightBias === undefined ? 0.35 : moss.heightBias
   u.uMossColor.value.set(moss.color || '#4c6b32')
+  u.uMossTexRepeat.value = moss.textureRepeat === undefined ? 2 : moss.textureRepeat
+  // 自定义苔藓贴图: 按 URL 缓存, 换图时才重新加载并释放旧图
+  const mossKey = moss.texture || ''
+  if (mossKey !== mat.userData.__mossTexKey) {
+    mat.userData.__mossTexKey = mossKey
+    const old = mat.userData.mossMap
+    const tex = mossKey ? loadTexture(mossKey, { autoSeamless: true }) : null
+    mat.userData.mossMap = tex
+    u.uMossMap.value = tex || whitePixelTexture()
+    u.uMossTexEnabled.value = tex ? 1 : 0
+    if (old && old !== tex) disposeTexture(old)
+  }
 
   /* ---------------- ③ 贴图来源：照片贴图 或 程序化 ---------------- */
   if (p.texture) {
@@ -1264,6 +1314,19 @@ export function updateLeafMaterial(mat, params, sharedUniforms) {
     mat.map = null
     mat.alphaTest = 0
     mat.needsUpdate = true
+  }
+
+  /* ---------------- 附生植物贴图 (仅附生卡片, 不改变普通叶片的观感) ---------------- */
+  const epiKey = (params.epiphyte && params.epiphyte.texture) || ''
+  if (epiKey !== mat.userData.__epiTexKey) {
+    mat.userData.__epiTexKey = epiKey
+    const oldEpi = mat.userData.epiphyteMap
+    // 附生卡片和叶片一样是按卡片 UV 采样: clamp 防止跨卡片平铺, repairAlpha 修补内部透明洞
+    const tex = epiKey ? loadTexture(epiKey, { clamp: true, repairAlpha: p.alphaRepair === true }) : null
+    mat.userData.epiphyteMap = tex
+    u.uEpiphyteMap.value = tex || whitePixelTexture()
+    u.uEpiphyteEnabled.value = tex ? 1 : 0
+    if (oldEpi && oldEpi !== tex) disposeTexture(oldEpi)
   }
 
   // ---- 贴图在模型上的位置/缩放/旋转 (花朵可视化面板会改这几个) ----
