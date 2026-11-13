@@ -197,8 +197,17 @@ export const CONDITIONS = {
   'epiphyte.vineLength': { 'epiphyte.enabled': true, 'epiphyte.chance': 1 },
   'epiphyte.color': { 'epiphyte.enabled': true, 'epiphyte.chance': 1 },
   'epiphyte.colorTip': { 'epiphyte.enabled': true, 'epiphyte.chance': 1 },
-  // 断枝/树洞: 子参数需要先打开对应的主开关
-  'oldTree.deadLength': { 'oldTree.deadChance': 0.8 },
+  // 断枝破损: 子参数只有在"真的断枝"时才影响几何 -> 审计前把概率拉满
+  // (探针树很小, 概率给 1 才能保证树干之外的枝条都断, 断口参数才看得出差异)
+  'oldTree.deadLength': { 'oldTree.deadChance': 1 },
+  'oldTree.deadLengthVariance': { 'oldTree.deadChance': 1 },
+  'oldTree.deadLevels': { 'oldTree.deadChance': 1 },
+  'oldTree.deadDroop': { 'oldTree.deadChance': 1 },
+  'oldTree.breakJagged': { 'oldTree.deadChance': 1 },
+  'oldTree.breakSplinters': { 'oldTree.deadChance': 1 },
+  'oldTree.splinterLength': { 'oldTree.deadChance': 1 },
+  'oldTree.heartColor': { 'oldTree.deadChance': 1 },
+  // 树洞: 深度是主开关
   'oldTree.hollowHeight': { 'oldTree.hollowDepth': 0.6 },
   'oldTree.hollowSize': { 'oldTree.hollowDepth': 0.6 },
   // SCA: 所有子参数只在 mode='sca' 时参与几何
@@ -341,6 +350,7 @@ const SPECIAL_PERTURB = {
   'roots.count': [11],
   'bark.pipeline': ['skin'],
   'forces.items': [FORCE_PROBE],   // 空数组扰动无效, 直接塞一个探针力场
+  'oldTree.deadChance': [1],       // 概率型开关: 0.6 在探针小树上不保证真的断
 }
 
 /** 小树探针: 让每次审计重建都很快, 但必须包含带叶片的层级 */

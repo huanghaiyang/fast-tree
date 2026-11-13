@@ -35,9 +35,41 @@
     </template>
   </Section>
 
-  <Section title="古树特征" hint="Old Tree" :default-collapsed="true">
-    <SliderRow label="断枝概率" v-model="old.deadChance" :min="0" :max="1" :step="0.01" />
-    <SliderRow label="断枝保留长度" v-model="old.deadLength" :min="0.05" :max="1" :step="0.01" />
+  <Section title="断枝破损" hint="Broken Branches" :default-collapsed="true">
+    <SliderRow label="断枝概率" v-model="old.deadChance" :min="0" :max="1" :step="0.01"
+      hint="每根枝条被折断的概率; 断枝被截短、不长子枝/叶/果, 并在断口生成破损几何" />
+    <div class="inline">
+      <button class="btn small" @click="applyBrokenPreset" title="按古树枯梢的调子一键设置破损参数">⚡ 一键破损</button>
+      <button class="btn small" @click="resetBroken" title="关闭断枝 (概率归 0), 断枝参数原样保留">关闭断枝</button>
+    </div>
+    <template v-if="old.deadChance > 0">
+      <div class="row-head"><label>允许断枝的层级</label></div>
+      <div class="wrap">
+        <label v-for="(on, i) in old.deadLevels" :key="i" class="level-tab" :class="{ active: on }">
+          <input type="checkbox" v-model="old.deadLevels[i]" style="margin-right: 4px" />L{{ i + 1 }}
+        </label>
+      </div>
+      <SliderRow label="断枝保留长度" v-model="old.deadLength" :min="0.05" :max="0.95" :step="0.01"
+        hint="断口位置: 0.45 = 保留原枝长的 45%, 剩下的部分被折断" />
+      <SliderRow label="断口位置随机" v-model="old.deadLengthVariance" :min="0" :max="0.4" :step="0.01"
+        hint="0 = 同层断枝断在同一比例处; 越大断口高低越参差" />
+      <SliderRow label="断口下垂" v-model="old.deadDroop" :min="0" :max="1.2" :step="0.01"
+        hint="残枝失去支撑后朝地面弯的强度 (弧度); 0 = 保持原生长方向" />
+      <SliderRow label="断口锯齿" v-model="old.breakJagged" :min="0" :max="1" :step="0.01"
+        hint="断口面/树皮唇的撕裂程度: 0 = 平截面, 1 = 碎成锯齿与斜面" />
+      <SliderRow label="断口木刺数" v-model="old.breakSplinters" :min="0" :max="12" :step="1"
+        hint="每处断口伸出的木刺数量 (0 = 不生成木刺)" />
+      <SliderRow label="木刺长度 (÷断口半径)" v-model="old.splinterLength" :min="0" :max="6" :step="0.05"
+        hint="木刺有多长; 相对断口半径, 所以粗枝上的木刺也更长" />
+      <ColorRow label="断口木芯颜色" v-model="old.heartColor"
+        hint="新劈开的木质部颜色 (断口面与木刺用它着色, 树皮唇会偏暗)" />
+      <p class="muted" style="margin: 0">
+        断枝按枯木着色; 断口几何是蒙皮之后叠上去的独立壳, 不影响树皮蒙皮拓扑, 导出 GLB 时归属对应枝条节点。
+      </p>
+    </template>
+  </Section>
+
+  <Section title="树洞" hint="Hollow" :default-collapsed="true">
     <SliderRow label="树洞深度" v-model="old.hollowDepth" :min="0" :max="0.9" :step="0.01" hint="0 = 关闭" />
     <SliderRow label="树洞高度" v-model="old.hollowHeight" :min="0" :max="1" :step="0.01" />
     <SliderRow label="树洞宽度" v-model="old.hollowSize" :min="0.1" :max="2" :step="0.01" />
@@ -129,6 +161,7 @@ import Section from '../ui/Section.vue'
 import SliderRow from '../ui/SliderRow.vue'
 import SelectRow from '../ui/SelectRow.vue'
 import ToggleRow from '../ui/ToggleRow.vue'
+import ColorRow from '../ui/ColorRow.vue'
 import { state } from '../../store/treeStore.js'
 
 const b = state.params.branches
@@ -137,6 +170,27 @@ const ar = state.params.aerialRoots
 const old = state.params.oldTree
 const active = ref(0)
 const cfg = computed(() => b.level[Math.min(active.value, b.level.length - 1)])
+
+/**
+ * 一键破损: 按"古树枯梢"的调子把断枝参数配好 (断口在枝长 42% 附近、L1~L3 会断、木刺 6 根)。
+ * 只改 oldTree 的断枝字段, 不动树洞/其它面板; 参数变化由 Viewport 的几何组 watcher 自动重建。
+ */
+function applyBrokenPreset() {
+  old.deadChance = 0.35
+  old.deadLength = 0.42
+  old.deadLengthVariance = 0.18
+  old.deadLevels = [true, true, true, false, false]
+  old.deadDroop = 0.45
+  old.breakJagged = 0.7
+  old.breakSplinters = 6
+  old.splinterLength = 1.8
+  old.heartColor = '#cdb489'
+}
+
+/** 关闭断枝 (概率归 0): 断枝参数原样保留, 方便再打开。 */
+function resetBroken() {
+  old.deadChance = 0
+}
 
 const modes = [
   { value: 'levels', label: '逐层递归 (levels)' },

@@ -35,7 +35,10 @@
     <aside class="sidebar">
       <PropertySearch />
       <ChatPanel />
-      <ControlPanel />
+      <!-- key = 参数树身份: 换树种/阶段/季节、撤销/重做、导入 .ftree 都会**替换** state.params,
+           而各面板在 setup 时缓存了 state.params.xxx 的引用。不重新挂载的话面板会继续改
+           已经被替换掉的旧对象 (表现为"点了没反应")。身份变化时整体重挂最省心。 -->
+      <ControlPanel :key="paramsRev" />
     </aside>
 
     <Viewport />
@@ -49,7 +52,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { loadFtreeHistory, loadTemplates } from './store/treeStore.js'
 import ControlPanel from './components/ControlPanel.vue'
 import PropertySearch from './components/PropertySearch.vue'
@@ -63,9 +66,13 @@ import {
 } from './store/treeStore.js'
 import { ensureFeatureDefaults } from './core/params.js'
 
-const p = state.params
+const p = computed(() => state.params)
+// 参数树身份版本: state.params 被整体替换 (换树种/阶段/季节、撤销/重做、导入) 时 +1,
+// 用来强制重挂左侧面板 (见模板里的 :key)。同一对象内的普通参数修改**不会**触发重挂。
+const paramsRev = ref(0)
+watch(() => state.params, () => { paramsRev.value++ })
 // 兼容 HMR/旧会话：补齐后加的继承开关（默认开启），避免页面停在旧参数结构
-ensureFeatureDefaults(p)
+ensureFeatureDefaults(p.value)
 const ready = computed(() => state.ready)
 
 /* 线框展示 (展示三角面): 顶栏按钮 / W 键 / 场景页下拉三处共用 */
@@ -125,7 +132,7 @@ function onFrame() {
 }
 
 function onGLB() {
-  sceneApi.exportGLB?.(`fasttree-${p.seed}.glb`)
+  sceneApi.exportGLB?.(`fasttree-${p.value.seed}.glb`)
 }
 
 /* 快捷键: N 开关模型节点面板 (输入框里打字时不拦截) */

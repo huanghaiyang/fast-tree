@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><title>damage-check: booting</title></head>
+  <body style="margin:0;background:#111;color:#ddd;font:12px monospace">
+    <iframe id="f" src="/" style="width:1500px;height:900px;border:0"></iframe>
+    <pre id="out">…</pre>
+    <script type="module">
+      /**
+       * 断枝破损自检 (浏览器): 面板 → 参数 → 几何 → 节点表 → 导出归属, 并给断口拍近景存档。
+       * 需要 `npm run dev` (5273) 与 `node scripts/shot-receiver.mjs` (5274, 截图存 .shots/)。
+       * 结果直接读页面标题: DAMAGE-OK / DAMAGE-FAIL。
+       */
+      const RECV = 'http://127.0.0.1:5274/shot'
+      const f = document.getElementById('f')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const lines = []
+      const bar = (l) => { lines.push(l); document.getElementById('out').textContent = lines.join('\n') }
+      let win, doc, state, sc
+      let fail = 0
+      const check = (name, cond, detail = '') => {
+        if (!cond) fail++
+        bar((cond ? '✔ ' : '✘ ') + name + (detail ? ' — ' + detail : ''))
+      }
+      const errs = []
+      f.addEventListener('load', () => {
+        win = f.contentWindow; doc = f.contentDocument
+        state = win.__fastTree; sc = win.__fastTreeScene
+        win.addEventListener('error', (e) => errs.push('ERR:' + String(e.message).slice(0, 160)))
+      })
+
+      const canvas = () => doc.querySelector('canvas')
+      async function shot(name) {
+        const cv = canvas()
+        for (let i = 0; i < 4; i++) { sc.renderer.render(sc.scene, sc.camera); await sleep(110) }
+        try {
+          await fetch(`${RECV}?name=${name}`, { method: 'POST', body: cv.toDataURL('image/png') })
+          bar('  📷 ' + name)
+        } catch (e) { bar('  (截图接收器未启动, 跳过 ' + name + ')') }
+      }
+      const geomHash = (geo) => {
+        const a = geo && geo.attributes && geo.attributes.position && geo.attributes.position.array
+        if (!a) return ''
+        let h = 2166136261
+        for (let i = 0; i < a.length; i += 3) { h ^= Math.round(a[i] * 1000) | 0; h = Math.imul(h, 16777619) }
+        return String(h >>> 0)
+      }
+      const colorHash = (geo) => {
+        const a = geo && geo.attributes && geo.attributes.color && geo.attributes.color.array
+        if (!a) return ''
+        let h = 2166136261
+        for (let i = 0; i < a.length; i++) { h ^= Math.round(a[i] * 255) | 0; h = Math.imul(h, 16777619) }
+        return String(h >>> 0)
+      }
+      const labelOf = (text) => [...doc.querySelectorAll('.section')]
+        .flatMap((s) => [...s.querySelectorAll('label')]).find((l) => (l.textContent || '').trim() === text)
+      const buttonOf = (text) => [...doc.querySelectorAll('button')].find((b) => (b.textContent || '').includes(text))
+      const sectionTitle = (text) => [...doc.querySelectorAll('.section-head .title')].find((t) => (t.textContent || '').includes(text))
+      const rebuild = async (frame = true) => { win.__fastTreeSceneApi.rebuildNow(frame); await sleep(260) }
+      const stats = () => state.stats
+
+      async function waitFor(fn, timeout = 40000) {
+        const t0 = Date.now()
+        while (Date.now() - t0 < timeout) {
+          try { if (fn()) return true } catch { /* ignore */ }
+          await sleep(120)
+        }
+        return false
+      }
+
+      setTimeout(async () => {
+        try {
+          for (let i = 0; i < 150 && !win; i++) await sleep(100)
+          const ok = await waitFor(() => win.__fastTree && win.__fastTree.ready && win.__fastTreeScene, 40000)
+          check('应用就绪 (场景 + 状态)', ok)
+          if (!ok) throw new Error('应用未就绪')
+          state = win.__fastTree
+          sc = win.__fastTreeScene
+
+          bar('\n===== 1. 面板入口 =====')
+          // 切到「树枝」标签页
+          const branchTab = [...doc.querySelectorAll('.tab')].find((t) => (t.textContent || '').includes('树枝'))
+          branchTab && branchTab.click(); await sleep(300)
+          check('树枝面板有「断枝破损」分区', !!sectionTitle('断枝破损'))
+          check('「断枝概率」滑杆存在', !!labelOf('断枝概率'))
+          check('「一键破损」按钮存在 (概率为 0 时也能点)', !!buttonOf('一键破损'))
+          check('「树洞」独立成分区 (不再混在古树特征里)', !!sectionTitle('树洞') && !sectionTitle('古树特征'))
+
+          bar('\n===== 2. 默认关闭 =====')
+          const baseHash = geomHash(sc.barkMesh.geometry)
+          check('默认 stats.damage 全 0', stats().damage.brokenBranches === 0 && stats().damage.triangles === 0,
+            JSON.stringify(stats().damage))
+
+          bar('\n===== 3. 一键破损 (真实点击按钮) =====')
+          buttonOf('一键破损').click()
+          await sleep(200)
+          await rebuild(false)
+          const o = state.params.oldTree
+          check('一键破损写入参数', o.deadChance > 0 && o.deadLevels[0] === true && o.breakSplinters > 0,
+            `chance=${o.deadChance} levels=${JSON.stringify(o.deadLevels)} splinters=${o.breakSplinters}`)
+          check('断枝概率打开后出现「断口锯齿」滑杆', !!labelOf('断口锯齿'))
+          check('断枝概率打开后出现「断口木刺数」滑杆', !!labelOf('断口木刺数'))
+          check('断枝概率打开后出现「断口木芯颜色」', !!labelOf('断口木芯颜色'))
+          check('断枝概率打开后出现「允许断枝的层级」', !!labelOf('允许断枝的层级'))
+          const dmg1 = stats().damage
+          check('几何里真的断了枝并带断口', dmg1.brokenBranches > 0 && dmg1.triangles > 0, JSON.stringify(dmg1))
+          check('树皮几何变化', geomHash(sc.barkMesh.geometry) !== baseHash)
+          const brokenNodes = (sc.nodes || []).filter((n) => n.meta && n.meta.broken)
+          check('节点表标出断枝且名字带「断枝」',
+            brokenNodes.length === dmg1.brokenBranches && brokenNodes.every((n) => n.name.includes('断枝')),
+            `${brokenNodes.length}/${dmg1.brokenBranches}`)
+          check('断枝节点几何含断口三角面 (节点面数 > 无断口的同枝)',
+            brokenNodes.every((n) => n.stats && n.stats.triangles > 0))
+
+          bar('\n===== 4. 断枝近景 (橡树, 只断 L1/L2, 关叶) =====')
+          win.__fastTreeApi.applyClassification('oak', 'mature', 'summer')
+          await sleep(400)
+          // 造一个"看得清断口"的场景: 只有 L1/L2 会断 (粗枝), 全部断, 关掉叶子免得挡住
+          state.params.leaves.enabled = false
+          state.params.fruit.enabled = false
+          state.params.flower.enabled = false
+          state.params.oldTree.deadChance = 1
+          state.params.oldTree.deadLevels = [true, true, false, false, false]
+          state.params.oldTree.deadLength = 0.42
+          state.params.oldTree.deadLengthVariance = 0.16
+          state.params.oldTree.deadDroop = 0.5
+          state.params.oldTree.breakJagged = 0.8
+          state.params.oldTree.breakSplinters = 7
+          state.params.oldTree.splinterLength = 2.0
+          state.params.scene.exposure = 1.35
+          state.params.scene.fog = false
+          await rebuild(true)
+          sc.updateScene(state.params.scene)
+          const dmgBig = stats().damage
+          check('全部 L1/L2 折断时仍能生成', dmgBig.brokenBranches > 0 && dmgBig.fractureBranches === dmgBig.brokenBranches,
+            JSON.stringify(dmgBig))
+          // 挑"高处 + 断口最粗"的一处做近景 (避免相机贴地时看到树干基部的板根端盖)
+          let best = null
+          for (const b of (sc.skeleton ? sc.skeleton.branches : [])) {
+            if (!b.damage) continue
+            const last = b.frames[b.frames.length - 1]
+            if (last.pos.y < 3) continue
+            if (!best || last.radius > best.radius) best = { radius: last.radius, pos: last.pos, dir: last.dir, level: b.level }
+          }
+          if (best) {
+            const p = best.pos
+            const d = best.dir
+            const R = best.radius
+            // 光源打到断口上: 太阳方位对准相机方向, 高度角 52° (断口面朝 +dir, 会被照亮)
+            const camAz = Math.atan2(d.x, d.z) * 180 / Math.PI
+            state.params.scene.sunAzimuth = (camAz + 25) % 360
+            state.params.scene.sunElevation = 52
+            state.params.scene.sunIntensity = 3.4
+            state.params.scene.ambient = 0.75
+            sc.updateScene(state.params.scene)
+            const dist = Math.max(0.22, R * 7)
+            // 断口的横向基向量 = cross(dir, +Y) (页面里没有 THREE 命名空间, 手算)
+            const sl = Math.hypot(-d.z, d.x) || 1
+            const side = { x: -d.z / sl, y: 0, z: d.x / sl }
+            const look = (x, y, z) => {
+              sc.controls.target.set(p.x, p.y, p.z)
+              sc.camera.position.set(x, y, z)
+              sc.camera.lookAt(sc.controls.target)
+            }
+            bar(`  最大断口: L${best.level} 半径 ${R.toFixed(3)}m @ (${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)}) 相机距 ${dist.toFixed(2)}m`)
+            // ① 侧上方: 同时看到断口面、树皮唇与木刺 (最像"断枝"的角度)
+            look(p.x + side.x * dist * 1.9 + d.x * dist * 0.9, p.y + dist * 1.25, p.z + side.z * dist * 1.9 + d.z * dist * 0.9)
+            await shot('damage-closeup-1')
+            // ② 正对断口: 看木芯面、放射裂纹与碎裂边
+            look(p.x + d.x * dist * 2.4, p.y + d.y * dist * 2.4, p.z + d.z * dist * 2.4)
+            await shot('damage-closeup-2')
+            // ③ 侧下方: 看木刺的剪影与残枝下垂
+            look(p.x + side.x * dist * 2.1, p.y - dist * 0.35, p.z + side.z * dist * 2.1)
+            await shot('damage-closeup-3')
+          } else bar('  !! 没有断枝')
+
+          bar('\n===== 5. 关闭断枝可恢复 =====')
+          buttonOf('关闭断枝') && buttonOf('关闭断枝').click()
+          await sleep(200)
+          await rebuild(false)
+          check('关闭断枝后 stats.damage 归零',
+            stats().damage.brokenBranches === 0 && stats().damage.triangles === 0,
+            JSON.stringify(stats().damage))
+          const deadNoDmg = geomHash(sc.barkMesh.geometry)
+          check('关闭断枝改变几何 (断口消失)', !!deadNoDmg)
+
+          bar('\n===== 6. 两种树皮管线都支持 =====')
+          state.params.oldTree.deadChance = 0.5
+          state.params.bark.pipeline = 'speedtree'
+          await rebuild(false)
+          const triSpeed = stats().damage.triangles
+          const nodeSpeed = stats().damage.brokenBranches
+          state.params.bark.pipeline = 'skin'
+          await rebuild(false)
+          check('SpeedTree / 连续蒙皮 两种管线的断口规模一致',
+            stats().damage.triangles === triSpeed && stats().damage.brokenBranches === nodeSpeed,
+            `${triSpeed}/${nodeSpeed} -> ${stats().damage.triangles}/${stats().damage.brokenBranches}`)
+          check('切换管线后没有着色器/运行时错误', errs.length === 0, errs.slice(0, 2).join(' ;; '))
+          state.params.bark.pipeline = 'speedtree'
+          await rebuild(false)
+
+          bar('\n===== 7. 导出归属 =====')
+          const preview = await sc.prepareExport('glb', 'damage-check.glb')
+          const buf = await preview.payload.blob.arrayBuffer()
+          const dv = new DataView(buf)
+          let off = 12, json = null
+          while (off < buf.byteLength) {
+            const len = dv.getUint32(off, true)
+            const type = dv.getUint32(off + 4, true)
+            if (type === 0x4e4f534a) { json = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, off + 8, len))); break }
+            off += 8 + len
+          }
+          const names = (json && json.nodes ? json.nodes : []).map((n) => n.name || '')
+          check('GLB 导出含按层拆分的树皮节点',
+            names.some((n) => n.startsWith('Bark_Branch_L')), names.join(','))
+          check('GLB 导出里没有多余节点类型 (断口并入枝条节点)', !names.includes('Bark_Fracture'),
+            names.join(','))
+
+          bar('\n结果: ' + (fail ? 'DAMAGE-FAIL(' + fail + ')' : 'DAMAGE-OK'))
+          document.title = (fail ? 'DAMAGE-FAIL(' + fail + ')' : 'DAMAGE-OK') + ' :: ' +
+            lines.filter((s) => s.startsWith('✘')).slice(0, 4).join(' | ')
+        } catch (e) {
+          document.title = 'DAMAGE-EX :: ' + (e && e.stack ? e.stack : e).toString().slice(0, 900)
+          bar('EX: ' + (e && e.stack ? e.stack : e))
+        }
+      }, 2500)
+    </script>
+  </body>
+</html>

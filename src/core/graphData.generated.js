@@ -392,6 +392,34 @@ export const GRAPH_DATA = {
           "value": "0.45"
         },
         {
+          "path": "deadLengthVariance",
+          "value": "0.12"
+        },
+        {
+          "path": "deadLevels",
+          "value": "[true,true,true,true,true]"
+        },
+        {
+          "path": "deadDroop",
+          "value": "0.35"
+        },
+        {
+          "path": "breakJagged",
+          "value": "0.6"
+        },
+        {
+          "path": "breakSplinters",
+          "value": "5"
+        },
+        {
+          "path": "splinterLength",
+          "value": "1.6"
+        },
+        {
+          "path": "heartColor",
+          "value": "#c9b085"
+        },
+        {
           "path": "hollowDepth",
           "value": "0"
         },
@@ -2645,6 +2673,165 @@ export const GRAPH_DATA = {
       ]
     },
     {
+      "id": "branchDamage",
+      "name": "branchDamage",
+      "title": "branchDamage",
+      "category": "其他",
+      "file": "src/core/branchDamage.js",
+      "functions": [
+        {
+          "id": "branchDamage:resolveDamageConfig",
+          "name": "resolveDamageConfig",
+          "module": "branchDamage",
+          "line": 48,
+          "exported": true,
+          "parent": null,
+          "calls": [],
+          "externalCalls": [
+            "mathUtils"
+          ],
+          "paramRefs": [
+            "oldTree:deadLevels",
+            "oldTree:heartColor",
+            "oldTree:deadChance",
+            "oldTree:deadLength",
+            "oldTree:deadLengthVariance",
+            "oldTree:deadDroop",
+            "oldTree:breakJagged",
+            "oldTree:breakSplinters",
+            "oldTree:splinterLength"
+          ]
+        },
+        {
+          "id": "branchDamage:damageLevelAllowed",
+          "name": "damageLevelAllowed",
+          "module": "branchDamage",
+          "line": 86,
+          "exported": true,
+          "parent": null,
+          "calls": [],
+          "externalCalls": [],
+          "paramRefs": [
+            "oldTree:deadLevels"
+          ]
+        },
+        {
+          "id": "branchDamage:breakBranchFrames",
+          "name": "breakBranchFrames",
+          "module": "branchDamage",
+          "line": 107,
+          "exported": true,
+          "parent": null,
+          "calls": [
+            "branchDamage:damageLevelAllowed"
+          ],
+          "externalCalls": [],
+          "paramRefs": [
+            "oldTree:deadChance",
+            "oldTree:deadLengthVariance",
+            "oldTree:deadLength",
+            "oldTree:deadDroop",
+            "oldTree:breakJagged",
+            "oldTree:breakSplinters"
+          ]
+        },
+        {
+          "id": "branchDamage:rimUv",
+          "name": "rimUv",
+          "module": "branchDamage",
+          "line": 199,
+          "exported": false,
+          "parent": null,
+          "calls": [],
+          "externalCalls": [],
+          "paramRefs": []
+        },
+        {
+          "id": "branchDamage:mixRgb",
+          "name": "mixRgb",
+          "module": "branchDamage",
+          "line": 210,
+          "exported": false,
+          "parent": null,
+          "calls": [],
+          "externalCalls": [],
+          "paramRefs": []
+        },
+        {
+          "id": "branchDamage:rimBaseScale",
+          "name": "rimBaseScale",
+          "module": "branchDamage",
+          "line": 225,
+          "exported": false,
+          "parent": null,
+          "calls": [],
+          "externalCalls": [],
+          "paramRefs": []
+        },
+        {
+          "id": "branchDamage:emitTri",
+          "name": "emitTri",
+          "module": "branchDamage",
+          "line": 249,
+          "exported": false,
+          "parent": null,
+          "calls": [
+            "branchDamage:emit"
+          ],
+          "externalCalls": [
+            "mathUtils"
+          ],
+          "paramRefs": []
+        },
+        {
+          "id": "branchDamage:emit",
+          "name": "emit",
+          "module": "branchDamage",
+          "line": 264,
+          "exported": false,
+          "parent": "branchDamage:emitTri",
+          "calls": [],
+          "externalCalls": [],
+          "paramRefs": []
+        },
+        {
+          "id": "branchDamage:buildFractureGeometry",
+          "name": "buildFractureGeometry",
+          "module": "branchDamage",
+          "line": 296,
+          "exported": true,
+          "parent": null,
+          "calls": [
+            "branchDamage:rimBaseScale",
+            "branchDamage:mixRgb",
+            "branchDamage:rimUv",
+            "branchDamage:emitTri",
+            "branchDamage:sideRef"
+          ],
+          "externalCalls": [
+            "mathUtils"
+          ],
+          "paramRefs": [
+            "oldTree:breakJagged",
+            "oldTree:splinterLength"
+          ]
+        },
+        {
+          "id": "branchDamage:sideRef",
+          "name": "sideRef",
+          "module": "branchDamage",
+          "line": 452,
+          "exported": false,
+          "parent": "branchDamage:buildFractureGeometry",
+          "calls": [],
+          "externalCalls": [
+            "mathUtils"
+          ],
+          "paramRefs": []
+        }
+      ]
+    },
+    {
       "id": "environments",
       "name": "environments",
       "title": "环境",
@@ -4804,7 +4991,7 @@ export const GRAPH_DATA = {
           "id": "paramDocs:normalize",
           "name": "normalize",
           "module": "paramDocs",
-          "line": 685,
+          "line": 693,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -4815,7 +5002,7 @@ export const GRAPH_DATA = {
           "id": "paramDocs:docFor",
           "name": "docFor",
           "module": "paramDocs",
-          "line": 710,
+          "line": 718,
           "exported": true,
           "parent": null,
           "calls": [
@@ -4893,7 +5080,7 @@ export const GRAPH_DATA = {
           "id": "params:cloneParams",
           "name": "cloneParams",
           "module": "params",
-          "line": 838,
+          "line": 846,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -4904,7 +5091,7 @@ export const GRAPH_DATA = {
           "id": "params:mergeParams",
           "name": "mergeParams",
           "module": "params",
-          "line": 860,
+          "line": 868,
           "exported": true,
           "parent": null,
           "calls": [
@@ -4918,7 +5105,7 @@ export const GRAPH_DATA = {
           "id": "params:walk",
           "name": "walk",
           "module": "params",
-          "line": 862,
+          "line": 870,
           "exported": false,
           "parent": "params:mergeParams",
           "calls": [],
@@ -4929,7 +5116,7 @@ export const GRAPH_DATA = {
           "id": "params:normalizeParams",
           "name": "normalizeParams",
           "module": "params",
-          "line": 900,
+          "line": 908,
           "exported": true,
           "parent": null,
           "calls": [
@@ -4944,7 +5131,7 @@ export const GRAPH_DATA = {
           "id": "params:pickStringify",
           "name": "pickStringify",
           "module": "params",
-          "line": 943,
+          "line": 951,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -4955,7 +5142,7 @@ export const GRAPH_DATA = {
           "id": "params:serializeGroup",
           "name": "serializeGroup",
           "module": "params",
-          "line": 957,
+          "line": 965,
           "exported": true,
           "parent": null,
           "calls": [
@@ -6603,7 +6790,7 @@ export const GRAPH_DATA = {
           "id": "species:speciesById",
           "name": "speciesById",
           "module": "species",
-          "line": 631,
+          "line": 643,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -6614,7 +6801,7 @@ export const GRAPH_DATA = {
           "id": "species:stageById",
           "name": "stageById",
           "module": "species",
-          "line": 640,
+          "line": 652,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -6625,7 +6812,7 @@ export const GRAPH_DATA = {
           "id": "species:seasonById",
           "name": "seasonById",
           "module": "species",
-          "line": 649,
+          "line": 661,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -6636,7 +6823,7 @@ export const GRAPH_DATA = {
           "id": "species:seasonProfile",
           "name": "seasonProfile",
           "module": "species",
-          "line": 670,
+          "line": 682,
           "exported": true,
           "parent": null,
           "calls": [
@@ -6649,7 +6836,7 @@ export const GRAPH_DATA = {
           "id": "species:applyVariation",
           "name": "applyVariation",
           "module": "species",
-          "line": 711,
+          "line": 723,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6674,7 +6861,7 @@ export const GRAPH_DATA = {
           "id": "species:applyStage",
           "name": "applyStage",
           "module": "species",
-          "line": 788,
+          "line": 800,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6690,7 +6877,7 @@ export const GRAPH_DATA = {
           "id": "species:applySeason",
           "name": "applySeason",
           "module": "species",
-          "line": 863,
+          "line": 875,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6705,7 +6892,7 @@ export const GRAPH_DATA = {
           "id": "species:composeTree",
           "name": "composeTree",
           "module": "species",
-          "line": 924,
+          "line": 936,
           "exported": true,
           "parent": null,
           "calls": [
@@ -6735,7 +6922,7 @@ export const GRAPH_DATA = {
           "id": "species:classificationName",
           "name": "classificationName",
           "module": "species",
-          "line": 1011,
+          "line": 1023,
           "exported": true,
           "parent": null,
           "calls": [
@@ -6751,7 +6938,7 @@ export const GRAPH_DATA = {
           "id": "species:classificationDesc",
           "name": "classificationDesc",
           "module": "species",
-          "line": 1031,
+          "line": 1043,
           "exported": true,
           "parent": null,
           "calls": [
@@ -6767,7 +6954,7 @@ export const GRAPH_DATA = {
           "id": "species:allCombinations",
           "name": "allCombinations",
           "module": "species",
-          "line": 1051,
+          "line": 1063,
           "exported": true,
           "parent": null,
           "calls": [
@@ -7593,7 +7780,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:now",
           "name": "now",
           "module": "treeBuilder",
-          "line": 65,
+          "line": 66,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -7604,7 +7791,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:childDirection",
           "name": "childDirection",
           "module": "treeBuilder",
-          "line": 85,
+          "line": 86,
           "exported": false,
           "parent": null,
           "calls": [
@@ -7626,7 +7813,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:frameBasisAt",
           "name": "frameBasisAt",
           "module": "treeBuilder",
-          "line": 118,
+          "line": 119,
           "exported": false,
           "parent": null,
           "calls": [
@@ -7642,7 +7829,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:buildTree",
           "name": "buildTree",
           "module": "treeBuilder",
-          "line": 169,
+          "line": 170,
           "exported": true,
           "parent": null,
           "calls": [
@@ -7651,6 +7838,7 @@ export const GRAPH_DATA = {
             "barkSkeleton:createBarkSkeleton",
             "leaf:buildLeafTemplate",
             "leaf:buildLeafCardTemplate",
+            "branchDamage:resolveDamageConfig",
             "mathUtils:clamp01",
             "mathUtils:growFrames",
             "treeBuilder:sampleGuidePoints",
@@ -7670,6 +7858,7 @@ export const GRAPH_DATA = {
             "barkSkeleton:enforceChildBranchRadii",
             "speedtreeBark:buildSpeedtreeBark",
             "barkSkin:buildBarkSkin",
+            "branchDamage:buildFractureGeometry",
             "treeBuilder:makeFlowerTemplate",
             "mathUtils:anyPerp",
             "leaf:pushLeafInstance",
@@ -7692,9 +7881,9 @@ export const GRAPH_DATA = {
             "flower:*",
             "lod:*",
             "seed:*",
+            "oldTree:*",
             "branchEdits:*",
             "buttress:*",
-            "oldTree:*",
             "roots:*",
             "bark:*",
             "ao:*",
@@ -7784,7 +7973,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:effFruitLevels",
           "name": "effFruitLevels",
           "module": "treeBuilder",
-          "line": 183,
+          "line": 184,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [],
@@ -7798,7 +7987,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:mergeFlowerTemplates",
           "name": "mergeFlowerTemplates",
           "module": "treeBuilder",
-          "line": 232,
+          "line": 233,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [],
@@ -7809,7 +7998,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:makeFlowerTemplate",
           "name": "makeFlowerTemplate",
           "module": "treeBuilder",
-          "line": 276,
+          "line": 277,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [
@@ -7824,7 +8013,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:addSlot",
           "name": "addSlot",
           "module": "treeBuilder",
-          "line": 363,
+          "line": 371,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [],
@@ -7835,7 +8024,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:spawnLeaves",
           "name": "spawnLeaves",
           "module": "treeBuilder",
-          "line": 398,
+          "line": 406,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [
@@ -7881,7 +8070,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:spawnEpiphytes",
           "name": "spawnEpiphytes",
           "module": "treeBuilder",
-          "line": 571,
+          "line": 579,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [
@@ -7901,7 +8090,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:ensureSlot",
           "name": "ensureSlot",
           "module": "treeBuilder",
-          "line": 579,
+          "line": 587,
           "exported": false,
           "parent": "treeBuilder:spawnEpiphytes",
           "calls": [
@@ -7914,7 +8103,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:putCard",
           "name": "putCard",
           "module": "treeBuilder",
-          "line": 590,
+          "line": 598,
           "exported": false,
           "parent": "treeBuilder:spawnEpiphytes",
           "calls": [
@@ -7930,7 +8119,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:spawnChildren",
           "name": "spawnChildren",
           "module": "treeBuilder",
-          "line": 687,
+          "line": 695,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [
@@ -7964,7 +8153,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:branchEditOf",
           "name": "branchEditOf",
           "module": "treeBuilder",
-          "line": 781,
+          "line": 789,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [],
@@ -7975,7 +8164,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:applyBranchEdit",
           "name": "applyBranchEdit",
           "module": "treeBuilder",
-          "line": 798,
+          "line": 806,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [
@@ -7990,13 +8179,13 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:buildBranch",
           "name": "buildBranch",
           "module": "treeBuilder",
-          "line": 860,
+          "line": 868,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [
             "mathUtils:growFrames",
             "treeBuilder:applyBranchEdit",
-            "mathUtils:clamp01",
+            "branchDamage:breakBranchFrames",
             "treeBuilder:sampleGuidePoints",
             "treeBuilder:addSlot",
             "barkSkeleton:addBarkBranch",
@@ -8010,7 +8199,6 @@ export const GRAPH_DATA = {
           ],
           "paramRefs": [
             "branches:*",
-            "oldTree:*",
             "lod:*",
             "leaves:enabled",
             "leaves:levels",
@@ -8041,7 +8229,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:chainToFrames",
           "name": "chainToFrames",
           "module": "treeBuilder",
-          "line": 994,
+          "line": 1018,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [],
@@ -8052,15 +8240,16 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:buildSpaceColonization",
           "name": "buildSpaceColonization",
           "module": "treeBuilder",
-          "line": 1023,
+          "line": 1047,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [
             "spaceColonization:growSpaceColonization",
             "treeBuilder:chainToFrames",
-            "mathUtils:clamp01",
+            "branchDamage:breakBranchFrames",
             "treeBuilder:applyBranchEdit",
             "treeBuilder:sampleGuidePoints",
+            "mathUtils:clamp01",
             "treeBuilder:addSlot",
             "barkSkeleton:addBarkBranch",
             "treeBuilder:spawnEpiphytes",
@@ -8083,7 +8272,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:buildAerialRoots",
           "name": "buildAerialRoots",
           "module": "treeBuilder",
-          "line": 1115,
+          "line": 1143,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [
@@ -8107,7 +8296,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:trunkRadiusMod",
           "name": "trunkRadiusMod",
           "module": "treeBuilder",
-          "line": 1280,
+          "line": 1308,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [
@@ -8126,7 +8315,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:spawnFruit",
           "name": "spawnFruit",
           "module": "treeBuilder",
-          "line": 1580,
+          "line": 1608,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [
@@ -8159,7 +8348,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:projectTOnTrunk",
           "name": "projectTOnTrunk",
           "module": "treeBuilder",
-          "line": 1730,
+          "line": 1758,
           "exported": false,
           "parent": "treeBuilder:buildTree",
           "calls": [],
@@ -8170,7 +8359,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:sampleGuidePoints",
           "name": "sampleGuidePoints",
           "module": "treeBuilder",
-          "line": 2141,
+          "line": 2192,
           "exported": false,
           "parent": null,
           "calls": [
@@ -8183,7 +8372,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:emptyBox",
           "name": "emptyBox",
           "module": "treeBuilder",
-          "line": 2158,
+          "line": 2209,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -8194,7 +8383,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:unionBox",
           "name": "unionBox",
           "module": "treeBuilder",
-          "line": 2169,
+          "line": 2220,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -8205,7 +8394,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:finalizeNodes",
           "name": "finalizeNodes",
           "module": "treeBuilder",
-          "line": 2194,
+          "line": 2245,
           "exported": true,
           "parent": null,
           "calls": [
@@ -8219,7 +8408,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:measure",
           "name": "measure",
           "module": "treeBuilder",
-          "line": 2232,
+          "line": 2283,
           "exported": false,
           "parent": "treeBuilder:finalizeNodes",
           "calls": [
@@ -8233,7 +8422,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:selectionRanges",
           "name": "selectionRanges",
           "module": "treeBuilder",
-          "line": 2366,
+          "line": 2417,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -8244,7 +8433,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:estimateScale",
           "name": "estimateScale",
           "module": "treeBuilder",
-          "line": 2409,
+          "line": 2460,
           "exported": true,
           "parent": null,
           "calls": [
@@ -8262,7 +8451,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:cnt",
           "name": "cnt",
           "module": "treeBuilder",
-          "line": 2412,
+          "line": 2463,
           "exported": false,
           "parent": "treeBuilder:estimateScale",
           "calls": [],
@@ -8277,7 +8466,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:subtree",
           "name": "subtree",
           "module": "treeBuilder",
-          "line": 2421,
+          "line": 2472,
           "exported": false,
           "parent": "treeBuilder:estimateScale",
           "calls": [
@@ -8290,7 +8479,7 @@ export const GRAPH_DATA = {
           "id": "treeBuilder:countAt",
           "name": "countAt",
           "module": "treeBuilder",
-          "line": 2433,
+          "line": 2484,
           "exported": false,
           "parent": "treeBuilder:estimateScale",
           "calls": [
@@ -9319,6 +9508,34 @@ export const GRAPH_DATA = {
     {
       "from": "barkSkin:buildBarkSkin",
       "to": "barkSkin:distanceBetween"
+    },
+    {
+      "from": "branchDamage:breakBranchFrames",
+      "to": "branchDamage:damageLevelAllowed"
+    },
+    {
+      "from": "branchDamage:emitTri",
+      "to": "branchDamage:emit"
+    },
+    {
+      "from": "branchDamage:buildFractureGeometry",
+      "to": "branchDamage:rimBaseScale"
+    },
+    {
+      "from": "branchDamage:buildFractureGeometry",
+      "to": "branchDamage:mixRgb"
+    },
+    {
+      "from": "branchDamage:buildFractureGeometry",
+      "to": "branchDamage:rimUv"
+    },
+    {
+      "from": "branchDamage:buildFractureGeometry",
+      "to": "branchDamage:emitTri"
+    },
+    {
+      "from": "branchDamage:buildFractureGeometry",
+      "to": "branchDamage:sideRef"
     },
     {
       "from": "environments:applyEnvironment",
@@ -10398,6 +10615,10 @@ export const GRAPH_DATA = {
     },
     {
       "from": "treeBuilder:buildTree",
+      "to": "branchDamage:resolveDamageConfig"
+    },
+    {
+      "from": "treeBuilder:buildTree",
       "to": "mathUtils:clamp01"
     },
     {
@@ -10471,6 +10692,10 @@ export const GRAPH_DATA = {
     {
       "from": "treeBuilder:buildTree",
       "to": "barkSkin:buildBarkSkin"
+    },
+    {
+      "from": "treeBuilder:buildTree",
+      "to": "branchDamage:buildFractureGeometry"
     },
     {
       "from": "treeBuilder:buildTree",
@@ -10606,7 +10831,7 @@ export const GRAPH_DATA = {
     },
     {
       "from": "treeBuilder:buildBranch",
-      "to": "mathUtils:clamp01"
+      "to": "branchDamage:breakBranchFrames"
     },
     {
       "from": "treeBuilder:buildBranch",
@@ -10646,7 +10871,7 @@ export const GRAPH_DATA = {
     },
     {
       "from": "treeBuilder:buildSpaceColonization",
-      "to": "mathUtils:clamp01"
+      "to": "branchDamage:breakBranchFrames"
     },
     {
       "from": "treeBuilder:buildSpaceColonization",
@@ -10655,6 +10880,10 @@ export const GRAPH_DATA = {
     {
       "from": "treeBuilder:buildSpaceColonization",
       "to": "treeBuilder:sampleGuidePoints"
+    },
+    {
+      "from": "treeBuilder:buildSpaceColonization",
+      "to": "mathUtils:clamp01"
     },
     {
       "from": "treeBuilder:buildSpaceColonization",
@@ -10994,6 +11223,96 @@ export const GRAPH_DATA = {
       "group": "lod",
       "key": "barkDetail",
       "to": "barkSkin:buildBarkSkin"
+    },
+    {
+      "group": "oldTree",
+      "key": "deadLevels",
+      "to": "branchDamage:resolveDamageConfig"
+    },
+    {
+      "group": "oldTree",
+      "key": "heartColor",
+      "to": "branchDamage:resolveDamageConfig"
+    },
+    {
+      "group": "oldTree",
+      "key": "deadChance",
+      "to": "branchDamage:resolveDamageConfig"
+    },
+    {
+      "group": "oldTree",
+      "key": "deadLength",
+      "to": "branchDamage:resolveDamageConfig"
+    },
+    {
+      "group": "oldTree",
+      "key": "deadLengthVariance",
+      "to": "branchDamage:resolveDamageConfig"
+    },
+    {
+      "group": "oldTree",
+      "key": "deadDroop",
+      "to": "branchDamage:resolveDamageConfig"
+    },
+    {
+      "group": "oldTree",
+      "key": "breakJagged",
+      "to": "branchDamage:resolveDamageConfig"
+    },
+    {
+      "group": "oldTree",
+      "key": "breakSplinters",
+      "to": "branchDamage:resolveDamageConfig"
+    },
+    {
+      "group": "oldTree",
+      "key": "splinterLength",
+      "to": "branchDamage:resolveDamageConfig"
+    },
+    {
+      "group": "oldTree",
+      "key": "deadLevels",
+      "to": "branchDamage:damageLevelAllowed"
+    },
+    {
+      "group": "oldTree",
+      "key": "deadChance",
+      "to": "branchDamage:breakBranchFrames"
+    },
+    {
+      "group": "oldTree",
+      "key": "deadLengthVariance",
+      "to": "branchDamage:breakBranchFrames"
+    },
+    {
+      "group": "oldTree",
+      "key": "deadLength",
+      "to": "branchDamage:breakBranchFrames"
+    },
+    {
+      "group": "oldTree",
+      "key": "deadDroop",
+      "to": "branchDamage:breakBranchFrames"
+    },
+    {
+      "group": "oldTree",
+      "key": "breakJagged",
+      "to": "branchDamage:breakBranchFrames"
+    },
+    {
+      "group": "oldTree",
+      "key": "breakSplinters",
+      "to": "branchDamage:breakBranchFrames"
+    },
+    {
+      "group": "oldTree",
+      "key": "breakJagged",
+      "to": "branchDamage:buildFractureGeometry"
+    },
+    {
+      "group": "oldTree",
+      "key": "splinterLength",
+      "to": "branchDamage:buildFractureGeometry"
     },
     {
       "group": "seed",
@@ -12231,17 +12550,17 @@ export const GRAPH_DATA = {
       "to": "treeBuilder:buildTree"
     },
     {
+      "group": "oldTree",
+      "key": "*",
+      "to": "treeBuilder:buildTree"
+    },
+    {
       "group": "branchEdits",
       "key": "*",
       "to": "treeBuilder:buildTree"
     },
     {
       "group": "buttress",
-      "key": "*",
-      "to": "treeBuilder:buildTree"
-    },
-    {
-      "group": "oldTree",
       "key": "*",
       "to": "treeBuilder:buildTree"
     },
@@ -12862,11 +13181,6 @@ export const GRAPH_DATA = {
     },
     {
       "group": "branches",
-      "key": "*",
-      "to": "treeBuilder:buildBranch"
-    },
-    {
-      "group": "oldTree",
       "key": "*",
       "to": "treeBuilder:buildBranch"
     },

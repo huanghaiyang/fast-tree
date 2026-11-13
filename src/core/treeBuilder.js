@@ -29,6 +29,7 @@ import { createForceField } from './forceField.js'
 import { createBarkSkeleton, addBarkBranch, finalizeBarkSkeleton, enforceChildBranchRadii } from './barkSkeleton.js'
 import { buildBarkSkin } from './barkSkin.js'
 import { buildSpeedtreeBark } from './speedtreeBark.js'
+import { resolveDamageConfig, breakBranchFrames, buildFractureGeometry } from './branchDamage.js'
 import { buildLeafTemplate, buildLeafCardTemplate, pushLeafInstance } from './leaf.js'
 import { buildFruitTemplate, pushFruitInstance } from './fruit.js'
 import { growSpaceColonization } from './spaceColonization.js'
@@ -323,6 +324,13 @@ export function buildTree(params, options = {}) {
   const fruitRng = makeRng(P.seed, 'fruit')
   // 附生植物专属子流: 改苔藓/蕨类参数不会挪动叶片/果实的随机序列
   const epiRng = makeRng(P.seed, 'epiphyte')
+  // 断枝破损: 配置在这里一次性清洗 (旧存档缺字段自动补默认), 形状随机量走专属子流
+  // ('damage') —— 于是调断口锯齿/木刺不会平移树干与其它枝条的随机序列。
+  const damageCfg = resolveDamageConfig(P.oldTree)
+  const damageRng = makeRng(P.seed, 'damage')
+  // 断口几何单独累加: 蒙皮 (barkSkin / speedtreeBark) 长完后才生成, 再并进树皮几何。
+  // 这样两条蒙皮管线的"闭合流形 / 分量数"验收完全不受断口影响 (断口是额外叠上去的壳)。
+  const damageAcc = new GeoAcc()
   // 叶片保留比例用"确定性抽样"而不是 rng.chance: 不同 LOD 只少画叶子,
   // 叶片位置/其余随机流完全不变 -> 远景/近景切换时树形不跳变
   // 实现: 对全局递增的 leafDrawIndex 取模, 命中才真正生成。
@@ -893,15 +901,18 @@ export function buildTree(params, options = {}) {
     // 分支下标 = 当前已登记的分支数 (树干/树根也是分支, 各占一个下标)。
     const branchIndex = barkSkeleton.branches.length
     applyBranchEdit(frames, branchIndex)
-    // 断枝: 仅当 oldTree.deadChance > 0 时才抽随机数 (默认 0 -> 不消耗随机流)。
-    // 断枝被截短、不长子枝/叶/果, 并用深褐色顶点色, 形成古树的枯梢。
-    const deadChance = Math.max(0, Number(P.oldTree && P.oldTree.deadChance) || 0)
-    let dead = false
+    // 断枝破损 (见 core/branchDamage.js): 仍用生长流抽"这根会不会断" —— 与旧版序列一致;
+    // 断口位置/锯齿/木刺等形状随机量走专属 'damage' 子流, 所以调形状参数不会挪动别的枝条。
+    // 断枝被截短、残枝按 deadDroop 下垂、不长子枝/叶/果, 断口处再叠一层破损几何。
+    const deadChance = damageCfg.deadChance
+    let damagePlan = null
     if (level >= 1 && deadChance > 0 && rng.chance(deadChance)) {
-      dead = true
-      const keep = Math.max(2, Math.round(frames.length * clamp01(P.oldTree.deadLength === undefined ? 0.45 : P.oldTree.deadLength)))
-      frames.splice(keep)
+      // deadLevels 没勾选的层级照样抽了这一次随机数 (保持旧种子的随机序列), 只是不真的断。
+      // 断口随机量按**分支下标**再 fork 一次: 每根断枝的形状互相独立,
+      // 改木刺数/锯齿强度不会平移别的断枝的断口位置 (参数隔离)。
+      damagePlan = breakBranchFrames(frames, level, damageCfg, damageRng.fork(`b${branchIndex}`))
     }
+    const dead = !!damagePlan
     // 每层取第一根枝条作为该层扭曲句柄的可视化引导线
     // (twistGuides 在树干之后声明, 但 buildBranch 只在树干建好后才被调用, 因此这里已初始化)
     if (level >= 1 && !twistGuides.branches[level]) twistGuides.branches[level] = sampleGuidePoints(frames)
@@ -909,10 +920,15 @@ export function buildTree(params, options = {}) {
     // 环向分段数受 LOD 的 barkDetail 缩放; 下限 3 —— 少于 3 条边的管子没有体积感。
     const radialSegments = Math.max(3, Math.round(cfg.radialSegments * ((P.lod && P.lod.barkDetail) || 1)))
     // 第 3 级及以上视为"嫩枝": 顶点色偏黄绿 (模拟幼枝的叶绿素), 更深层用中性灰白。
+    // 断枝整体压成深褐色枯木; 断口附近的梢部再往木芯色偏一点, 与断口几何接得上。
     const isYoung = level >= 3
+    const deadColor = new THREE.Color(0.32, 0.24, 0.17)
     const colorBase = dead
-      ? new THREE.Color(0.32, 0.24, 0.17)
+      ? deadColor
       : (isYoung ? new THREE.Color(0.82, 0.94, 0.74) : new THREE.Color(0.88, 0.88, 0.86))
+    const colorTip = dead
+      ? deadColor.clone().lerp(damageCfg.heart, 0.45)
+      : new THREE.Color(1.0, 1.0, 1.0)
     const growSpan = LEVEL_GROW[Math.min(level, LEVEL_GROW.length - 1)]
 
     // 节点登记: meta 里存的是"可读摘要", 供节点树/属性面板显示; branchIndex 用于反查骨架分支。
@@ -921,9 +937,13 @@ export function buildTree(params, options = {}) {
       type: 'branch',
       level,
       group: `branch-L${level}`,
-      name: `L${level} 枝 #${levelBranchCounter[level]}`,
+      name: dead ? `L${level} 断枝 #${levelBranchCounter[level]}` : `L${level} 枝 #${levelBranchCounter[level]}`,
       parent: parentSlot,
-      meta: { length, radius: radius0, segments: Math.max(2, Math.round(cfg.segments)), branchIndex },
+      meta: {
+        length, radius: radius0, segments: Math.max(2, Math.round(cfg.segments)), branchIndex,
+        // 断枝: 供节点树/自检识别 (断口比例 + 是否叠了断口几何)
+        ...(damagePlan ? { broken: true, breakT: damagePlan.cutT, fracture: damagePlan.shape } : {}),
+      },
     })
 
     // 骨架先行: 这里只登记骨架分支 (节点/边/半径/父子关系)。
@@ -943,7 +963,8 @@ export function buildTree(params, options = {}) {
         starDepth: cfg.starDepth || 0,
         color: colorBase,
         // color2 是"明暗端的第二种颜色", 与 color 做顶点级渐变; 留白 (1,1,1) 表示不额外染色。
-        color2: new THREE.Color(1.0, 1.0, 1.0),
+        // 断枝的梢部往木芯色偏一点: 蒙皮生成的端盖会跟着一起变浅, 与断口木芯面接得上。
+        color2: colorTip,
         colorVariance: 0.05,
         // 蒙皮纹理噪声用独立子流: 改纹理细节不会影响生长随机序列。
         rng: rng.fork('bark'),
@@ -971,6 +992,9 @@ export function buildTree(params, options = {}) {
         crossNoise: cfg.crossNoise || 0,
       },
     })
+    // 断口配方挂在骨架分支上: 蒙皮长完后由 buildFractureGeometry 消费 (见本函数下方蒙皮段)。
+    // 注意 addBarkBranch 返回的是**分支 index**, 分支对象要从骨架数组里取。
+    if (damagePlan) barkSkeleton.branches[myBranch].damage = damagePlan
     branchCount++
 
     // 递归顺序: 先长子枝 (建立父子关系), 再挂叶, 最后挂果 ——
@@ -1029,7 +1053,7 @@ export function buildTree(params, options = {}) {
     const chainBranches = new Array(chains.length)
     const chainSlots = new Array(chains.length)
     const levelCounter = {}
-    const deadChance = Math.max(0, Number(OD.deadChance) || 0)
+    const deadChance = damageCfg.deadChance
 
     for (let ci = 0; ci < chains.length; ci++) {
       const chain = chains[ci]
@@ -1038,20 +1062,22 @@ export function buildTree(params, options = {}) {
       const level = Math.max(1, Math.min(5, chain.level))
       const rng = makeRng(P.seed, `sca-chain-${ci}`)
       const frames = chainToFrames(chain, rng)
-      // 断枝: 只截断叶梢链 (细枝), 主干级的粗冠枝不砍, 更像老树自然枯梢。
-      let dead = false
-      if (deadChance > 0 && chain.tip && deadRng.chance(deadChance)) {
-        dead = true
-        const keep = Math.max(2, Math.round(frames.length * clamp01(OD.deadLength === undefined ? 0.45 : OD.deadLength)))
-        frames.splice(keep)
-      }
       const branchIndex = barkSkeleton.branches.length
+      // 断枝: 只截断叶梢链 (细枝), 主干级的粗冠枝不砍, 更像老树自然枯梢。
+      // 断口几何与普通枝条共用同一套 (锯齿木芯面 / 碎裂树皮唇 / 木刺);
+      // 断口随机量按链下标 fork, 每根断枝的形状互相独立。
+      let damagePlan = null
+      if (deadChance > 0 && chain.tip && deadRng.chance(deadChance)) {
+        damagePlan = breakBranchFrames(frames, level, damageCfg, damageRng.fork(`sca${ci}`))
+      }
+      const dead = !!damagePlan
       applyBranchEdit(frames, branchIndex)
       if (!twistGuides.branches[level]) twistGuides.branches[level] = sampleGuidePoints(frames)
 
       const wind0 = clamp01(0.18 + (level - 1) * 0.08)
       const wind1 = Math.min(1, wind0 + 0.26)
       levelCounter[level] = (levelCounter[level] || 0) + 1
+      const deadColor = new THREE.Color(0.32, 0.24, 0.17)
       const slot = addSlot({
         type: 'branch',
         level,
@@ -1064,6 +1090,7 @@ export function buildTree(params, options = {}) {
           segments: frames.length,
           branchIndex,
           sca: true,
+          ...(damagePlan ? { broken: true, breakT: damagePlan.cutT, fracture: damagePlan.shape } : {}),
         },
       })
       const branch = addBarkBranch(barkSkeleton, {
@@ -1077,9 +1104,9 @@ export function buildTree(params, options = {}) {
           crossSection: 'round',
           starDepth: 0,
           color: dead
-            ? new THREE.Color(0.32, 0.24, 0.17)
+            ? deadColor
             : (level >= 3 ? new THREE.Color(0.82, 0.94, 0.74) : new THREE.Color(0.88, 0.88, 0.86)),
-          color2: new THREE.Color(1.0, 1.0, 1.0),
+          color2: dead ? deadColor.clone().lerp(damageCfg.heart, 0.45) : new THREE.Color(1.0, 1.0, 1.0),
           colorVariance: 0.05,
           rng: rng.fork('bark'),
           wind0,
@@ -1088,13 +1115,14 @@ export function buildTree(params, options = {}) {
           grow: LEVEL_GROW[Math.min(level, LEVEL_GROW.length - 1)],
           origin: frames[0].pos.clone(),
           phase: rng.range(0, Math.PI * 2),
-          tipRound: dead ? 0.28 : 0.06,
+          tipRound: 0.06,
           baseFlare: 0,
           baseFlareLen: level <= 2 ? 0.16 : 0.13,
           vertexNoise: 0.05,
           crossNoise: 0.04,
         },
       })
+      if (damagePlan) barkSkeleton.branches[branch].damage = damagePlan
       branchCount++
       chainBranches[ci] = branch
       chainSlots[ci] = slot
@@ -1854,23 +1882,44 @@ export function buildTree(params, options = {}) {
   // 把半径约束的统计挂进蒙皮统计, 便于自检/调试面板查看"压细了多少根枝"。
   skin.stats.radiusClamp = radiusClamp
   let barkGeometry = skin.geometry
-  // 果实并进树皮几何 (共用树皮材质); 失败时 (null) 丢弃果实几何并保留树皮。
-  if (fruitAcc.vertexCount > 0) {
-    const fruitGeo = fruitAcc.build()
-    // 第二个参数 false = 不生成 groups: 整块树皮+果实共用同一个材质槽 (一件材质画完)。
-    const combined = mergeGeometries([barkGeometry, fruitGeo], false)
+
+  /* ---- 断枝断口几何: 蒙皮之后一次性生成, 再叠进树皮几何 ---- */
+  // 为什么放在蒙皮之后: 断口是额外叠上去的独立壳 (木芯面 + 树皮唇 + 木刺), 不属于
+  // 骨架蒙皮; 这样 barkSkin 的"单连通/边界边=0"与 speedtreeBark 的"分量数=分支数"
+  // 两条验收都不会因为断口而变化 —— 断口只是画在断口位置的一层装饰几何。
+  // 断口几何用的是最终半径 (enforceChildBranchRadii 收细之后), 因此与管壁严丝合缝。
+  const damageStats = { brokenBranches: 0, fractureBranches: 0, splinters: 0, triangles: 0, vertices: 0 }
+  if (damageCfg.deadChance > 0) {
+    for (const b of barkSkeleton.branches) {
+      if (!b.damage) continue
+      damageStats.brokenBranches++
+      const r = buildFractureGeometry(damageAcc, b, damageCfg)
+      if (!r) continue
+      damageStats.fractureBranches++
+      damageStats.splinters += r.splinters
+      damageStats.triangles += r.triangles
+      damageStats.vertices += r.vertices
+    }
+  }
+  // 果实 + 断口一起并进树皮几何 (共用树皮材质); 失败时 (null) 丢弃附加件并保留树皮。
+  const extraGeos = []
+  if (fruitAcc.vertexCount > 0) extraGeos.push(fruitAcc.build())
+  if (damageAcc.vertexCount > 0) extraGeos.push(damageAcc.build())
+  if (extraGeos.length) {
+    // 第二个参数 false = 不生成 groups: 整块树皮+果实+断口共用同一个材质槽 (一件材质画完)。
+    const combined = mergeGeometries([barkGeometry, ...extraGeos], false)
     if (combined) {
       // 保留 UV 接缝顶点对 (拓扑校验/导出检查要用), mergeGeometries 不会自动带过来
       combined.userData = { ...barkGeometry.userData }
       combined.computeBoundingBox()
       combined.computeBoundingSphere()
-      // 合并后原来的两个几何体不再被引用, 立即释放 GPU 侧缓冲。
+      // 合并后原来的几何体不再被引用, 立即释放 GPU 侧缓冲。
       barkGeometry.dispose()
-      fruitGeo.dispose()
+      for (const g of extraGeos) g.dispose()
       barkGeometry = combined
     } else {
-      // 合并失败 (属性布局不一致等): 只丢弃果实, 保住树皮主几何。
-      fruitGeo.dispose()
+      // 合并失败 (属性布局不一致等): 只丢弃附加几何, 保住树皮主几何。
+      for (const g of extraGeos) g.dispose()
     }
   }
   const leafGeometry = leafAcc.vertexCount > 0 ? leafAcc.build() : null
@@ -2073,6 +2122,8 @@ export function buildTree(params, options = {}) {
     flowerTriangles: flowerGeometry && flowerGeometry.index ? flowerGeometry.index.count / 3 : 0,
     flowerVertices: flowerGeometry ? flowerGeometry.attributes.position.count : 0,
       skin: skin.stats,
+      // 断枝破损汇总: 断枝数 / 有断口几何的枝数 / 木刺数 / 断口三角面 (UI 与自检都看这里)
+      damage: damageStats,
       buildMs: now() - t0,
       height: maxY - minY,
       spread: maxXZ,

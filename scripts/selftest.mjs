@@ -35,6 +35,8 @@ import { join } from 'node:path'
 import { runAudit, AUDIT_EXEMPT, STORE_LEVEL } from './paramAudit.mjs'
 import { docFor, DOC_KEYS } from '../src/core/paramDocs.js'
 import { analyzeTopology, validateSkin } from '../src/core/meshTopology.js'
+import { resolveDamageConfig, buildFractureGeometry } from '../src/core/branchDamage.js'
+import { GeoAcc } from '../src/core/mathUtils.js'
 
 let pass = 0
 let fail = 0
@@ -2263,6 +2265,204 @@ console.log('\n[37] 空间引导力 (Space Forces)')
   check('实体 Z 半轴参与整树生成', h1 !== h5)
   check('显示引导力开关不改变几何 (只影响示意)', h1 === h4)
   check('力场生成可复现 (同参数 -> 同一棵树)', h1 === h2)
+}
+
+/* 38. 断枝破损: 截短 / 下垂 / 锯齿木芯面 / 碎裂树皮唇 / 木刺 */
+console.log('\n[38] 断枝破损 (Broken Branch)')
+{
+  const plain = () => {
+    const p = normalizeParams(defaultParams())
+    p.leaves.enabled = false
+    p.fruit.enabled = false
+    p.flower.enabled = false
+    return p
+  }
+  const withDamage = (over = {}) => {
+    const p = plain()
+    p.oldTree = { ...p.oldTree, ...over }
+    return p
+  }
+  const trunkFramesHash = (r) => {
+    const b = r.skeleton.branches[0]
+    const arr = new Float32Array(b.frames.length * 3)
+    b.frames.forEach((f, i) => { arr[i * 3] = f.pos.x; arr[i * 3 + 1] = f.pos.y; arr[i * 3 + 2] = f.pos.z })
+    return hashArray(arr)
+  }
+  // 枝条"出生顺序 + 枝基位置"指纹: 用来证明改变断口形状不会挪动枝条布局
+  const layoutHash = (r) => {
+    const arr = []
+    for (const b of r.skeleton.branches) {
+      arr.push(b.level, b.frames.length, b.frames[0].pos.x, b.frames[0].pos.y, b.frames[0].pos.z)
+    }
+    return hashArray(new Float32Array(arr))
+  }
+
+  const baseR = buildTree(plain())
+  check('断枝关闭: 没有断枝, 也没有断口几何',
+    baseR.stats.damage.brokenBranches === 0 && baseR.stats.damage.triangles === 0 &&
+    baseR.skeleton.branches.every((b) => !b.damage),
+    JSON.stringify(baseR.stats.damage))
+
+  // 同参数但"断口形状全关": 树皮三角面完全相同, 只少掉断口几何 —— 用它精确验证并入
+  const shapeOff = buildTree(withDamage({ deadChance: 0.8, deadLevels: [true, true, false, false, false], breakJagged: 0, breakSplinters: 0 }))
+
+  // 只让 L1/L2 断 (粗枝折断看得清), 概率给足保证一定有断枝
+  const p = withDamage({ deadChance: 0.8, deadLevels: [true, true, false, false, false], breakSplinters: 6 })
+  const r = buildTree(p)
+  const dmg = r.stats.damage
+  check('断枝: 真的断了几根且都带断口几何',
+    dmg.brokenBranches > 0 && dmg.fractureBranches === dmg.brokenBranches && dmg.triangles > 0,
+    JSON.stringify(dmg))
+  check('断枝: 每处断口都有 6 根木刺', dmg.splinters === dmg.brokenBranches * 6,
+    `${dmg.splinters} vs ${dmg.brokenBranches}×6`)
+  check('断枝: 断口几何精确并进树皮几何 (增加的三角面/顶点 = 断口规模)',
+    r.stats.barkTriangles === shapeOff.stats.barkTriangles + dmg.triangles &&
+    r.stats.barkVertices === shapeOff.stats.barkVertices + dmg.vertices,
+    `tri ${shapeOff.stats.barkTriangles}+${dmg.triangles} vs ${r.stats.barkTriangles}, ` +
+    `vert ${shapeOff.stats.barkVertices}+${dmg.vertices} vs ${r.stats.barkVertices}`)
+
+  // 骨架: 断枝被截在 cutT, 断枝不再有子枝
+  const broken = r.skeleton.branches.filter((b) => b.damage)
+  check('断枝: 骨架被截断在断口比例处 (末帧 t ≈ cutT < 1)',
+    broken.every((b) => {
+      const lastT = b.frames[b.frames.length - 1].t
+      return Math.abs(lastT - b.damage.cutT) < 0.02 && lastT < 0.97
+    }),
+    broken.slice(0, 3).map((b) => `${b.frames[b.frames.length - 1].t.toFixed(2)}/${b.damage.cutT.toFixed(2)}`).join(','))
+  check('断枝: 断枝上不再长新枝 (子分支为空)',
+    broken.every((b) => b.children.length === 0))
+  check('断枝: 枝级受 deadLevels 限制 (只断 L1/L2)',
+    broken.every((b) => b.level <= 2) && broken.some((b) => b.level === 1),
+    [...new Set(broken.map((b) => b.level))].join(','))
+
+  // 节点表: 断枝被标出来, 名字也能认出来
+  const brokenNodes = r.nodes.filter((n) => n.meta && n.meta.broken)
+  check('断枝: 节点表标了 broken 且名字带「断枝」',
+    brokenNodes.length === dmg.brokenBranches && brokenNodes.every((n) => n.name.includes('断枝') && n.meta.breakT > 0 && n.meta.breakT < 1),
+    `${brokenNodes.length}/${dmg.brokenBranches}`)
+
+  // 断口几何位置: 必须贴着断口 (而不是飘在别处)
+  {
+    const cfg = resolveDamageConfig(p.oldTree)
+    const acc = new GeoAcc()
+    let maxDist = 0
+    let maxAllowed = 0
+    let count = 0
+    for (const b of broken) {
+      const before = acc.vertexCount
+      const res = buildFractureGeometry(acc, b, cfg)
+      if (!res) continue
+      const tip = b.frames[b.frames.length - 1]
+      // 允许范围: 木刺最长 (半径 × 长度倍率 × 1.05) + 断口外沿 + 一点余量
+      const allowed = tip.radius * (cfg.splinterLength * 1.05 + 1.6) + 0.01
+      maxAllowed = Math.max(maxAllowed, allowed)
+      const pos = acc.position
+      for (let i = before * 3; i < pos.length; i += 3) {
+        const d = Math.hypot(pos[i] - tip.pos.x, pos[i + 1] - tip.pos.y, pos[i + 2] - tip.pos.z)
+        maxDist = Math.max(maxDist, d)
+        count++
+      }
+    }
+    check('断口几何贴着断口 (没有飘到别处)', count > 0 && maxDist <= maxAllowed,
+      `顶点 ${count} 个, 离断口最远 ${maxDist.toFixed(3)}m (允许 ${maxAllowed.toFixed(3)}m)`)
+  }
+
+  // 断枝不长叶: 同样参数下, 断枝开启后叶片数必须减少
+  {
+    const withLeaves = withDamage({ deadChance: 0.8, deadLevels: [true, true, false, false, false] })
+    withLeaves.leaves.enabled = true
+    withLeaves.leaves.levels = [true, true, true, false, false]
+    const noDmg = JSON.parse(JSON.stringify(withLeaves))
+    noDmg.oldTree.deadChance = 0
+    const leafOn = buildTree(withLeaves).stats.leaves
+    const leafOff = buildTree(noDmg).stats.leaves
+    check('断枝: 断口以下不再长叶 (叶片数减少)', leafOn < leafOff, `${leafOff} -> ${leafOn}`)
+  }
+
+  // 断口形状开关: 全关 -> 只截短, 不叠几何
+  {
+    const noShape = buildTree(withDamage({ deadChance: 0.8, breakJagged: 0, breakSplinters: 0 }))
+    check('断口形状全关: 枝条仍会断, 但不生成断口几何',
+      noShape.stats.damage.brokenBranches > 0 && noShape.stats.damage.triangles === 0 &&
+      noShape.stats.damage.fractureBranches === 0)
+    // 只开木刺 (锯齿关): 断口几何只剩木刺
+    const splinterOnly = buildTree(withDamage({ deadChance: 0.8, breakJagged: 0, breakSplinters: 4 }))
+    check('只开木刺: 断口依然生成木刺几何',
+      splinterOnly.stats.damage.splinters === splinterOnly.stats.damage.brokenBranches * 4 &&
+      splinterOnly.stats.damage.triangles > 0)
+  }
+
+  // 断口木芯颜色必须真的进几何 (顶点色, geomHash 只看位置/索引, 因此单独比 color 属性)
+  const colorHash = (g) => (g && g.attributes.color ? hashArray(g.attributes.color.array) : 'none')
+  const heartA = withDamage({ deadChance: 0.8, heartColor: '#332211' })
+  const heartB = withDamage({ deadChance: 0.8, heartColor: '#eeddcc' })
+  check('断口木芯颜色参与几何 (顶点色不同)',
+    colorHash(buildTree(heartA).barkGeometry) !== colorHash(buildTree(heartB).barkGeometry))
+
+  // 断口下垂: 同一批断枝, 开下垂后断口位置整体更低
+  {
+    const droopOff = buildTree(withDamage({ deadChance: 0.8, deadDroop: 0 }))
+    const droopOn = buildTree(withDamage({ deadChance: 0.8, deadDroop: 1.0 }))
+    const avgTipY = (res) => {
+      const tips = res.skeleton.branches.filter((b) => b.damage).map((b) => b.frames[b.frames.length - 1].pos.y)
+      return tips.reduce((a, b) => a + b, 0) / Math.max(1, tips.length)
+    }
+    const y0 = avgTipY(droopOff)
+    const y1 = avgTipY(droopOn)
+    check('断口下垂: 残枝断口整体下移', y1 < y0 - 0.01, `${y0.toFixed(3)} -> ${y1.toFixed(3)}`)
+  }
+
+  // 确定性 + 参数隔离
+  {
+    const sameA = buildTree(withDamage({ deadChance: 0.6 }))
+    const sameB = buildTree(withDamage({ deadChance: 0.6 }))
+    check('断枝: 同参数同种子逐字节可复现', geomHash(sameA.barkGeometry) === geomHash(sameB.barkGeometry))
+    const moreSplinters = buildTree(withDamage({ deadChance: 0.6, breakSplinters: 11 }))
+    const fewer = buildTree(withDamage({ deadChance: 0.6, breakSplinters: 2 }))
+    check('断枝: 改木刺数量会改变断口几何', geomHash(moreSplinters.barkGeometry) !== geomHash(fewer.barkGeometry))
+    check('断枝: 改木刺数量不挪动枝条布局 (只有断口变)',
+      layoutHash(moreSplinters) === layoutHash(fewer) &&
+      trunkFramesHash(moreSplinters) === trunkFramesHash(fewer))
+    check('断枝: 断枝参数不影响树干骨架',
+      trunkFramesHash(r) === trunkFramesHash(baseR))
+  }
+
+  // 两条蒙皮管线: 断口几何不能破坏各自的拓扑验收
+  {
+    const skinP = withDamage({ deadChance: 0.7 })
+    skinP.bark.pipeline = 'skin'
+    const skinR = buildTree(skinP)
+    const sv = skinR.stats.skin.validation
+    check('断枝 + 单张连续蒙皮: 仍 boundary=0 / nonManifold=0 / components=1',
+      sv.boundary === 0 && sv.nonManifold === 0 && sv.nonManifoldVertices === 0 && sv.components === 1,
+      JSON.stringify({ b: sv.boundary, nm: sv.nonManifold, c: sv.components }))
+    const stP = withDamage({ deadChance: 0.7 })
+    stP.bark.pipeline = 'speedtree'
+    const stR = buildTree(stP)
+    const stv = stR.stats.skin.validation
+    check('断枝 + SpeedTree 分枝管: 仍每枝闭合 / 分量 = 分支数',
+      stv.boundary === 0 && stv.nonManifold === 0 && stv.components === stv.expectedComponents && stv.ok,
+      JSON.stringify({ b: stv.boundary, c: stv.components, exp: stv.expectedComponents }))
+    check('断枝: 两种管线的断口规模一致 (几何与管线无关)',
+      skinR.stats.damage.triangles === stR.stats.damage.triangles &&
+      skinR.stats.damage.brokenBranches === stR.stats.damage.brokenBranches,
+      `${skinR.stats.damage.triangles} vs ${stR.stats.damage.triangles}`)
+  }
+
+  // 预设: 枯树与榕树自带断枝破损
+  {
+    const deadP = composeTree('dead', 'mature', 'winter', 777)
+    const deadR = buildTree(deadP)
+    check('枯树预设自带断枝破损 (有断口几何)',
+      deadR.stats.damage.brokenBranches > 0 && deadR.stats.damage.fractureBranches > 0,
+      JSON.stringify(deadR.stats.damage))
+    check('枯树断枝仍通过蒙皮验收', deadR.stats.skin.validation.ok === true)
+    const banyanP = composeTree('banyan', 'mature', 'summer', 777)
+    const banyanR = buildTree(banyanP)
+    check('榕树 (SCA 冠枝) 也能生成断口几何',
+      banyanR.stats.damage.brokenBranches > 0 && banyanR.stats.damage.triangles > 0,
+      JSON.stringify(banyanR.stats.damage))
+  }
 }
 
 /* 汇总 */

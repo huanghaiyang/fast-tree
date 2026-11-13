@@ -532,6 +532,13 @@ export const SPECIES = [
         ),
       },
       leaves: { enabled: false, levels: [false, false, false, false, false] },
+      // 枯树的标志性"风折枝": 1/3 的枝条在枝长 45% 处折断, 断口有锯齿木芯面与木刺,
+      // 残枝再下垂; 折掉的枝条不长子枝/叶, 于是树冠自然变得残缺。
+      oldTree: {
+        deadChance: 0.3, deadLength: 0.45, deadLengthVariance: 0.2,
+        deadLevels: [true, true, true, true, true], deadDroop: 0.5,
+        breakJagged: 0.75, breakSplinters: 6, splinterLength: 1.8, heartColor: '#c8ae83',
+      },
       bark: { color: '#57493a', color2: '#6f6152', roughness: 0.95, procedural: { enabled: true, style: 'rough', scale: 1.4, contrast: 0.8 } },
     }),
   },
@@ -596,7 +603,12 @@ export const SPECIES = [
         enabled: true, levels: [false, true, true, true, false], ferns: 3, vines: 2,
         chance: 0.42, size: 0.62, vineLength: 1.7, color: '#5d7a34', colorTip: '#93b254',
       },
-      oldTree: { deadChance: 0.16, deadLength: 0.42, hollowDepth: 0.55, hollowHeight: 0.3, hollowSize: 0.55 },
+      oldTree: {
+        deadChance: 0.16, deadLength: 0.42, deadLengthVariance: 0.14,
+        deadLevels: [true, true, true, true, true], deadDroop: 0.4,
+        breakJagged: 0.65, breakSplinters: 5, splinterLength: 1.7, heartColor: '#c3a87e',
+        hollowDepth: 0.55, hollowHeight: 0.3, hollowSize: 0.55,
+      },
       leaves: {
         enabled: true, levels: [false, true, true, true, true],
         perBranch: 14, clusterCount: 4, clusterRadius: 0, clusterSpread: 0,

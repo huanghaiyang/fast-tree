@@ -323,15 +323,23 @@ export function defaultParams() {
       texture: '',
     },
 
-    /* 古树特征: 断枝与树洞。
-     * deadChance 概率把某根新枝变成"断枝"(短、无叶、深色);
-     * hollowDepth 在树干上挖出一处凹陷(树洞的骨架近似), hollowHeight 控制其高度。 */
+    /* 古树特征: 断枝破损与树洞。
+     * 断枝 = 按 deadChance 概率把某根新枝折在 deadLength 处: 残枝变短、无叶无子枝,
+     * 断口处生成锯齿木芯面 + 碎裂树皮唇 + 木刺 (见 core/branchDamage.js), 并按 deadDroop 下垂。
+     * 树洞默认关闭: hollowDepth 在树干上挖出一处凹陷(树洞的骨架近似), hollowHeight 控制其高度。 */
     oldTree: {
-      deadChance: 0,       // 每根枝条成为断枝的概率 0..1
-      deadLength: 0.45,    // 断枝长度 ÷ 原长度
-      hollowDepth: 0,      // 树洞凹陷深度 (相对半径) 0 = 关闭
-      hollowHeight: 0.32,  // 树洞在树干上的高度 (0..1)
-      hollowSize: 0.6,     // 树洞角向宽度 (弧度)
+      deadChance: 0,          // 每根枝条成为断枝的概率 0..1 (0 = 不消耗随机数, 无断口几何)
+      deadLength: 0.45,       // 断枝保留长度 ÷ 原长度 (断口位置)
+      deadLengthVariance: 0.12, // 断口位置抖动 (相对枝长): 0 = 同层断枝都断在同一比例处
+      deadLevels: [true, true, true, true, true], // 哪几级枝条允许折枝 (下标 = 枝级-1)
+      deadDroop: 0.35,        // 断口下垂 (弧度): 残枝失去支撑后朝地面弯的强度
+      breakJagged: 0.6,       // 断口锯齿强度 0..1 (0 = 平截面; 木刺仍可单独打开)
+      breakSplinters: 5,      // 每处断口的木刺数量 0..12 (0 = 不生成木刺)
+      splinterLength: 1.6,    // 木刺长度 ÷ 断口半径
+      heartColor: '#c9b085',  // 断口木芯颜色 (新劈开的木质部; 会与枯木色混合)
+      hollowDepth: 0,         // 树洞凹陷深度 (相对半径) 0 = 关闭
+      hollowHeight: 0.32,     // 树洞在树干上的高度 (0..1)
+      hollowSize: 0.6,        // 树洞角向宽度 (弧度)
     },
 
     /* 树枝: levels 是有效层数 (1..MAX_LEVELS), level[i] 是第 i+1 层的配置 (字段见 defaultLevel)。
