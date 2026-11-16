@@ -1743,6 +1743,10 @@ export const GRAPH_DATA = {
       "name": "scene",
       "fields": [
         {
+          "path": "renderer",
+          "value": "auto"
+        },
+        {
           "path": "env",
           "value": "custom"
         },
@@ -2804,6 +2808,7 @@ export const GRAPH_DATA = {
           "calls": [
             "branchDamage:rimBaseScale",
             "branchDamage:mixRgb",
+            "branchDamage:rimRadiusAt",
             "branchDamage:rimUv",
             "branchDamage:emitTri",
             "branchDamage:sideRef"
@@ -2817,10 +2822,21 @@ export const GRAPH_DATA = {
           ]
         },
         {
+          "id": "branchDamage:rimRadiusAt",
+          "name": "rimRadiusAt",
+          "module": "branchDamage",
+          "line": 339,
+          "exported": false,
+          "parent": "branchDamage:buildFractureGeometry",
+          "calls": [],
+          "externalCalls": [],
+          "paramRefs": []
+        },
+        {
           "id": "branchDamage:sideRef",
           "name": "sideRef",
           "module": "branchDamage",
-          "line": 452,
+          "line": 458,
           "exported": false,
           "parent": "branchDamage:buildFractureGeometry",
           "calls": [],
@@ -4574,6 +4590,238 @@ export const GRAPH_DATA = {
       ]
     },
     {
+      "id": "materialsGPU",
+      "name": "materialsGPU",
+      "title": "materialsGPU",
+      "category": "其他",
+      "file": "src/core/materialsGPU.js",
+      "functions": [
+        {
+          "id": "materialsGPU:whiteTexture",
+          "name": "whiteTexture",
+          "module": "materialsGPU",
+          "line": 44,
+          "exported": false,
+          "parent": null,
+          "calls": [],
+          "externalCalls": [
+            "materials"
+          ],
+          "paramRefs": []
+        },
+        {
+          "id": "materialsGPU:createNodeUniforms",
+          "name": "createNodeUniforms",
+          "module": "materialsGPU",
+          "line": 60,
+          "exported": false,
+          "parent": null,
+          "calls": [],
+          "externalCalls": [
+            "materials"
+          ],
+          "paramRefs": []
+        },
+        {
+          "id": "materialsGPU:refreshFromLegacy",
+          "name": "refreshFromLegacy",
+          "module": "materialsGPU",
+          "line": 120,
+          "exported": false,
+          "parent": null,
+          "calls": [
+            "materialsGPU:whiteTexture"
+          ],
+          "externalCalls": [],
+          "paramRefs": []
+        },
+        {
+          "id": "materialsGPU:syncGpuUniforms",
+          "name": "syncGpuUniforms",
+          "module": "materialsGPU",
+          "line": 162,
+          "exported": true,
+          "parent": null,
+          "calls": [
+            "materialsGPU:syncOne"
+          ],
+          "externalCalls": [],
+          "paramRefs": []
+        },
+        {
+          "id": "materialsGPU:syncOne",
+          "name": "syncOne",
+          "module": "materialsGPU",
+          "line": 172,
+          "exported": false,
+          "parent": null,
+          "calls": [],
+          "externalCalls": [],
+          "paramRefs": []
+        },
+        {
+          "id": "materialsGPU:transformedUv",
+          "name": "transformedUv",
+          "module": "materialsGPU",
+          "line": 232,
+          "exported": false,
+          "parent": null,
+          "calls": [],
+          "externalCalls": [],
+          "paramRefs": []
+        },
+        {
+          "id": "materialsGPU:buildPositionNodes",
+          "name": "buildPositionNodes",
+          "module": "materialsGPU",
+          "line": 247,
+          "exported": false,
+          "parent": null,
+          "calls": [],
+          "externalCalls": [],
+          "paramRefs": []
+        },
+        {
+          "id": "materialsGPU:buildGpuMaterial",
+          "name": "buildGpuMaterial",
+          "module": "materialsGPU",
+          "line": 316,
+          "exported": false,
+          "parent": null,
+          "calls": [
+            "materialsGPU:createNodeUniforms",
+            "materialsGPU:transformedUv",
+            "materialsGPU:whiteTexture",
+            "materialsGPU:buildPositionNodes",
+            "materialsGPU:refreshFromLegacy",
+            "materialsGPU:syncOne"
+          ],
+          "externalCalls": [],
+          "paramRefs": []
+        },
+        {
+          "id": "materialsGPU:createBarkMaterialGPU",
+          "name": "createBarkMaterialGPU",
+          "module": "materialsGPU",
+          "line": 441,
+          "exported": true,
+          "parent": null,
+          "calls": [
+            "materialsGPU:buildGpuMaterial"
+          ],
+          "externalCalls": [],
+          "paramRefs": []
+        },
+        {
+          "id": "materialsGPU:createLeafMaterialGPU",
+          "name": "createLeafMaterialGPU",
+          "module": "materialsGPU",
+          "line": 446,
+          "exported": true,
+          "parent": null,
+          "calls": [
+            "materialsGPU:buildGpuMaterial"
+          ],
+          "externalCalls": [],
+          "paramRefs": []
+        },
+        {
+          "id": "materialsGPU:createFlowerMaterialGPU",
+          "name": "createFlowerMaterialGPU",
+          "module": "materialsGPU",
+          "line": 451,
+          "exported": true,
+          "parent": null,
+          "calls": [
+            "materialsGPU:buildGpuMaterial"
+          ],
+          "externalCalls": [],
+          "paramRefs": []
+        },
+        {
+          "id": "materialsGPU:updateOneGpu",
+          "name": "updateOneGpu",
+          "module": "materialsGPU",
+          "line": 456,
+          "exported": false,
+          "parent": null,
+          "calls": [
+            "materialsGPU:refreshFromLegacy",
+            "materialsGPU:syncOne"
+          ],
+          "externalCalls": [],
+          "paramRefs": []
+        },
+        {
+          "id": "materialsGPU:updateBarkMaterialGPU",
+          "name": "updateBarkMaterialGPU",
+          "module": "materialsGPU",
+          "line": 466,
+          "exported": true,
+          "parent": null,
+          "calls": [
+            "materialsGPU:updateOneGpu"
+          ],
+          "externalCalls": [],
+          "paramRefs": []
+        },
+        {
+          "id": "materialsGPU:updateLeafMaterialGPU",
+          "name": "updateLeafMaterialGPU",
+          "module": "materialsGPU",
+          "line": 471,
+          "exported": true,
+          "parent": null,
+          "calls": [
+            "materialsGPU:updateOneGpu"
+          ],
+          "externalCalls": [],
+          "paramRefs": []
+        },
+        {
+          "id": "materialsGPU:updateFlowerMaterialGPU",
+          "name": "updateFlowerMaterialGPU",
+          "module": "materialsGPU",
+          "line": 476,
+          "exported": true,
+          "parent": null,
+          "calls": [
+            "materialsGPU:updateOneGpu"
+          ],
+          "externalCalls": [],
+          "paramRefs": []
+        },
+        {
+          "id": "materialsGPU:updateMaterialsGPU",
+          "name": "updateMaterialsGPU",
+          "module": "materialsGPU",
+          "line": 486,
+          "exported": true,
+          "parent": null,
+          "calls": [
+            "materialsGPU:updateBarkMaterialGPU",
+            "materialsGPU:updateLeafMaterialGPU",
+            "materialsGPU:updateFlowerMaterialGPU"
+          ],
+          "externalCalls": [],
+          "paramRefs": []
+        },
+        {
+          "id": "materialsGPU:createSkyMaterialGPU",
+          "name": "createSkyMaterialGPU",
+          "module": "materialsGPU",
+          "line": 501,
+          "exported": true,
+          "parent": null,
+          "calls": [],
+          "externalCalls": [
+            "materials"
+          ],
+          "paramRefs": []
+        }
+      ]
+    },
+    {
       "id": "mathUtils",
       "name": "mathUtils",
       "title": "数学工具",
@@ -4991,7 +5239,7 @@ export const GRAPH_DATA = {
           "id": "paramDocs:normalize",
           "name": "normalize",
           "module": "paramDocs",
-          "line": 693,
+          "line": 694,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -5002,7 +5250,7 @@ export const GRAPH_DATA = {
           "id": "paramDocs:docFor",
           "name": "docFor",
           "module": "paramDocs",
-          "line": 718,
+          "line": 719,
           "exported": true,
           "parent": null,
           "calls": [
@@ -5080,7 +5328,7 @@ export const GRAPH_DATA = {
           "id": "params:cloneParams",
           "name": "cloneParams",
           "module": "params",
-          "line": 846,
+          "line": 848,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -5091,7 +5339,7 @@ export const GRAPH_DATA = {
           "id": "params:mergeParams",
           "name": "mergeParams",
           "module": "params",
-          "line": 868,
+          "line": 870,
           "exported": true,
           "parent": null,
           "calls": [
@@ -5105,7 +5353,7 @@ export const GRAPH_DATA = {
           "id": "params:walk",
           "name": "walk",
           "module": "params",
-          "line": 870,
+          "line": 872,
           "exported": false,
           "parent": "params:mergeParams",
           "calls": [],
@@ -5116,7 +5364,7 @@ export const GRAPH_DATA = {
           "id": "params:normalizeParams",
           "name": "normalizeParams",
           "module": "params",
-          "line": 908,
+          "line": 910,
           "exported": true,
           "parent": null,
           "calls": [
@@ -5131,7 +5379,7 @@ export const GRAPH_DATA = {
           "id": "params:pickStringify",
           "name": "pickStringify",
           "module": "params",
-          "line": 951,
+          "line": 953,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -5142,7 +5390,7 @@ export const GRAPH_DATA = {
           "id": "params:serializeGroup",
           "name": "serializeGroup",
           "module": "params",
-          "line": 965,
+          "line": 967,
           "exported": true,
           "parent": null,
           "calls": [
@@ -5421,6 +5669,41 @@ export const GRAPH_DATA = {
       ]
     },
     {
+      "id": "rendererBackend",
+      "name": "rendererBackend",
+      "title": "rendererBackend",
+      "category": "其他",
+      "file": "src/core/rendererBackend.js",
+      "functions": [
+        {
+          "id": "rendererBackend:applyRendererSettings",
+          "name": "applyRendererSettings",
+          "module": "rendererBackend",
+          "line": 35,
+          "exported": true,
+          "parent": null,
+          "calls": [],
+          "externalCalls": [],
+          "paramRefs": []
+        },
+        {
+          "id": "rendererBackend:createRenderer",
+          "name": "createRenderer",
+          "module": "rendererBackend",
+          "line": 60,
+          "exported": true,
+          "parent": null,
+          "calls": [
+            "rendererBackend:applyRendererSettings"
+          ],
+          "externalCalls": [],
+          "paramRefs": [
+            "branches:mode"
+          ]
+        }
+      ]
+    },
+    {
       "id": "rng",
       "name": "rng",
       "title": "随机流",
@@ -5599,7 +5882,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:bindTransformDrag",
           "name": "bindTransformDrag",
           "module": "sceneManager",
-          "line": 134,
+          "line": 135,
           "exported": false,
           "parent": null,
           "calls": [
@@ -5613,7 +5896,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:start",
           "name": "start",
           "module": "sceneManager",
-          "line": 136,
+          "line": 137,
           "exported": false,
           "parent": "sceneManager:bindTransformDrag",
           "calls": [],
@@ -5624,7 +5907,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:end",
           "name": "end",
           "module": "sceneManager",
-          "line": 141,
+          "line": 142,
           "exported": false,
           "parent": "sceneManager:bindTransformDrag",
           "calls": [],
@@ -5635,23 +5918,26 @@ export const GRAPH_DATA = {
           "id": "sceneManager:constructor",
           "name": "constructor",
           "module": "sceneManager",
-          "line": 176,
+          "line": 183,
           "exported": false,
           "parent": null,
           "calls": [
+            "rendererBackend:applyRendererSettings",
             "sceneManager:bindTransformDrag",
             "materials:createSharedUniforms"
           ],
           "externalCalls": [
             "treeBuilder"
           ],
-          "paramRefs": []
+          "paramRefs": [
+            "scene:renderer"
+          ]
         },
         {
           "id": "sceneManager:_createStars",
           "name": "_createStars",
           "module": "sceneManager",
-          "line": 543,
+          "line": 559,
           "exported": false,
           "parent": null,
           "calls": [
@@ -5666,7 +5952,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:resize",
           "name": "resize",
           "module": "sceneManager",
-          "line": 598,
+          "line": 614,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -5677,7 +5963,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_ensureComposer",
           "name": "_ensureComposer",
           "module": "sceneManager",
-          "line": 616,
+          "line": 632,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -5690,7 +5976,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_renderFrame",
           "name": "_renderFrame",
           "module": "sceneManager",
-          "line": 650,
+          "line": 669,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -5701,7 +5987,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:ensureMaterials",
           "name": "ensureMaterials",
           "module": "sceneManager",
-          "line": 691,
+          "line": 718,
           "exported": false,
           "parent": null,
           "calls": [
@@ -5713,10 +5999,10 @@ export const GRAPH_DATA = {
           "paramRefs": []
         },
         {
-          "id": "sceneManager:updateMaterialParams",
-          "name": "updateMaterialParams",
+          "id": "sceneManager:_updateMaterials",
+          "name": "_updateMaterials",
           "module": "sceneManager",
-          "line": 714,
+          "line": 744,
           "exported": false,
           "parent": null,
           "calls": [
@@ -5726,10 +6012,10 @@ export const GRAPH_DATA = {
           "paramRefs": []
         },
         {
-          "id": "sceneManager:rebindCustomShader",
-          "name": "rebindCustomShader",
+          "id": "sceneManager:updateMaterialParams",
+          "name": "updateMaterialParams",
           "module": "sceneManager",
-          "line": 739,
+          "line": 764,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -5737,10 +6023,23 @@ export const GRAPH_DATA = {
           "paramRefs": []
         },
         {
+          "id": "sceneManager:rebindCustomShader",
+          "name": "rebindCustomShader",
+          "module": "sceneManager",
+          "line": 790,
+          "exported": false,
+          "parent": null,
+          "calls": [],
+          "externalCalls": [],
+          "paramRefs": [
+            "custom:*"
+          ]
+        },
+        {
           "id": "sceneManager:updateWind",
           "name": "updateWind",
           "module": "sceneManager",
-          "line": 773,
+          "line": 831,
           "exported": false,
           "parent": null,
           "calls": [
@@ -5755,11 +6054,10 @@ export const GRAPH_DATA = {
           "id": "sceneManager:build",
           "name": "build",
           "module": "sceneManager",
-          "line": 806,
+          "line": 864,
           "exported": false,
           "parent": null,
           "calls": [
-            "materials:updateMaterials",
             "mathUtils:boxInfo"
           ],
           "externalCalls": [
@@ -5774,7 +6072,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:setSkeletonVisible",
           "name": "setSkeletonVisible",
           "module": "sceneManager",
-          "line": 938,
+          "line": 996,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -5785,7 +6083,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_syncSkeletonVisibility",
           "name": "_syncSkeletonVisibility",
           "module": "sceneManager",
-          "line": 947,
+          "line": 1005,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -5796,7 +6094,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:setSkeletonOnly",
           "name": "setSkeletonOnly",
           "module": "sceneManager",
-          "line": 959,
+          "line": 1017,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -5807,7 +6105,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:setSkeletonLevelColors",
           "name": "setSkeletonLevelColors",
           "module": "sceneManager",
-          "line": 974,
+          "line": 1032,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -5818,7 +6116,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_updateSkeletonOverlay",
           "name": "_updateSkeletonOverlay",
           "module": "sceneManager",
-          "line": 1010,
+          "line": 1068,
           "exported": false,
           "parent": null,
           "calls": [
@@ -5833,7 +6131,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:colorOf",
           "name": "colorOf",
           "module": "sceneManager",
-          "line": 1026,
+          "line": 1084,
           "exported": false,
           "parent": "sceneManager:_updateSkeletonOverlay",
           "calls": [],
@@ -5844,7 +6142,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:setBranchTransformGizmo",
           "name": "setBranchTransformGizmo",
           "module": "sceneManager",
-          "line": 1126,
+          "line": 1184,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -5857,7 +6155,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_hideBranchGizmo",
           "name": "_hideBranchGizmo",
           "module": "sceneManager",
-          "line": 1148,
+          "line": 1206,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -5868,7 +6166,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:setForceTransformGizmo",
           "name": "setForceTransformGizmo",
           "module": "sceneManager",
-          "line": 1164,
+          "line": 1222,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -5881,7 +6179,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:setForcePicking",
           "name": "setForcePicking",
           "module": "sceneManager",
-          "line": 1184,
+          "line": 1242,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -5892,7 +6190,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_hideForceGizmo",
           "name": "_hideForceGizmo",
           "module": "sceneManager",
-          "line": 1189,
+          "line": 1247,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -5903,7 +6201,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_syncForceGizmo",
           "name": "_syncForceGizmo",
           "module": "sceneManager",
-          "line": 1196,
+          "line": 1254,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -5914,7 +6212,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_findForceItem",
           "name": "_findForceItem",
           "module": "sceneManager",
-          "line": 1217,
+          "line": 1275,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -5925,7 +6223,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_commitForceGizmo",
           "name": "_commitForceGizmo",
           "module": "sceneManager",
-          "line": 1228,
+          "line": 1286,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -5938,7 +6236,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_compensateForceFieldDuringDrag",
           "name": "_compensateForceFieldDuringDrag",
           "module": "sceneManager",
-          "line": 1273,
+          "line": 1331,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -5949,7 +6247,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_pickForceAt",
           "name": "_pickForceAt",
           "module": "sceneManager",
-          "line": 1294,
+          "line": 1352,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -5962,7 +6260,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_syncBranchGizmo",
           "name": "_syncBranchGizmo",
           "module": "sceneManager",
-          "line": 1330,
+          "line": 1388,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -5977,7 +6275,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_commitBranchGizmo",
           "name": "_commitBranchGizmo",
           "module": "sceneManager",
-          "line": 1398,
+          "line": 1456,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -5990,7 +6288,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_buildCullChunks",
           "name": "_buildCullChunks",
           "module": "sceneManager",
-          "line": 1451,
+          "line": 1509,
           "exported": false,
           "parent": null,
           "calls": [
@@ -6003,7 +6301,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:add",
           "name": "add",
           "module": "sceneManager",
-          "line": 1454,
+          "line": 1512,
           "exported": false,
           "parent": "sceneManager:_buildCullChunks",
           "calls": [
@@ -6017,7 +6315,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_disposeCullChunks",
           "name": "_disposeCullChunks",
           "module": "sceneManager",
-          "line": 1483,
+          "line": 1541,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6028,7 +6326,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_syncCullChunks",
           "name": "_syncCullChunks",
           "module": "sceneManager",
-          "line": 1501,
+          "line": 1559,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6039,7 +6337,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_meshTriangles",
           "name": "_meshTriangles",
           "module": "sceneManager",
-          "line": 1525,
+          "line": 1583,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6050,7 +6348,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_disposeLods",
           "name": "_disposeLods",
           "module": "sceneManager",
-          "line": 1539,
+          "line": 1597,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6061,7 +6359,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_ensureLod",
           "name": "_ensureLod",
           "module": "sceneManager",
-          "line": 1575,
+          "line": 1633,
           "exported": false,
           "parent": null,
           "calls": [
@@ -6080,7 +6378,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_buildLodInfo",
           "name": "_buildLodInfo",
           "module": "sceneManager",
-          "line": 1638,
+          "line": 1696,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6091,7 +6389,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:applyLod",
           "name": "applyLod",
           "module": "sceneManager",
-          "line": 1662,
+          "line": 1720,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6102,7 +6400,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:updateLod",
           "name": "updateLod",
           "module": "sceneManager",
-          "line": 1708,
+          "line": 1766,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6119,7 +6417,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:projectTwistGuide",
           "name": "projectTwistGuide",
           "module": "sceneManager",
-          "line": 1763,
+          "line": 1821,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6132,7 +6430,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:setSelection",
           "name": "setSelection",
           "module": "sceneManager",
-          "line": 1827,
+          "line": 1885,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6143,7 +6441,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:applyShadowFlags",
           "name": "applyShadowFlags",
           "module": "sceneManager",
-          "line": 1877,
+          "line": 1935,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6154,7 +6452,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_depthMaterialFor",
           "name": "_depthMaterialFor",
           "module": "sceneManager",
-          "line": 1908,
+          "line": 1968,
           "exported": false,
           "parent": null,
           "calls": [
@@ -6167,7 +6465,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:setSelectionBox",
           "name": "setSelectionBox",
           "module": "sceneManager",
-          "line": 1927,
+          "line": 1987,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6180,7 +6478,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:focusBox",
           "name": "focusBox",
           "module": "sceneManager",
-          "line": 1960,
+          "line": 2020,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6193,7 +6491,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:frameCamera",
           "name": "frameCamera",
           "module": "sceneManager",
-          "line": 1992,
+          "line": 2052,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6204,7 +6502,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:updateScene",
           "name": "updateScene",
           "module": "sceneManager",
-          "line": 2040,
+          "line": 2100,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6217,7 +6515,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:updateForceGizmos",
           "name": "updateForceGizmos",
           "module": "sceneManager",
-          "line": 2155,
+          "line": 2218,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6230,7 +6528,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:updateGrowth",
           "name": "updateGrowth",
           "module": "sceneManager",
-          "line": 2266,
+          "line": 2329,
           "exported": false,
           "parent": null,
           "calls": [
@@ -6243,7 +6541,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:setGrowthAuto",
           "name": "setGrowthAuto",
           "module": "sceneManager",
-          "line": 2278,
+          "line": 2341,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6254,7 +6552,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:setPlaying",
           "name": "setPlaying",
           "module": "sceneManager",
-          "line": 2289,
+          "line": 2352,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6265,7 +6563,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:getWindScreenBasis",
           "name": "getWindScreenBasis",
           "module": "sceneManager",
-          "line": 2305,
+          "line": 2368,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6278,7 +6576,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:applyWireframe",
           "name": "applyWireframe",
           "module": "sceneManager",
-          "line": 2334,
+          "line": 2397,
           "exported": false,
           "parent": null,
           "calls": [
@@ -6291,7 +6589,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:mk",
           "name": "mk",
           "module": "sceneManager",
-          "line": 2363,
+          "line": 2426,
           "exported": false,
           "parent": "sceneManager:applyWireframe",
           "calls": [],
@@ -6304,7 +6602,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:rebuildParticles",
           "name": "rebuildParticles",
           "module": "sceneManager",
-          "line": 2405,
+          "line": 2468,
           "exported": false,
           "parent": null,
           "calls": [
@@ -6321,7 +6619,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:updateParticles",
           "name": "updateParticles",
           "module": "sceneManager",
-          "line": 2432,
+          "line": 2496,
           "exported": false,
           "parent": null,
           "calls": [
@@ -6338,7 +6636,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:rebuildFall",
           "name": "rebuildFall",
           "module": "sceneManager",
-          "line": 2470,
+          "line": 2535,
           "exported": false,
           "parent": null,
           "calls": [
@@ -6354,7 +6652,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:updateFall",
           "name": "updateFall",
           "module": "sceneManager",
-          "line": 2503,
+          "line": 2569,
           "exported": false,
           "parent": null,
           "calls": [
@@ -6370,7 +6668,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_flowerFallParams",
           "name": "_flowerFallParams",
           "module": "sceneManager",
-          "line": 2524,
+          "line": 2591,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6386,7 +6684,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_flowerLitterParams",
           "name": "_flowerLitterParams",
           "module": "sceneManager",
-          "line": 2548,
+          "line": 2615,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6402,7 +6700,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_flowerCanopyGeometry",
           "name": "_flowerCanopyGeometry",
           "module": "sceneManager",
-          "line": 2566,
+          "line": 2633,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6413,7 +6711,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:rebuildFlowerFall",
           "name": "rebuildFlowerFall",
           "module": "sceneManager",
-          "line": 2577,
+          "line": 2644,
           "exported": false,
           "parent": null,
           "calls": [
@@ -6428,7 +6726,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:updateFlowerFall",
           "name": "updateFlowerFall",
           "module": "sceneManager",
-          "line": 2601,
+          "line": 2669,
           "exported": false,
           "parent": null,
           "calls": [
@@ -6444,7 +6742,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:rebuildFlowerLitter",
           "name": "rebuildFlowerLitter",
           "module": "sceneManager",
-          "line": 2627,
+          "line": 2696,
           "exported": false,
           "parent": null,
           "calls": [
@@ -6459,7 +6757,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:updateFlowerLitter",
           "name": "updateFlowerLitter",
           "module": "sceneManager",
-          "line": 2652,
+          "line": 2722,
           "exported": false,
           "parent": null,
           "calls": [
@@ -6475,7 +6773,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:rebuildLitter",
           "name": "rebuildLitter",
           "module": "sceneManager",
-          "line": 2686,
+          "line": 2757,
           "exported": false,
           "parent": null,
           "calls": [
@@ -6491,7 +6789,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:updateLitter",
           "name": "updateLitter",
           "module": "sceneManager",
-          "line": 2711,
+          "line": 2783,
           "exported": false,
           "parent": null,
           "calls": [
@@ -6507,7 +6805,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:makeImpostor",
           "name": "makeImpostor",
           "module": "sceneManager",
-          "line": 2753,
+          "line": 2826,
           "exported": false,
           "parent": null,
           "calls": [
@@ -6522,7 +6820,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:setImpostorPreview",
           "name": "setImpostorPreview",
           "module": "sceneManager",
-          "line": 2805,
+          "line": 2882,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6535,7 +6833,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_rehideForImpostorPreview",
           "name": "_rehideForImpostorPreview",
           "module": "sceneManager",
-          "line": 2901,
+          "line": 2980,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6546,7 +6844,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:updateImpostorPreview",
           "name": "updateImpostorPreview",
           "module": "sceneManager",
-          "line": 2932,
+          "line": 3011,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6559,7 +6857,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:clearImpostorPreview",
           "name": "clearImpostorPreview",
           "module": "sceneManager",
-          "line": 2970,
+          "line": 3049,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6570,7 +6868,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:_getFruitExportMaterial",
           "name": "_getFruitExportMaterial",
           "module": "sceneManager",
-          "line": 3008,
+          "line": 3087,
           "exported": false,
           "parent": null,
           "calls": [
@@ -6584,10 +6882,26 @@ export const GRAPH_DATA = {
           ]
         },
         {
+          "id": "sceneManager:_exportMaterials",
+          "name": "_exportMaterials",
+          "module": "sceneManager",
+          "line": 3120,
+          "exported": false,
+          "parent": null,
+          "calls": [
+            "materials:createBarkMaterial",
+            "materials:createLeafMaterial",
+            "materials:createFlowerMaterial",
+            "materials:updateMaterials"
+          ],
+          "externalCalls": [],
+          "paramRefs": []
+        },
+        {
           "id": "sceneManager:buildExportGroup",
           "name": "buildExportGroup",
           "module": "sceneManager",
-          "line": 3036,
+          "line": 3135,
           "exported": false,
           "parent": null,
           "calls": [
@@ -6607,7 +6921,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:add#2",
           "name": "add",
           "module": "sceneManager",
-          "line": 3039,
+          "line": 3141,
           "exported": false,
           "parent": "sceneManager:buildExportGroup",
           "calls": [],
@@ -6620,7 +6934,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:exportGLB",
           "name": "exportGLB",
           "module": "sceneManager",
-          "line": 3071,
+          "line": 3175,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6631,7 +6945,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:exportOBJ",
           "name": "exportOBJ",
           "module": "sceneManager",
-          "line": 3080,
+          "line": 3184,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6642,7 +6956,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:prepareExport",
           "name": "prepareExport",
           "module": "sceneManager",
-          "line": 3097,
+          "line": 3201,
           "exported": false,
           "parent": null,
           "calls": [
@@ -6657,7 +6971,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:screenshot",
           "name": "screenshot",
           "module": "sceneManager",
-          "line": 3116,
+          "line": 3220,
           "exported": false,
           "parent": null,
           "calls": [
@@ -6670,7 +6984,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:tick",
           "name": "tick",
           "module": "sceneManager",
-          "line": 3144,
+          "line": 3248,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -6681,7 +6995,7 @@ export const GRAPH_DATA = {
           "id": "sceneManager:dispose",
           "name": "dispose",
           "module": "sceneManager",
-          "line": 3197,
+          "line": 3303,
           "exported": false,
           "parent": null,
           "calls": [
@@ -8617,7 +8931,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:getNodeModel",
           "name": "getNodeModel",
           "module": "treeStore",
-          "line": 126,
+          "line": 128,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -8628,7 +8942,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:setNodeModel",
           "name": "setNodeModel",
           "module": "treeStore",
-          "line": 142,
+          "line": 144,
           "exported": true,
           "parent": null,
           "calls": [
@@ -8642,7 +8956,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:refreshSelectionRanges",
           "name": "refreshSelectionRanges",
           "module": "treeStore",
-          "line": 169,
+          "line": 171,
           "exported": false,
           "parent": null,
           "calls": [
@@ -8656,7 +8970,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:describeSelection",
           "name": "describeSelection",
           "module": "treeStore",
-          "line": 187,
+          "line": 189,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -8667,7 +8981,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:selectNodes",
           "name": "selectNodes",
           "module": "treeStore",
-          "line": 223,
+          "line": 225,
           "exported": true,
           "parent": null,
           "calls": [
@@ -8681,7 +8995,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:selectGroup",
           "name": "selectGroup",
           "module": "treeStore",
-          "line": 255,
+          "line": 257,
           "exported": true,
           "parent": null,
           "calls": [
@@ -8695,7 +9009,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:clearSelection",
           "name": "clearSelection",
           "module": "treeStore",
-          "line": 277,
+          "line": 279,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -8706,7 +9020,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:toggleNodePanel",
           "name": "toggleNodePanel",
           "module": "treeStore",
-          "line": 288,
+          "line": 290,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -8717,7 +9031,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:openNodePanel",
           "name": "openNodePanel",
           "module": "treeStore",
-          "line": 294,
+          "line": 296,
           "exported": true,
           "parent": null,
           "calls": [
@@ -8730,7 +9044,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:setSelectionMode",
           "name": "setSelectionMode",
           "module": "treeStore",
-          "line": 305,
+          "line": 307,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -8741,7 +9055,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:focusSelection",
           "name": "focusSelection",
           "module": "treeStore",
-          "line": 310,
+          "line": 312,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -8752,7 +9066,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:focusNode",
           "name": "focusNode",
           "module": "treeStore",
-          "line": 319,
+          "line": 321,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -8763,7 +9077,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:updateSelectionBox",
           "name": "updateSelectionBox",
           "module": "treeStore",
-          "line": 333,
+          "line": 335,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -8774,7 +9088,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:selectionSignature",
           "name": "selectionSignature",
           "module": "treeStore",
-          "line": 366,
+          "line": 368,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -8785,7 +9099,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:snapshot",
           "name": "snapshot",
           "module": "treeStore",
-          "line": 399,
+          "line": 401,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -8796,7 +9110,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:pushUndo",
           "name": "pushUndo",
           "module": "treeStore",
-          "line": 412,
+          "line": 414,
           "exported": true,
           "parent": null,
           "calls": [
@@ -8809,7 +9123,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:undo",
           "name": "undo",
           "module": "treeStore",
-          "line": 432,
+          "line": 434,
           "exported": true,
           "parent": null,
           "calls": [
@@ -8823,7 +9137,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:redo",
           "name": "redo",
           "module": "treeStore",
-          "line": 445,
+          "line": 447,
           "exported": true,
           "parent": null,
           "calls": [
@@ -8837,7 +9151,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:setSeed",
           "name": "setSeed",
           "module": "treeStore",
-          "line": 471,
+          "line": 473,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -8851,7 +9165,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:randomizeSeed",
           "name": "randomizeSeed",
           "module": "treeStore",
-          "line": 481,
+          "line": 483,
           "exported": true,
           "parent": null,
           "calls": [
@@ -8872,7 +9186,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:regenerateNow",
           "name": "regenerateNow",
           "module": "treeStore",
-          "line": 493,
+          "line": 495,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -8883,7 +9197,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:doAutoGenerate",
           "name": "doAutoGenerate",
           "module": "treeStore",
-          "line": 513,
+          "line": 515,
           "exported": true,
           "parent": null,
           "calls": [
@@ -8913,7 +9227,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:pickBarkOverrides",
           "name": "pickBarkOverrides",
           "module": "treeStore",
-          "line": 551,
+          "line": 553,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -8926,7 +9240,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:doApplyPreset",
           "name": "doApplyPreset",
           "module": "treeStore",
-          "line": 580,
+          "line": 582,
           "exported": true,
           "parent": null,
           "calls": [
@@ -8946,7 +9260,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:applyClassification",
           "name": "applyClassification",
           "module": "treeStore",
-          "line": 605,
+          "line": 607,
           "exported": true,
           "parent": null,
           "calls": [
@@ -8966,7 +9280,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:applyLeafCard",
           "name": "applyLeafCard",
           "module": "treeStore",
-          "line": 632,
+          "line": 634,
           "exported": true,
           "parent": null,
           "calls": [
@@ -8983,7 +9297,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:imageAspect",
           "name": "imageAspect",
           "module": "treeStore",
-          "line": 664,
+          "line": 666,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -8994,7 +9308,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:fitLeafCardToTexture",
           "name": "fitLeafCardToTexture",
           "module": "treeStore",
-          "line": 680,
+          "line": 682,
           "exported": true,
           "parent": null,
           "calls": [
@@ -9011,7 +9325,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:fitFlowerCardToTexture",
           "name": "fitFlowerCardToTexture",
           "module": "treeStore",
-          "line": 694,
+          "line": 696,
           "exported": true,
           "parent": null,
           "calls": [
@@ -9027,7 +9341,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:applyFlowerCard",
           "name": "applyFlowerCard",
           "module": "treeStore",
-          "line": 709,
+          "line": 711,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -9040,7 +9354,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:randomFlowerCard",
           "name": "randomFlowerCard",
           "module": "treeStore",
-          "line": 731,
+          "line": 733,
           "exported": true,
           "parent": null,
           "calls": [
@@ -9053,7 +9367,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:randomizeFoliageAssets",
           "name": "randomizeFoliageAssets",
           "module": "treeStore",
-          "line": 755,
+          "line": 757,
           "exported": true,
           "parent": null,
           "calls": [
@@ -9072,7 +9386,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:doGenerateImpostor",
           "name": "doGenerateImpostor",
           "module": "treeStore",
-          "line": 822,
+          "line": 824,
           "exported": true,
           "parent": null,
           "calls": [
@@ -9085,7 +9399,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:setActiveTab",
           "name": "setActiveTab",
           "module": "treeStore",
-          "line": 835,
+          "line": 837,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -9096,7 +9410,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:setImpostorPreview",
           "name": "setImpostorPreview",
           "module": "treeStore",
-          "line": 848,
+          "line": 850,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -9107,7 +9421,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:downloadImpostor",
           "name": "downloadImpostor",
           "module": "treeStore",
-          "line": 868,
+          "line": 870,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -9118,7 +9432,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:randomLeafCard",
           "name": "randomLeafCard",
           "module": "treeStore",
-          "line": 893,
+          "line": 895,
           "exported": true,
           "parent": null,
           "calls": [
@@ -9131,7 +9445,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:randomClassification",
           "name": "randomClassification",
           "module": "treeStore",
-          "line": 905,
+          "line": 907,
           "exported": true,
           "parent": null,
           "calls": [
@@ -9144,7 +9458,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:setWindIntensity",
           "name": "setWindIntensity",
           "module": "treeStore",
-          "line": 913,
+          "line": 915,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -9160,7 +9474,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:randomizeWind",
           "name": "randomizeWind",
           "module": "treeStore",
-          "line": 929,
+          "line": 931,
           "exported": true,
           "parent": null,
           "calls": [
@@ -9177,7 +9491,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:setWindAuto",
           "name": "setWindAuto",
           "module": "treeStore",
-          "line": 942,
+          "line": 944,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -9193,7 +9507,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:resetSection",
           "name": "resetSection",
           "module": "treeStore",
-          "line": 956,
+          "line": 958,
           "exported": true,
           "parent": null,
           "calls": [
@@ -9208,7 +9522,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:importParamsJSON",
           "name": "importParamsJSON",
           "module": "treeStore",
-          "line": 984,
+          "line": 986,
           "exported": true,
           "parent": null,
           "calls": [
@@ -9222,7 +9536,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:loadFtreeHistory",
           "name": "loadFtreeHistory",
           "module": "treeStore",
-          "line": 1000,
+          "line": 1002,
           "exported": true,
           "parent": null,
           "calls": [],
@@ -9233,7 +9547,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:persistFtreeHistory",
           "name": "persistFtreeHistory",
           "module": "treeStore",
-          "line": 1010,
+          "line": 1012,
           "exported": false,
           "parent": null,
           "calls": [],
@@ -9244,7 +9558,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:pushFtreeHistory",
           "name": "pushFtreeHistory",
           "module": "treeStore",
-          "line": 1017,
+          "line": 1019,
           "exported": false,
           "parent": null,
           "calls": [
@@ -9257,7 +9571,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:clearFtreeHistory",
           "name": "clearFtreeHistory",
           "module": "treeStore",
-          "line": 1026,
+          "line": 1028,
           "exported": true,
           "parent": null,
           "calls": [
@@ -9270,7 +9584,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:doExportFtree",
           "name": "doExportFtree",
           "module": "treeStore",
-          "line": 1036,
+          "line": 1038,
           "exported": true,
           "parent": null,
           "calls": [
@@ -9286,7 +9600,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:doImportFtree",
           "name": "doImportFtree",
           "module": "treeStore",
-          "line": 1055,
+          "line": 1057,
           "exported": true,
           "parent": null,
           "calls": [
@@ -9301,7 +9615,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:loadTemplates",
           "name": "loadTemplates",
           "module": "treeStore",
-          "line": 1080,
+          "line": 1082,
           "exported": true,
           "parent": null,
           "calls": [
@@ -9314,7 +9628,7 @@ export const GRAPH_DATA = {
           "id": "treeStore:suggestTemplateName",
           "name": "suggestTemplateName",
           "module": "treeStore",
-          "line": 1094,
+          "line": 1096,
           "exported": true,
           "parent": null,
           "calls": [
@@ -9524,6 +9838,10 @@ export const GRAPH_DATA = {
     {
       "from": "branchDamage:buildFractureGeometry",
       "to": "branchDamage:mixRgb"
+    },
+    {
+      "from": "branchDamage:buildFractureGeometry",
+      "to": "branchDamage:rimRadiusAt"
     },
     {
       "from": "branchDamage:buildFractureGeometry",
@@ -9894,6 +10212,82 @@ export const GRAPH_DATA = {
       "to": "materials:applyTreeShader"
     },
     {
+      "from": "materialsGPU:refreshFromLegacy",
+      "to": "materialsGPU:whiteTexture"
+    },
+    {
+      "from": "materialsGPU:syncGpuUniforms",
+      "to": "materialsGPU:syncOne"
+    },
+    {
+      "from": "materialsGPU:buildGpuMaterial",
+      "to": "materialsGPU:createNodeUniforms"
+    },
+    {
+      "from": "materialsGPU:buildGpuMaterial",
+      "to": "materialsGPU:transformedUv"
+    },
+    {
+      "from": "materialsGPU:buildGpuMaterial",
+      "to": "materialsGPU:whiteTexture"
+    },
+    {
+      "from": "materialsGPU:buildGpuMaterial",
+      "to": "materialsGPU:buildPositionNodes"
+    },
+    {
+      "from": "materialsGPU:buildGpuMaterial",
+      "to": "materialsGPU:refreshFromLegacy"
+    },
+    {
+      "from": "materialsGPU:buildGpuMaterial",
+      "to": "materialsGPU:syncOne"
+    },
+    {
+      "from": "materialsGPU:createBarkMaterialGPU",
+      "to": "materialsGPU:buildGpuMaterial"
+    },
+    {
+      "from": "materialsGPU:createLeafMaterialGPU",
+      "to": "materialsGPU:buildGpuMaterial"
+    },
+    {
+      "from": "materialsGPU:createFlowerMaterialGPU",
+      "to": "materialsGPU:buildGpuMaterial"
+    },
+    {
+      "from": "materialsGPU:updateOneGpu",
+      "to": "materialsGPU:refreshFromLegacy"
+    },
+    {
+      "from": "materialsGPU:updateOneGpu",
+      "to": "materialsGPU:syncOne"
+    },
+    {
+      "from": "materialsGPU:updateBarkMaterialGPU",
+      "to": "materialsGPU:updateOneGpu"
+    },
+    {
+      "from": "materialsGPU:updateLeafMaterialGPU",
+      "to": "materialsGPU:updateOneGpu"
+    },
+    {
+      "from": "materialsGPU:updateFlowerMaterialGPU",
+      "to": "materialsGPU:updateOneGpu"
+    },
+    {
+      "from": "materialsGPU:updateMaterialsGPU",
+      "to": "materialsGPU:updateBarkMaterialGPU"
+    },
+    {
+      "from": "materialsGPU:updateMaterialsGPU",
+      "to": "materialsGPU:updateLeafMaterialGPU"
+    },
+    {
+      "from": "materialsGPU:updateMaterialsGPU",
+      "to": "materialsGPU:updateFlowerMaterialGPU"
+    },
+    {
       "from": "mathUtils:smoothstep",
       "to": "mathUtils:clamp01"
     },
@@ -10030,6 +10424,10 @@ export const GRAPH_DATA = {
       "to": "paramDocs:docFor"
     },
     {
+      "from": "rendererBackend:createRenderer",
+      "to": "rendererBackend:applyRendererSettings"
+    },
+    {
       "from": "rng:mixSeed",
       "to": "rng:hashString"
     },
@@ -10048,6 +10446,10 @@ export const GRAPH_DATA = {
     {
       "from": "sceneManager:bindTransformDrag",
       "to": "sceneManager:end"
+    },
+    {
+      "from": "sceneManager:constructor",
+      "to": "rendererBackend:applyRendererSettings"
     },
     {
       "from": "sceneManager:constructor",
@@ -10074,16 +10476,12 @@ export const GRAPH_DATA = {
       "to": "materials:createFlowerMaterial"
     },
     {
-      "from": "sceneManager:updateMaterialParams",
+      "from": "sceneManager:_updateMaterials",
       "to": "materials:updateMaterials"
     },
     {
       "from": "sceneManager:updateWind",
       "to": "materials:updateWindUniforms"
-    },
-    {
-      "from": "sceneManager:build",
-      "to": "materials:updateMaterials"
     },
     {
       "from": "sceneManager:build",
@@ -10188,6 +10586,22 @@ export const GRAPH_DATA = {
     {
       "from": "sceneManager:_getFruitExportMaterial",
       "to": "fruitMaterial:createFruitExportMaterial"
+    },
+    {
+      "from": "sceneManager:_exportMaterials",
+      "to": "materials:createBarkMaterial"
+    },
+    {
+      "from": "sceneManager:_exportMaterials",
+      "to": "materials:createLeafMaterial"
+    },
+    {
+      "from": "sceneManager:_exportMaterials",
+      "to": "materials:createFlowerMaterial"
+    },
+    {
+      "from": "sceneManager:_exportMaterials",
+      "to": "materials:updateMaterials"
     },
     {
       "from": "sceneManager:buildExportGroup",
@@ -12053,6 +12467,21 @@ export const GRAPH_DATA = {
       "group": "branches",
       "key": "spread",
       "to": "presets:autoGenerate"
+    },
+    {
+      "group": "branches",
+      "key": "mode",
+      "to": "rendererBackend:createRenderer"
+    },
+    {
+      "group": "scene",
+      "key": "renderer",
+      "to": "sceneManager:constructor"
+    },
+    {
+      "group": "custom",
+      "key": "*",
+      "to": "sceneManager:rebindCustomShader"
     },
     {
       "group": "wind",

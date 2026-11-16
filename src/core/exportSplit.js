@@ -92,6 +92,23 @@ export function barkExportParts(geometry, nodes, merge = false, mergeRoots = fal
 }
 
 /**
+ * 统一读取"普通属性 / 交错属性 (InterleavedBufferAttribute)"的底层数组视图。
+ *
+ * WebGPU 渲染路径会把 aWind/aPhase/aOrigin/aGrow/aNodeId/aEpiphyte 打包进一个
+ * InterleavedBuffer (顶点缓冲上限只有 8), 这些属性没有 .array。这里用 stride/offset
+ * 做兼容, 保证导出拆分在两种后端下都能工作。
+ *
+ * @param {import('three').BufferAttribute|import('three').InterleavedBufferAttribute} attr
+ * @returns {{arr: ArrayLike<number>, stride: number, offset: number, size: number}}
+ */
+function attrView(attr) {
+  if (attr && attr.isInterleavedBufferAttribute) {
+    return { arr: attr.data.array, stride: attr.data.stride, offset: attr.offset, size: attr.itemSize }
+  }
+  return { arr: attr.array, stride: attr.itemSize, offset: 0, size: attr.itemSize }
+}
+
+/**
  * 按节点分组拆分合并树皮几何 (核心实现)。
  *
  * 流程:
@@ -129,7 +146,8 @@ export function splitBarkGeometryByNodeGroups(geometry, nodes, opts = {}) {
   // 非索引几何: 顶点按"每 3 个一组"当三角形处理 (与 three 的约定一致)
   const triCount = srcIndex ? Math.floor(srcIndex.length / 3) : Math.floor((geometry.attributes.position.count || 0) / 3)
   const attrNames = Object.keys(geometry.attributes)
-  const idValues = idAttr ? idAttr.array : null
+  const attrViews = Object.fromEntries(attrNames.map((n) => [n, attrView(geometry.attributes[n])]))
+  const idValues = idAttr ? attrViews.aNodeId : null
   // 没有 aNodeId 就无法判定归属 -> 放弃拆分 (调用方会退回整体导出)
   if (!triCount || !idValues) return []
 
@@ -156,7 +174,7 @@ export function splitBarkGeometryByNodeGroups(geometry, nodes, opts = {}) {
     const b = srcIndex ? srcIndex[t * 3 + 1] : t * 3 + 1
     const c = srcIndex ? srcIndex[t * 3 + 2] : t * 3 + 2
     // 整片三角形跟随第一个角顶点所属节点
-    const label = labelOf(idValues[a])
+    const label = labelOf(idValues.arr[a * idValues.stride + idValues.offset])
     const g = ensureGroup(label)
     const corners = [a, b, c]
     for (const vi of corners) {
@@ -168,10 +186,8 @@ export function splitBarkGeometryByNodeGroups(geometry, nodes, opts = {}) {
         // 逐分量复制该顶点的所有属性 (uv / color / normal / aNodeId …),
         // 用 attr.itemSize 而不是写死 3, 以兼容 2 分量(uv)与 4 分量(color)
         for (const name of attrNames) {
-          const attr = geometry.attributes[name]
-          const size = attr.itemSize
-          const arr = attr.array
-          for (let k = 0; k < size; k++) g.attrs[name].push(arr[vi * size + k])
+          const v = attrViews[name]
+          for (let k = 0; k < v.size; k++) g.attrs[name].push(v.arr[vi * v.stride + v.offset + k])
         }
       }
       g.indices.push(ni)
@@ -191,8 +207,9 @@ export function splitBarkGeometryByNodeGroups(geometry, nodes, opts = {}) {
       for (const name of attrNames) {
         const srcAttr = geometry.attributes[name]
         const values = g.attrs[name]
-        // 用源数组的构造函数重建, 保持 Float32Array / Uint8Array 等原始精度与类型
-        const Ctor = srcAttr.array.constructor
+        // 用源数组的构造函数重建, 保持 Float32Array / Uint8Array 等原始精度与类型;
+        // 交错属性 (WebGPU 路径) 统一落回 Float32Array。
+        const Ctor = srcAttr.isInterleavedBufferAttribute ? Float32Array : srcAttr.array.constructor
         const attr = new THREE.BufferAttribute(Ctor.from(values), srcAttr.itemSize, srcAttr.normalized)
         out.setAttribute(name, attr)
       }

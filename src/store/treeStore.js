@@ -69,6 +69,8 @@ export const state = reactive({
   impostorPreview: false,
   // 着色器编译错误文本 (空串 = 正常); 由场景层捕获后写入, UI 显示红色提示条
   shaderError: '',
+  // 实际使用的渲染后端 (WebGPU / WebGL 2 (Node) / WebGL), 由 Viewport 初始化后写入
+  renderBackend: '',
   // busy: 有重建/导出等长任务在跑; ready: 首帧已渲染完成 (两者控制 loading 遮罩)
   busy: false,
   ready: false,

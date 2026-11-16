@@ -760,6 +760,8 @@ export function defaultParams() {
      * 颜色一律是 CSS hex ('#rrggbb'), 由 sceneManager 转成 THREE.Color。 */
     // ---------------- 场景 ----------------
     scene: {
+      // 渲染后端: auto = 优先 WebGPU, 不可用自动回退 WebGL; 改动后需刷新页面生效
+      renderer: 'auto',    // auto | webgpu | webgl
       env: 'custom',       // 最近一次应用的环境预设 (daylight/forest/...), 手动微调后保留名字
       background: '#111820',
       skyTop: '#2a3c52',

@@ -11,6 +11,10 @@
   </Section>
 
   <Section title="场景" hint="Scene">
+    <SelectRow label="渲染后端" v-model="s.renderer" :options="renderOptions" />
+    <p class="muted" style="margin: 0 0 6px">
+      当前: {{ state.renderBackend || '初始化中…' }}。auto 会优先 WebGPU，不可用时自动回退 WebGL；切换后需刷新页面生效。
+    </p>
     <ToggleRow label="渐变天空" v-model="s.gradient" />
     <ColorRow label="背景色" v-model="s.background" />
     <template v-if="s.gradient">
@@ -48,6 +52,9 @@
   </Section>
 
   <Section title="后处理" hint="Post FX" :default-collapsed="true">
+    <p v-if="isNodeRenderer" class="muted" style="margin: 0 0 6px">
+      WebGPU 渲染后端暂不支持 Bloom / DOF（后处理仍依赖 WebGL 管线）；如需这两个效果，请把「渲染后端」切到 WebGL 并刷新。
+    </p>
     <ToggleRow label="泛光 (Bloom)" v-model="s.bloomEnabled"
       hint="让亮部渗出光晕, 逆光叶片/天空更通透" />
     <template v-if="s.bloomEnabled">
@@ -82,6 +89,13 @@ const wireOptions = [
   { value: 'overlay', label: '实体 + 线框' },
   { value: 'only', label: '仅线框 (看三角面)' },
 ]
+const renderOptions = [
+  { value: 'auto', label: '自动 (优先 WebGPU)' },
+  { value: 'webgpu', label: 'WebGPU' },
+  { value: 'webgl', label: 'WebGL' },
+]
+// 非经典 WebGL 后端 (WebGPU / WebGL2-Node) 不支持 EffectComposer 与自定义 GLSL
+const isNodeRenderer = computed(() => !!state.renderBackend && state.renderBackend !== 'WebGL')
 const playing = computed(() => state.playing)
 
 function useEnv(id) {

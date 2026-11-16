@@ -185,14 +185,33 @@ function playGrowth() {
 }
 
 let scene = null
+let unmounted = false
 let rebuildTimer = 0
 let rebuildQueued = false
 let rebuildFrame = false
 let fpsFrames = 0
 let lastCustomCode = ''
 
-onMounted(() => {
+onMounted(async () => {
   startBridgeClient()
+  // 渲染器初始化是异步的 (WebGPU 要 await device 就绪), 所以 onMounted 也改成 async。
+  // createRenderer 内部已处理"WebGPU 不可用 -> 回退 WebGL", 不会 throw。
+  const { createRenderer } = await import('../core/rendererBackend.js')
+  const backend = await createRenderer({ mode: (state.params.scene && state.params.scene.renderer) || 'auto' })
+  let gpuMaterials = null
+  if (backend.isNodeRenderer) {
+    // 只有 Node 渲染路径才需要 TSL 材质; 动态 import 避免 WebGL 用户白下载这份代码。
+    try {
+      gpuMaterials = await import('../core/materialsGPU.js')
+    } catch (e) {
+      console.warn('[fast-tree] TSL 材质加载失败, 将退回经典材质 (风场/苔藓等注入效果会失效):', e)
+    }
+  }
+  if (unmounted) {
+    try { backend.renderer.dispose() } catch { /* ignore */ }
+    return
+  }
+  state.renderBackend = backend.backendName
   scene = new TreeScene(host.value, {
     onStats: (s) => { state.stats = s; state.ready = true },
     onShaderError: (msg) => { state.shaderError = msg },
@@ -228,24 +247,30 @@ onMounted(() => {
       // 视口点选力场 -> 同步面板下拉框与变换轴
       if (id && state.activeForceId !== id) state.activeForceId = id
     },
+  }, {
+    renderer: backend.renderer,
+    isNodeRenderer: backend.isNodeRenderer,
+    isWebGPU: backend.isWebGPU,
+    gpuMaterials,
+    backendName: backend.backendName,
   })
 
-  sceneApi.exportGLB = (name) => scene.exportGLB(name)
-  sceneApi.exportOBJ = (name) => scene.exportOBJ(name)
-  sceneApi.screenshot = (name) => scene.screenshot(name)
-  sceneApi.prepareExport = (kind, name) => scene.prepareExport(kind, name)
-  sceneApi.frameCamera = () => scene.frameCamera()
-  sceneApi.focusBox = (min, max) => scene.focusBox(min, max)
+  sceneApi.exportGLB = (name) => (scene ? scene.exportGLB(name) : null)
+  sceneApi.exportOBJ = (name) => (scene ? scene.exportOBJ(name) : null)
+  sceneApi.screenshot = (name) => (scene ? scene.screenshot(name) : null)
+  sceneApi.prepareExport = (kind, name) => (scene ? scene.prepareExport(kind, name) : null)
+  sceneApi.frameCamera = () => { if (scene) scene.frameCamera() }
+  sceneApi.focusBox = (min, max) => { if (scene) scene.focusBox(min, max) }
   sceneApi.setSkeletonVisible = (v) => { if (scene) scene.setSkeletonVisible(!!v) }
-  sceneApi.getWindScreenBasis = () => scene.getWindScreenBasis()
+  sceneApi.getWindScreenBasis = () => (scene ? scene.getWindScreenBasis() : null)
   sceneApi.getTwistScreen = (target, level) => (scene ? scene.projectTwistGuide(target, level) : null)
   sceneApi.setControlsEnabled = (v) => { if (scene) scene.controls.enabled = !!v }
   sceneApi.setBranchTransformGizmo = (opts) => { if (scene) scene.setBranchTransformGizmo(opts) }
   sceneApi.setForceTransformGizmo = (opts) => { if (scene) scene.setForceTransformGizmo(opts) }
   sceneApi.setForcePicking = (v) => { if (scene) scene.setForcePicking(!!v) }
   sceneApi.updateForceGizmos = () => { if (scene) scene.updateForceGizmos(state.params.forces) }
-sceneApi.makeImpostor = (opts) => scene.makeImpostor(opts)
-sceneApi.setImpostorModel = (res) => scene.setImpostorPreview(res)
+  sceneApi.makeImpostor = (opts) => (scene ? scene.makeImpostor(opts) : null)
+  sceneApi.setImpostorModel = (res) => { if (scene) scene.setImpostorPreview(res) }
   // 验证/脚本用的同步重建 (应用内重建走 rAF, 后台标签页会被节流)
   sceneApi.rebuildNow = (frame = true) => {
     if (!scene) return null
@@ -285,6 +310,7 @@ sceneApi.setImpostorModel = (res) => scene.setImpostorPreview(res)
 })
 
 onBeforeUnmount(() => {
+  unmounted = true
   scene?.dispose()
   scene = null
 })
