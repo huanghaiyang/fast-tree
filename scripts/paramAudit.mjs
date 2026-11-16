@@ -235,7 +235,8 @@ export const CONDITIONS = {
 // 竹子特有参数: 只有 bamboo.enabled 打开时才参与展开 (其它树种保持 false = 零开销),
 // 所以审计每个子参数前先把开关打开, 否则永远比不出几何差异。
 // 'bamboo.enabled' 本身不设条件 —— 它就是要被扰动的开关。
-for (const k of ['culms', 'height', 'culmRadius', 'baseHeight', 'tilt', 'nodeCount',
+for (const k of ['culms', 'height', 'culmRadius', 'baseHeight', 'rootSpread', 'rootScatter',
+  'rootStagger', 'tilt', 'nodeCount',
   'branchStart', 'twigs', 'twigLength', 'leafPerTwig', 'leafSize', 'leafWidth', 'leafDroop']) {
   CONDITIONS['bamboo.' + k] = { 'bamboo.enabled': true }
 }

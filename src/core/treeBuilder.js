@@ -727,8 +727,17 @@ export function buildTree(params, options = {}) {
       const length = Math.max(0.01,
         parentLength * cfg.lengthRatio * rng.vary(cfg.lengthVariance) * apical * (branchParams.lengthScale || 1))
       // 基部半径 = 父枝该处半径 × 该层半径比 × 方差 × 全局半径缩放; 下限 0.8mm。
-      const radius0 = Math.max(0.0008,
+      // cfg.radiusAbsolute (米) 是"绝对半径"覆盖: 竹子这类"竿径固定、但竿基散落在
+      // 根盘不同半径处"的情况需要它 —— 否则竿径会跟着贴附点半径一起变粗变细
+      // (实测同一丛里最粗/最细的竿能差 4 倍)。上限仍夹在父枝局部半径的 92% 以内,
+      // 保证开口不会比父枝周长还大 (蒙皮窗口按子枝根部直径开孔)。
+      let radius0 = Math.max(0.0008,
         fr.radius * cfg.radiusRatio * rng.vary(cfg.radiusVariance) * (branchParams.radiusScale || 1))
+      if (cfg.radiusAbsolute) {
+        radius0 = Math.max(0.0008,
+          Math.min(cfg.radiusAbsolute * rng.vary(cfg.radiusVariance), fr.radius * 0.92) *
+          (branchParams.radiusScale || 1))
+      }
       const radius1 = Math.max(0.0005, radius0 * cfg.taper)
       const dir = childDirection(rng, fr.dir, cfg, k, P)
       // 扭转跟随: 用完整 roll (基础 twist + 扭曲曲线句柄), 不只是 profileRoll。
@@ -1359,8 +1368,10 @@ export function buildTree(params, options = {}) {
   const trunkR1 = Math.max(0.003, t.baseRadius * t.taper)
   // 树干骨架: 从地面原点 (0,0,0) 起长, 长度即树高。
   // gravity 传 0 —— 树干的"直立/倾斜"由 lean 决定, 若再叠加重力会出现双重弯折。
+  // t.baseY (米, 负值=埋入地下) 给"根盘埋在地下、竿基各自破土"这类结构用 (竹子)。
+  const trunkBaseY = Number(t.baseY) || 0
   const trunkFramesAll = growFrames(trunkRng, {
-    startPos: new THREE.Vector3(0, 0, 0),
+    startPos: new THREE.Vector3(0, trunkBaseY, 0),
     startDir: trunkDir,
     length: t.height,
     radius0: trunkR0,
@@ -1446,7 +1457,7 @@ export function buildTree(params, options = {}) {
       // 树干的风曲线指数 1.9 (>枝的 1.5): 前 90% 高度基本笔直, 只在近梢部明显弯曲。
       windCurve: 1.9,
       grow: LEVEL_GROW[0],
-      origin: new THREE.Vector3(0, 0, 0),
+      origin: new THREE.Vector3(0, trunkBaseY, 0),
       phase: trunkRng.range(0, Math.PI * 2),
       // 把 flare/knots/分叉收细统一挂成"半径调制器", 蒙皮时逐环调用。
       radiusModifier: trunkModifier,

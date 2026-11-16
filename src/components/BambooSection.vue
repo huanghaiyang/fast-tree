@@ -6,7 +6,13 @@
       hint="成熟株的竿高; 生长阶段会再按年龄缩放" />
     <SliderRow label="竿基半径 (m)" v-model="B.culmRadius" :min="0.01" :max="0.12" :step="0.002" unit="m" />
     <SliderRow label="丛基高度 (m)" v-model="B.baseHeight" :min="0.1" :max="1.2" :step="0.05" unit="m"
-      hint="竿子从这段矮茎（地下根茎隆起）上分出；太高会看出是一根主干" />
+      hint="地下根茎堆（根盘）的高度；整块埋在地面以下，只决定竿基的出土深度" />
+    <SliderRow label="根盘半径 (m)" v-model="B.rootSpread" :min="0" :max="2" :step="0.05" unit="m"
+      hint="竿基在地下按这个半径散开、各自破土：0 = 全部抱在一点（旧行为）" />
+    <SliderRow label="竿基离散" v-model="B.rootScatter" :min="0" :max="1" :step="0.01"
+      hint="让竿基的半径/方位不再是一个规整圆环（根盘锥度 + 椭圆度 + 方位散布）" />
+    <SliderRow label="竿基错落 (m)" v-model="B.rootStagger" :min="0" :max="0.6" :step="0.02" unit="m"
+      hint="每根竿出土的高低差：越错落，竿基半径差越大（贴在不同深度的根盘上）" />
     <SliderRow label="竹竿外倾角" v-model="B.tilt" :min="0" :max="30" :step="0.5" unit="°"
       hint="竹竿离竖直方向的角度；越大竹丛越开张" />
     <SliderRow label="每竿节数" v-model="B.nodeCount" :min="4" :max="40" :step="1"
@@ -20,8 +26,8 @@
     <SliderRow label="竹叶宽长比" v-model="B.leafWidth" :min="0.04" :max="0.4" :step="0.01" />
     <SliderRow label="竹叶下垂" v-model="B.leafDroop" :min="0" :max="1" :step="0.01" />
     <p class="muted" style="margin: 0">
-      竹子和其它树种结构不同：这里是"一丛近乎平行的细竿 + 上段侧枝"，不是"主干 + 逐层分枝"。
-      竿数/竹高/竿径/节数等由 <code>core/bamboo.js</code> 在生成前展开成通用结构，
+      竹子和其它树种结构不同：这里是"一块低矮根盘 + 一丛近乎平行的细竿 + 上段侧枝"，不是"主干 + 逐层分枝"。
+      竿数/竹高/竿径/节数/根盘离散等由 <code>core/bamboo.js</code> 在生成前展开成通用结构，
       所以风场、LOD、节点树、导出都照常可用。
       <br />竹节环是<b>贴图级</b>效果（树皮按「每竿节数」平铺竹节图案），不是实体几何。
     </p>

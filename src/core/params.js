@@ -513,10 +513,13 @@ export function defaultParams() {
      * 所以面板上改这些滑杆走的是"几何组"重建 (见 GEOMETRY_KEYS)。 */
     bamboo: {
       enabled: false,
-      culms: 8,            // 一丛几根竹竿 (1 = 单竿)
+      culms: 10,           // 一丛几根竹竿 (1 = 单竿)
       height: 9.0,         // 竹高 (米, 成熟株; 生长阶段会再乘 size)
       culmRadius: 0.048,   // 竹竿基部半径 (米)
       baseHeight: 0.4,     // 丛基(地下根茎隆起)高度 (米): 竿子从这段矮茎上分出
+      rootSpread: 0.8,     // 根盘半径 (米): 竿基离丛心的水平距离 (0 = 全部抱在一点)
+      rootScatter: 0.55,   // 竿基离散 0..1: 竿基半径/方位的不规则程度 (越大越不成圆环)
+      rootStagger: 0.12,   // 竿基错落 (米): 每根竿出土高低差 (沿根盘斜面分布)
       tilt: 7.0,           // 竹竿外倾角 (度, 离竖直方向)
       nodeCount: 14,       // 每竿竹节数 (驱动树皮"竹节环"的密度)
       branchStart: 0.42,   // 侧枝起始高度比例 (0 = 从地面, 1 = 只在竿顶)

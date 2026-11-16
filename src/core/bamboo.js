@@ -53,7 +53,7 @@ export function applyBambooParams(params) {
   const culmRadius = Math.max(0.006, num(b.culmRadius, 0.048))
   // 丛基高度不能超过竹高的一半: 否则"竿长比"会把竿子拉到地下去 (下限 8cm 保证有实体根基)
   const baseHeight = clamp(num(b.baseHeight, 0.4), 0.08, height * 0.5)
-  const culms = clamp(Math.round(num(b.culms, 8)), 1, 12)
+  const culms = clamp(Math.round(num(b.culms, 10)), 1, 12)
   const tilt = clamp(num(b.tilt, 7), 0, 40)
   const nodeCount = clamp(Math.round(num(b.nodeCount, 14)), 2, 60)
   const branchStart = clamp(num(b.branchStart, 0.42), 0.05, 0.95)
@@ -63,15 +63,37 @@ export function applyBambooParams(params) {
   const leafSize = Math.max(0.03, num(b.leafSize, 0.3))
   const leafWidth = clamp(num(b.leafWidth, 0.16), 0.04, 0.6)
   const leafDroop = clamp(num(b.leafDroop, 0.55), 0, 1)
+  // ---- 根盘 / 竿基离散 ----
+  // 现实里的竹丛不是"所有竿从同一个点冒出来": 竿基散落在根茎堆(根盘)的斜面上,
+  // 彼此相隔几十厘米, 外圈竿比内圈竿更往外趴。三个参数分别控制
+  //   ① 根盘半径: 竿基离丛心的水平距离 (0 = 全部抱在一点, 即旧行为);
+  //   ② 竿基离散: 半径/方位的不规则程度 (靠 根盘锥度 + 方位散布 + 根盘椭圆度 实现);
+  //   ③ 竿基错落: 每根竿出土高度差 (沿根盘斜面分布, 直接改变它们的半径)。
+  const rootSpread = clamp(num(b.rootSpread, 0.8), 0, 2)
+  const rootScatter = clamp(num(b.rootScatter, 0.55), 0, 1)
+  const rootStagger = clamp(num(b.rootStagger, 0.12), 0, 0.6)
 
-  // 丛基比竿子粗: 多根竿从同一段短茎上分出, 茎太细的话蒙皮窗口会挤在一起
-  const baseRadius = culmRadius * 1.6
+  // 丛基不再是一根"细短茎", 而是**根盘**: 一块低矮的锥形根茎堆。
+  // 竿基贴在它的斜面上 —— 半径由"贴附高度"决定, 所以竿与竿的基部天然相隔一段距离;
+  // rootSpread=0 时退化成旧行为 (细短茎, 所有竿抱在一起)。
+  const clumped = rootSpread <= 0.02
+  const moundRadius = clumped ? culmRadius * 1.6 : rootSpread
+  // 锥度决定"上下半径差": 越锥, 贴在根盘不同高度的竿半径差越大 = 离散感越强
+  const moundTaper = clumped ? 0.85 : clamp(0.52 - rootScatter * 0.22, 0.26, 0.6)
+  // 根盘埋入地下: 竿基全部在地面以下、按根盘半径散开, 各自"破土而出"。
+  // 为什么要埋: 竹子的根茎本来就在地下 —— 地面上留一个 1.6 m 宽的绿锥体会被读成
+  // "花盆/石头"(实测过), 埋掉之后只剩每根竿自己的出土点, 丛基离散才不突兀。
+  // rootSpread=0 (抱团模式) 不埋: 保持旧形态 (细短茎直接立在地面上)。
+  // 下沉 1.15×高度: 竿基的 t 抖动上限是 0.45, startJitter 会把个别竿抬到 t≈1,
+  // 1.0 倍下沉时那根竿的基部正好卡在地面 (实测能看到一小截断口贴地), 留 0.15 余量即可埋干净。
+  const moundSink = clumped ? 0 : baseHeight * 1.15
   const trunk = {
     ...params.trunk,
     height: baseHeight,
-    baseRadius,
-    // 丛基几乎不锥化: 竿基处仍需足够粗度承载所有竿的开口
-    taper: 0.85,
+    // 根盘下沉 (米): 埋进地下, 见上面 moundSink 的说明
+    baseY: -moundSink,
+    baseRadius: moundRadius,
+    taper: moundTaper,
     radiusCurve: 1.0,
     segments: 6,
     radialSegments: 10,
@@ -80,20 +102,35 @@ export function applyBambooParams(params) {
     lean: 0.02,
     leanDirection: 0,
     twist: 0,
-    gnarl: 0,
-    flare: 1.1,
-    flareHeight: 0.9,
-    knots: 0,
-    knotSize: 0,
-    squash: 1,
+    // 根盘不能被读成"一根柱子/一个光滑圆球": 加节瘤 + 截面噪声, 让它像一团根茎堆。
+    // (实测: 光滑锥体在这个尺度上看起来像"花盆", 加了噪声才像根盘)
+    gnarl: 0.5,
+    crossNoise: 0.25,
+    knots: clumped ? 0 : 2,
+    knotSize: 0.5,
+    knotStrength: 0.7,
+    knotSpread: 0.12,
+    knotAngle: 1.0,
+    // 根盘贴着地面外扩: 一点点 flare 让底盘略胖, 像一坨根茎堆而不是一根柱子。
+    // 注意 flare 会把底部半径成倍放大 (flare=1.25 时最外圈能到 2 倍 rootSpread),
+    // 所以这里只给 0.35 —— 竿基半径要贴近用户设定的"根盘半径"。
+    flare: clumped ? 1.1 : 0.35,
+    flareHeight: clumped ? 0.9 : 0.5,
+    // 椭圆度: 让根盘不是正圆, 竿基半径随方位变化 (离散度的来源之一)
+    squash: clumped ? 1 : 1 - rootScatter * 0.28,
     // 竹丛不分叉 (竿数由 bamboo.culms 控制, 走 L1 而不是 trunk.fork)
     fork: { enabled: false },
   }
 
   // 竿长 = 竹高 → 相对丛基高度的比例。这里不受 applyStage 的 lengthRatio 夹取影响
   // (夹取发生在物种预设阶段, 而本函数在 build 时执行)。
+  // 注意不要再给下沉量做补偿: 竿基埋在地下, 顶端本来就跟着低 ~0.3 m,
+  // 补回来反而让 HUD 树高比"竹高"多出 1.5 m (实测过)。
   const culmRatio = height / baseHeight
-  const culmRadiusRatio = culmRadius / (baseRadius * 0.95)
+  // 半径比按"竿基实际贴附处的根盘半径"算: 竿径应当约等于 culmRadius,
+  // 不能拿根部半径直接除 (那样竿子会随根盘一起变粗)。
+  const attachRadius = Math.max(culmRadius * 1.2, moundRadius * (1 + moundTaper) * 0.5)
+  const culmRadiusRatio = culmRadius / (attachRadius * 0.95)
 
   const culmLevel = {
     enabled: true,
@@ -104,11 +141,15 @@ export function applyBambooParams(params) {
     lengthRatio: culmRatio,
     lengthVariance: 0.06,
     radiusRatio: culmRadiusRatio,
-    radiusVariance: 0.1,
-    // 竿基沿丛基 10%~90% 高度分布: 视觉上像一丛从根盘上冒出来的笋
-    startT: 0.1,
-    endT: 0.9,
-    startJitter: 0.04,
+    // 竿径用绝对值: 竿基散落在根盘不同半径处, 用"相对父枝"的比值会得到
+    // 外圈粗、内圈细的竿 (实测相差 4 倍), 与真实竹丛不符。
+    radiusAbsolute: culmRadius,
+    radiusVariance: 0.08,
+    // 竿基沿根盘 8%~88% 高度分布: 视觉上像一丛从根茎堆上冒出来的笋;
+    // 高低差由 rootStagger(米) 换算成 t 的抖动 -> 顺带改变它们的贴附半径
+    startT: 0.08,
+    endT: 0.88,
+    startJitter: clamp(rootStagger / Math.max(0.08, baseHeight), 0.02, 0.45),
     // 竹竿锥度很小 (上下粗细接近), 这是它和树的第一个显著区别
     taper: 0.42,
     radiusCurve: 1.05,
@@ -119,7 +160,9 @@ export function applyBambooParams(params) {
     gravity: 0,
     upBias: 0,
     phyllotaxis: 137.5,
-    spread: 0.18,
+    // 方位散布 (单位 π 弧度): 默认 0.18 时竿基在根盘圆周上还算均匀,
+    // 离散度越大越"乱", 避免看出是规则的圆环
+    spread: 0.15 + rootScatter * 0.45,
     segments: 14,
     radialSegments: 8,
     windGain: 1.3,
