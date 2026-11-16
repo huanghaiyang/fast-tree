@@ -16,7 +16,9 @@
     <SliderRow label="竹竿外倾角" v-model="B.tilt" :min="0" :max="30" :step="0.5" unit="°"
       hint="竹竿离竖直方向的角度；越大竹丛越开张" />
     <SliderRow label="每竿节数" v-model="B.nodeCount" :min="4" :max="40" :step="1"
-      hint="只用树皮贴图表达（竹节环不生成几何）；改它会重建贴图的平铺密度" />
+      hint="竹节数量：同时驱动实体几何鼓包与树皮环的密度，改它会重建几何" />
+    <SliderRow label="竹节凸起" v-model="B.nodeBulge" :min="0" :max="0.6" :step="0.01"
+      hint="实体几何的节部鼓包强度（半径倍率）：0 = 只有贴图环，0.2 = 默认的真实凸起" />
     <SliderRow label="侧枝起点" v-model="B.branchStart" :min="0.05" :max="0.95" :step="0.01"
       hint="竿的下段光竿、上段才出侧枝——竹林最容易被认出的剪影" />
     <SliderRow label="每竿侧枝数" v-model="B.twigs" :min="0" :max="6" :step="1" />
@@ -29,7 +31,8 @@
       竹子和其它树种结构不同：这里是"一块低矮根盘 + 一丛近乎平行的细竿 + 上段侧枝"，不是"主干 + 逐层分枝"。
       竿数/竹高/竿径/节数/根盘离散等由 <code>core/bamboo.js</code> 在生成前展开成通用结构，
       所以风场、LOD、节点树、导出都照常可用。
-      <br />竹节环是<b>贴图级</b>效果（树皮按「每竿节数」平铺竹节图案），不是实体几何。
+      <br />竹节是<b>实体几何</b>：每竿沿长度分 8 段/节，节处整圈鼓包 + 一道窄凸脊（半径调制），
+      再叠一层贴图的暗色节环；把「竹节凸起」拖到 0 就退回纯贴图效果。
     </p>
   </Section>
 </template>

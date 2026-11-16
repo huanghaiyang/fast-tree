@@ -194,6 +194,17 @@ function ringModifier(branch, f, angle) {
   if (crossNoise > 0) {
     mod *= 1 + crossNoise * organicRingNoise(clamp01(f.t), angle, r.phase || 0)
   }
+  // 竹节 (实体几何): 与 barkSkin.ringModifier 同一套公式, 两条几何管线都要支持,
+  // 否则默认走 speedtree 管线时"竹节凸起"参数看上去完全没反应 (踩过)。
+  // 相位对齐贴图: 节心在 t = (k+0.5)/count。
+  const nb = r.nodeBands
+  if (nb && nb.count > 0) {
+    const phase = (((f.t * nb.count - 0.5) % 1) + 1) % 1
+    const dNode = Math.min(phase, 1 - phase) / nb.count
+    const w = Math.max(1e-6, nb.width)
+    if (nb.bulge) mod *= 1 + nb.bulge * Math.exp(-Math.pow(dNode / w, 2))
+    if (nb.ridge) mod *= 1 + nb.ridge * Math.exp(-Math.pow(dNode / (w * 0.42), 2))
+  }
   const bf = r.baseFlare || 0
   if (bf > 0) {
     const u = clamp01(f.t / Math.max(1e-4, r.baseFlareLen === undefined ? 0.14 : r.baseFlareLen))

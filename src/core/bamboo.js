@@ -56,6 +56,8 @@ export function applyBambooParams(params) {
   const culms = clamp(Math.round(num(b.culms, 10)), 1, 12)
   const tilt = clamp(num(b.tilt, 7), 0, 40)
   const nodeCount = clamp(Math.round(num(b.nodeCount, 14)), 2, 60)
+  // 竹节几何凸起强度 (半径倍率): 0 = 只剩贴图环, 0.2 = 默认的真实鼓包
+  const nodeBulge = clamp(num(b.nodeBulge, 0.2), 0, 0.6)
   const branchStart = clamp(num(b.branchStart, 0.42), 0.05, 0.95)
   const twigs = clamp(Math.round(num(b.twigs, 5)), 0, 8)
   const twigLength = Math.max(0.1, num(b.twigLength, 0.9))
@@ -132,6 +134,10 @@ export function applyBambooParams(params) {
   const attachRadius = Math.max(culmRadius * 1.2, moundRadius * (1 + moundTaper) * 0.5)
   const culmRadiusRatio = culmRadius / (attachRadius * 0.95)
 
+  // 竹节做成实体几何: 沿竿长每隔 1/nodeCount 处有一圈环状突起。
+  // 纵向分段必须跟着"每竿节数"走 —— 实测 14 段/竿时，14 个节里每个节只分到 1 个环,
+  // 凸起会被抹平成一个斜坡; 8 环/节 (segments = 8×nodeCount) 才能看出硬边的节。
+  const segs = clamp(Math.round(nodeCount * 8), 24, 160)
   const culmLevel = {
     enabled: true,
     count: culms,
@@ -163,8 +169,17 @@ export function applyBambooParams(params) {
     // 方位散布 (单位 π 弧度): 默认 0.18 时竿基在根盘圆周上还算均匀,
     // 离散度越大越"乱", 避免看出是规则的圆环
     spread: 0.15 + rootScatter * 0.45,
-    segments: 14,
-    radialSegments: 8,
+    segments: segs,
+    radialSegments: 10,
+    // 竹节突起: count = 每竿节数, width 用 t 单位 (1.5 个环 ≈ 节距的 19%)
+    // bulge 是整圈鼓包, ridge 是鼓包中央更窄的凸脊 (节的硬边), ridge 固定取 bulge 的 0.6 倍。
+    // 默认 0.2 是"3 m 外能看出鼓包、特写能看出硬边"的折中; 再大就像一串竹笛的接头。
+    nodeBands: {
+      count: nodeCount,
+      bulge: nodeBulge,
+      ridge: nodeBulge * 0.6,
+      width: 1.5 / segs,
+    },
     windGain: 1.3,
   }
 

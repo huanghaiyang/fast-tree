@@ -974,6 +974,10 @@ export function buildTree(params, options = {}) {
         radialSegments,
         crossSection: cfg.crossSection || 'round',
         starDepth: cfg.starDepth || 0,
+        // 竹节环状突起 (实体几何): 由 bamboo.js 给 cfg.nodeBands, 这里原样传给蒙皮。
+        // 必须显式搬运 —— render 是白名单结构, 不写的字段蒙皮读不到 (踩过:
+        // 参数加了但画面没变化, 就是因为漏了这一行)。
+        nodeBands: cfg.nodeBands,
         color: colorBase,
         // color2 是"明暗端的第二种颜色", 与 color 做顶点级渐变; 留白 (1,1,1) 表示不额外染色。
         // 断枝的梢部往木芯色偏一点: 蒙皮生成的端盖会跟着一起变浅, 与断口木芯面接得上。

@@ -236,7 +236,7 @@ export const CONDITIONS = {
 // 所以审计每个子参数前先把开关打开, 否则永远比不出几何差异。
 // 'bamboo.enabled' 本身不设条件 —— 它就是要被扰动的开关。
 for (const k of ['culms', 'height', 'culmRadius', 'baseHeight', 'rootSpread', 'rootScatter',
-  'rootStagger', 'tilt', 'nodeCount',
+  'rootStagger', 'tilt', 'nodeCount', 'nodeBulge',
   'branchStart', 'twigs', 'twigLength', 'leafPerTwig', 'leafSize', 'leafWidth', 'leafDroop']) {
   CONDITIONS['bamboo.' + k] = { 'bamboo.enabled': true }
 }

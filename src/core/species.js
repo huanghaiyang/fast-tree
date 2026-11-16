@@ -709,7 +709,7 @@ export const SPECIES = [
       bamboo: {
         enabled: true, culms: 10, height: 9.0, culmRadius: 0.048, baseHeight: 0.4,
         rootSpread: 0.8, rootScatter: 0.55, rootStagger: 0.12,
-        tilt: 7.0, nodeCount: 14, branchStart: 0.42, twigs: 5, twigLength: 0.9,
+        tilt: 7.0, nodeCount: 14, nodeBulge: 0.2, branchStart: 0.42, twigs: 5, twigLength: 0.9,
         leafPerTwig: 14, leafSize: 0.3, leafWidth: 0.16, leafDroop: 0.55,
       },
     }),

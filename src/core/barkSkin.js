@@ -142,6 +142,22 @@ function ringModifier(branch, ringIndex, angle) {
   if (crossNoise > 0) {
     mod *= 1 + crossNoise * organicRingNoise(clamp01(f.t), angle, r.phase || 0)
   }
+  // 竹节 (实体几何): 沿竿长等距排布的环状突起。
+  // 为什么放在 ringModifier 而不在骨架里: 节是"周长方向一整圈"的凸起,
+  // 用逐环半径调制即可, 不必新增分支/节点; 窗口宽度估计 (averageRingRadius)
+  // 也走同一个调制器, 所以侧枝开口不会算错。
+  // 相位对齐贴图: 竹节贴图的环心在 v = (k+0.5)/BANDS, 对应 t = (k+0.5)/count,
+  // 因此这里用 (t*count - 0.5) 取最近节心。
+  const nb = r.nodeBands
+  if (nb && nb.count > 0) {
+    const phase = (((f.t * nb.count - 0.5) % 1) + 1) % 1
+    const dNode = Math.min(phase, 1 - phase) / nb.count
+    const w = Math.max(1e-6, nb.width)
+    // ① 节间的鼓包 (宽): 竹子节部整圈略粗
+    if (nb.bulge) mod *= 1 + nb.bulge * Math.exp(-Math.pow(dNode / w, 2))
+    // ② 节环 (窄): 鼓包中间一道更细的凸脊, 这才是"节"的硬边
+    if (nb.ridge) mod *= 1 + nb.ridge * Math.exp(-Math.pow(dNode / (w * 0.42), 2))
+  }
   const bf = r.baseFlare || 0
   if (bf > 0) {
     const u = Math.min(1, Math.max(0, f.t / Math.max(1e-4, r.baseFlareLen === undefined ? 0.14 : r.baseFlareLen)))
