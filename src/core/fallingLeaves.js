@@ -270,7 +270,7 @@ function writeEffectUniforms(u, params) {
  * @param {{min:{x,y,z},max:{x,y,z}}|null} bbox 树冠包围盒, 决定下落总高度
  * @returns {THREE.Mesh} 落叶网格 (ShaderMaterial, 半透明、双面、不写深度)
  */
-export function buildFallingLeaves(canopyGeometry, params, sharedUniforms, map, bbox) {
+export function buildFallingLeaves(canopyGeometry, params, sharedUniforms, map, bbox, materialFactory) {
   const F = params.fall || {}
   const count = Math.max(1, Math.round(F.count === undefined ? 80 : F.count))
   // seed 决定出生点分布与每片叶子的随机相; 同一 seed 的落叶层完全可复现
@@ -350,7 +350,11 @@ export function buildFallingLeaves(canopyGeometry, params, sharedUniforms, map, 
   // 贴图解析走 leafTexture 的三级降级 (自己的卡 -> 跟随树冠 -> 程序化椭圆),
   // 所以 uMap 永远非空; uHasMap 恒为 1, 见下方注释。
   const resolved = resolveEffectTexture({ cardId: F0.cardId, followMap: map })
-  const mat = new THREE.ShaderMaterial({
+  // Node 渲染路径: 由 materialsGPU.createFallingLeavesMaterialGPU 造 NodeMaterial。
+  // 形参刻意与几何信息一起打包, 让它不必再去猜卡片宽高/贴图/树高。
+  const mat = materialFactory
+    ? materialFactory(params, { map: resolved.map, halfW, halfH, bbox })
+    : new THREE.ShaderMaterial({
     uniforms: {
       // uTime 与风场直接引用共享对象 -> 全场景同步, 无需刷新
       uTime: sharedUniforms.uTime,
@@ -404,7 +408,9 @@ export function buildFallingLeaves(canopyGeometry, params, sharedUniforms, map, 
 export function updateFallingLeaves(mesh, params) {
   if (!mesh) return
   const F = params.fall || {}
-  const u = mesh.material.uniforms
+  // Node 路径的 NodeMaterial 没有 .uniforms, 参数表在 userData.uniforms (键名一致)
+  const u = mesh.material.uniforms || (mesh.material.userData && mesh.material.userData.uniforms)
+  if (!u) return
   mesh.visible = !!F.enabled
   // 逐项写 uniform.value: 材质已在 GPU 上, 改数值不触发重编译, 几乎零成本
   u.uFallSpeed.value = F.speed === undefined ? 1 : F.speed

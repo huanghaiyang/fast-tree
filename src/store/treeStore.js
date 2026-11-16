@@ -71,6 +71,8 @@ export const state = reactive({
   shaderError: '',
   // 实际使用的渲染后端 (WebGPU / WebGL 2 (Node) / WebGL), 由 Viewport 初始化后写入
   renderBackend: '',
+  // 正在热切换渲染后端 (销毁旧 renderer -> 新建 -> 重建整树); UI 用它显示遮罩并禁用重复点击
+  engineSwitching: false,
   // busy: 有重建/导出等长任务在跑; ready: 首帧已渲染完成 (两者控制 loading 遮罩)
   busy: false,
   ready: false,
@@ -818,13 +820,16 @@ export function randomizeFoliageAssets(seed = state.params.seed) {
  * 置忙状态、保存结果、并自动切到"卡片预览"模式 (让用户马上看到效果)。
  * `impostorBusy` 由 finally 复位: 生成过程可能抛错 (WebGL 上下文丢失/尺寸非法),
  * 若不用 finally, 出错后按钮会永远卡在 loading。
+ * 生成器是 async (Node 路径必须异步读回), 所以这里也返回 Promise。
  * @param {object} [opts] 透传给生成器: `{mode, views, size, elevations}`
- * @returns {object|null} 生成结果 (dataUrl/width/height/coverage/meta)
+ * @returns {Promise<object|null>} 生成结果 (dataUrl/width/height/coverage/meta)
  */
-export function doGenerateImpostor(opts = {}) {
+export async function doGenerateImpostor(opts = {}) {
   state.impostorBusy = true
   try {
-    const res = sceneApi.makeImpostor(opts)
+    // makeImpostor 是 async 的: Node/WebGPU 路径的像素读回只能异步(GPU->staging buffer)。
+    // 忘了 await 就会把 Promise 存进 impostorResult, 预览直接白屏。
+    const res = await sceneApi.makeImpostor(opts)
     state.impostorResult = res
     setImpostorPreview(true)        // 生成后自动在主预览区以 3D 面片展示 (可环绕)
     return res

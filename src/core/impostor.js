@@ -13,7 +13,8 @@
  *   - 这里的渲染**不经过主画布**: 用独立的 WebGLRenderTarget, 且必须在 finally 里把
  *     renderer 的 viewport/scissor/pixelRatio/clearColor/renderTarget 全部还原,
  *     否则主视口会变成一个角落小方块 (这是最容易踩的坑);
- *   - 像素读回是"自下而上"的 GL 顺序, 拼 canvas 前必须翻转 (见 pixelsToImageData);
+ *   - 像素读回的行序随后端不同: WebGL(glReadPixels) 自下而上要翻, WebGPU(copyTextureToBuffer)
+ *     自上而下不翻 —— 见 pixelsToImageData 的 topDown 参数;
  *   - RT 纹理设为 sRGB, 读回值即显示值, 不需要再做 gamma 转换;
  *   - `meta.angles` / `meta.elevations` 的顺序与图集格子顺序严格一致:
  *     行 = 仰角 (外层循环), 列 = 水平角 (内层循环)。
@@ -28,8 +29,10 @@ import * as THREE from 'three'
  * B. 交叉卡 (cross card): 渲染一张侧视贴图, 生成 2/3 张交叉四边形,
  *    用于中远景树冠 —— 比图集简单, 侧面看有厚度感。
  *
- * 实现: 离屏 WebGLRenderTarget + readRenderTargetPixels -> 拼到 canvas -> PNG。
+ * 实现: 离屏 RenderTarget + 逐视角读回 -> 拼到 canvas -> PNG。
  *      RT 纹理设为 sRGB, 这样取回的就是显示值 (不用手动 gamma)。
+ *      WebGL 用同步 readRenderTargetPixels; Node/WebGPU 只能异步读回,
+ *      所以整个生成器是 async (调用方必须 await)。
  *
  * 两种模式的差异:
  *   - atlas: 视角矩阵 = 水平角 × 仰角, 输出一张 `cols × rows` 的网格图;
@@ -120,15 +123,23 @@ export function alphaCoverage(pixels, w, h) {
 }
 
 /**
- * 把 WebGL 的像素 (自下而上) 转成 canvas 可用的 ImageData (自上而下)。
- * GL 的 readPixels 原点在左下角, 而 canvas/ImageData 原点在左上角,
- * 所以按行翻转: 目标第 y 行取源第 (h-1-y) 行。
+ * 把读回的像素转成 canvas 可用的 ImageData。
+ *
+ * 行序取决于是哪个后端读的:
+ *   - WebGL 的 `readRenderTargetPixels` 是 glReadPixels, 原点在**左下角** -> 必须按行翻转;
+ *   - WebGPU 的 `readRenderTargetPixelsAsync` 走 copyTextureToBuffer, 返回纹理行序
+ *     (纹理原点在左上) -> **已经是自上而下, 不能再翻**。
+ * 早先这里无条件翻转, 结果 Node 路径的伪装卡/截图整幅上下颠倒 (树冠朝下),
+ * 而且画面"看起来还挺正常", 很难第一眼归因到行序上。
+ *
  * @param {Uint8Array} pixels RGBA 像素, 长度 w*h*4
  * @param {number} w 宽
  * @param {number} h 高
+ * @param {boolean} [topDown=false] true 表示像素已是自上而下, 不需要翻转
  * @returns {ImageData} 可直接 putImageData 的图像数据
  */
-function pixelsToImageData(pixels, w, h) {
+function pixelsToImageData(pixels, w, h, topDown = false) {
+  if (topDown) return new ImageData(new Uint8ClampedArray(pixels.subarray(0, w * h * 4)), w, h)
   const out = new Uint8ClampedArray(w * h * 4)
   for (let y = 0; y < h; y++) {
     const src = (h - 1 - y) * w * 4
@@ -139,9 +150,17 @@ function pixelsToImageData(pixels, w, h) {
 
 /**
  * 渲染单个视角到像素
- * @returns {{pixels: Uint8Array, size: number}}
+ *
+ * 两种后端共用这条路径, 差别只在**读回**:
+ *   - WebGL:  `readRenderTargetPixels` 是同步的 (glReadPixels 会卡住 GPU)；
+ *   - Node/WebGPU: 只有异步读回 (`readRenderTargetPixelsAsync` + copyTextureToBuffer),
+ *     同步版本在 WebGPU 上根本不存在。所以这里统一返回 Promise, 生成器整体变成 async。
+ *
+ * @returns {Promise<{pixels: Uint8Array, topDown: boolean}>} RGBA 像素 + 行序标记
+ *   topDown=false: 自下而上的 GL 顺序 (WebGL 的 glReadPixels), 拼图前要翻转;
+ *   topDown=true : 自上而下的纹理行序 (WebGPU 的 copyTextureToBuffer), 直接用。
  */
-function renderView(renderer, scene, camera, size) {
+async function renderView(renderer, scene, camera, size) {
   const rt = new THREE.WebGLRenderTarget(size, size, {
     format: THREE.RGBAFormat,
     type: THREE.UnsignedByteType,
@@ -149,6 +168,7 @@ function renderView(renderer, scene, camera, size) {
   })
   rt.texture.colorSpace = THREE.SRGBColorSpace
   const pixels = new Uint8Array(size * size * 4)
+  let pixelsTopDown = false
   const prevTarget = renderer.getRenderTarget()
   const prevClear = new THREE.Color()
   renderer.getClearColor(prevClear)
@@ -174,8 +194,27 @@ function renderView(renderer, scene, camera, size) {
     renderer.clear(true, true, true)
     renderer.render(scene, camera)
     renderer.autoClear = prevAutoClear
-    // 读回 RGBA8 像素 (自下而上的 GL 顺序, 逆序翻转在 pixelsToImageData 里做)
-    renderer.readRenderTargetPixels(rt, 0, 0, size, size, pixels)
+    if (typeof renderer.readRenderTargetPixelsAsync === 'function' && renderer.isWebGLRenderer) {
+      // 经典 WebGL: three 也有 async 版本, 但它读进**调用方传入的 buffer** 再 resolve 同一个 buffer,
+      // 不传 buffer 就什么都不返回 (表现为 read === undefined, 后面取 read.byteLength 直接爆)。
+      // 行序仍是 glReadPixels 的自下而上 (pixelsTopDown 保持 false, 交给 pixelsToImageData 翻转)。
+      await renderer.readRenderTargetPixelsAsync(rt, 0, 0, size, size, pixels)
+    } else if (typeof renderer.readRenderTargetPixelsAsync === 'function') {
+      // Node 渲染器 (WebGPURenderer 实例): 走 Renderer.readRenderTargetPixelsAsync -> backend.copyTextureToBuffer。
+      // 行序取决于**底层 backend**, 而不是"是不是 Node" —— 这是在 WebGL 2 (Node) 分支上踩出来的:
+      //   · WebGPUBackend -> copyTextureToBuffer 走队列, 返回纹理行序, 自上而下, 不能翻;
+      //   · WebGLBackend  -> three 的 WebGLTextureUtils.copyTextureToBuffer 内部还是 gl.readPixels,
+      //     自下而上, 必须翻转 (见 node_modules/three/src/renderers/webgl-fallback/utils/WebGLTextureUtils.js L1336)。
+      const read = await renderer.readRenderTargetPixelsAsync(rt, 0, 0, size, size)
+      if (!read) throw new Error('伪装卡读回失败: readRenderTargetPixelsAsync 返回空')
+      // 不同后端可能返回 Uint8Array/Uint16Array, 统一成 RGBA8 视图
+      if (read instanceof Uint8Array) pixels.set(read.subarray(0, pixels.length))
+      else pixels.set(new Uint8Array(read.buffer, read.byteOffset, Math.min(read.byteLength, pixels.length)))
+      pixelsTopDown = !!(renderer.backend && renderer.backend.isWebGPUBackend)
+    } else {
+      // 经典 WebGL 兜底: 同步读回 (glReadPixels, 自下而上)
+      renderer.readRenderTargetPixels(rt, 0, 0, size, size, pixels)
+    }
   } finally {
     renderer.setRenderTarget(prevTarget)
     renderer.setClearColor(prevClear, prevAlpha)
@@ -186,7 +225,7 @@ function renderView(renderer, scene, camera, size) {
     // 每个视角一个 RT, 用完立刻 dispose, 不然 N 个视角会积累 N 张显存纹理
     rt.dispose()
   }
-  return pixels
+  return { pixels, topDown: pixelsTopDown }
 }
 
 /**
@@ -211,7 +250,7 @@ function renderView(renderer, scene, camera, size) {
  * @returns {{dataUrl:string, width:number, height:number, coverage:number, meta:object}}
  *   `coverage` 是各视角 alpha 覆盖率的平均值 (0..1), 太小说明相机没框住树, 应提示用户
  */
-export function generateImpostor(o) {
+export async function generateImpostor(o) {
   // 依赖 canvas/ImageData, 纯 Node 环境直接给出明确错误而不是 "document is not defined"
   if (typeof document === 'undefined') throw new Error('伪装卡生成需要浏览器环境')
   const { renderer, scene, bbox } = o
@@ -290,13 +329,13 @@ export function generateImpostor(o) {
         else cam.up.set(0, 1, 0)
         cam.lookAt(center)
         cam.updateMatrixWorld()
-        const px = renderView(renderer, scene, cam, size)
-        totalCoverage += alphaCoverage(px, size, size)
+        const res = await renderView(renderer, scene, cam, size)
+        totalCoverage += alphaCoverage(res.pixels, size, size)
         // 单视角内容先画到独立 canvas: 这样最后拼图只是 drawImage, 不必反复操作大 canvas
         const cv = document.createElement('canvas')
         cv.width = size
         cv.height = size
-        cv.getContext('2d').putImageData(pixelsToImageData(px, size, size), 0, 0)
+        cv.getContext('2d').putImageData(pixelsToImageData(res.pixels, size, size, res.topDown), 0, 0)
         views.push({ angle: ang, elevation: el, canvas: cv })
       }
     }

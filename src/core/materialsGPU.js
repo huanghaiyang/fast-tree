@@ -30,8 +30,9 @@ import { MeshStandardNodeMaterial, MeshBasicNodeMaterial } from 'three/webgpu'
 import {
   attribute, uniform, vec2, vec3, vec4, float, uv,
   texture as sampleTexture, mat3, positionLocal, positionWorld, modelWorldMatrix,
+  modelWorldMatrixInverse, cameraWorldMatrix, viewportSize, varying,
   normalWorld, frontFacing, cameraPosition, materialEmissive,
-  mix, select, clamp, smoothstep,
+  mix, select, clamp, smoothstep, fract,
   sin, cos, pow, abs, max, length, normalize, dot, cross,
 } from 'three/tsl'
 import {
@@ -559,3 +560,428 @@ export function createSkyMaterialGPU() {
   mat.userData.uniforms = { uTop, uBottom, uOffset }
   return mat
 }
+
+/* ==================================================================== */
+/* 季节特效: NodeMaterial 版 (叶片粒子 / 落叶 / 地面堆积)               */
+/* ==================================================================== */
+/**
+ * 为什么这三套要单独再做一遍:
+ *   particles.js / fallingLeaves.js / litter.js 里全是 `ShaderMaterial`, 而 Node 渲染
+ *   路径的材质库 (NodeLibrary) 里没有 ShaderMaterial —— 直接挂上去每帧报
+ *   "not compatible", 画面里还什么都没有。之前 sceneManager 干脆在 Node 路径下
+ *   直接 return(等于关闭特效), 于是"换后端就换了一套季节表现"。
+ *
+ * 设计约束 (与 materials.js 的 legacy 材质保持同一套参数语义):
+ *   - **几何不动**: 三个构建器已经把顶点数据(出生点/角点uv/随机种子)算好了,
+ *     这里只负责"用 TSL 把它动起来 + 上色", 所以不会出现两套采样逻辑漂移;
+ *   - **uniform 键名对齐 legacy**: userData.uniforms 里的键名与 ShaderMaterial 的
+ *     uniforms 完全一致(uSize/uSpeed/uFall/...), 于是 particles.js 等文件里的
+ *     updateXxxMaterial() 可以原样复用, 只换读取位置(见各 update 函数里的
+ *     `mat.uniforms || mat.userData.uniforms`);
+ *   - **共享风场每帧同步**: 树/落叶/粒子用同一套 uTime/uWind*, 由
+ *     syncEffectGpuUniforms() 每帧从 createSharedUniforms() 拷值。
+ *
+ * 与 WebGL 路径的**唯一**已知差异:
+ *   粒子的点尺寸。WebGL 用 gl_PointSize (像素) 表达, 而 WebGPU 的 point primitive 恒为
+ *   1px(WGSL 没有 gl_PointSize; WebGL2 后端里 three 也把它写死 1.0)。所以 Node 路径
+ *   把粒子改成"面向相机的小四边形", 尺寸按同样的换算公式折算成世界单位
+ *   (见 _particleHalfSize), 观感与 WebGL 基本一致。
+ */
+
+/* -------------------------- 伪装卡预览面片 -------------------------- */
+/**
+ * 伪装卡 3D 预览面片的 Node 材质 (图集逐格选图)。
+ *
+ * sceneManager.setImpostorPreview 在 WebGL 下用的是手写 ShaderMaterial:
+ * 把 0..1 的局部 uv 平移到某一格 `(uv + cell) / grid`, 再按 alpha 阈值 discard。
+ * Node 渲染路径没有 ShaderMaterial, 这里用同一套公式做等价实现。
+ *
+ * 与 WebGL 版的差别: 原片元手写了 tonemapping/colorspace 的 include,
+ * Node 路径由渲染器在输出阶段统一处理, 不需要也不应该再手动做一次。
+ *
+ * @param {THREE.Texture} tex 图集贴图
+ * @param {number} cols 列数
+ * @param {number} rows 行数
+ * @param {number} cellX 起始列 (0-based)
+ * @param {number} cellY 起始行 (0-based)
+ * @returns {MeshBasicNodeMaterial} 带 userData.uniforms.uCell 的材质
+ */
+export function createImpostorPreviewMaterialGPU(tex, cols, rows, cellX, cellY) {
+  // uCell 用 uniform 节点: updateImpostorPreview 每帧只改 value, 不重建材质
+  const uCell = uniform(new THREE.Vector2(cellX, cellY))
+  const mat = new MeshBasicNodeMaterial({ transparent: true, side: THREE.DoubleSide, depthWrite: true })
+  mat.name = 'ImpostorPreview-GPU'
+  mat.fog = false
+  const atlasUv = vec2(uv().x.add(uCell.x).div(cols), uv().y.add(uCell.y).div(rows))
+  const col = sampleTexture(tex, atlasUv)
+  // 图集里树的轮廓外是透明像素, 不 discard 会画出整块矩形
+  mat.maskNode = col.a.greaterThan(0.3)
+  mat.colorNode = col
+  mat.userData.uniforms = { uCell }
+  return mat
+}
+
+/** 特效共享 uniform (时间/风场/太阳) —— 值每帧由 syncEffectGpuUniforms 拷进来。 */function createEffectSharedUniforms() {
+  return {
+    time: uniform(0),
+    windDir: uniform(new THREE.Vector2(1, 0)),
+    windStrength: uniform(0.12),
+    windSpeed: uniform(0.8),
+    gust: uniform(0.35),
+    gustSpeed: uniform(0.16),
+    windBias: uniform(0.3),
+    windEnabled: uniform(1),
+    sunDir: uniform(new THREE.Vector3(0.5, 1, 0.35).normalize()),
+    sunColor: uniform(new THREE.Color(1, 0.96, 0.9)),
+  }
+}
+
+/** @private 把特效共享 uniform 与场景共享表对齐 (逐帧调用)。 */
+function syncEffectShared(U, shared) {
+  U.time.value = shared.uTime.value
+  U.windDir.value.copy(shared.uWindDir.value)
+  U.windStrength.value = shared.uWindStrength.value
+  U.windSpeed.value = shared.uWindSpeed.value
+  U.gust.value = shared.uGust.value
+  U.gustSpeed.value = shared.uGustSpeed.value
+  U.windBias.value = shared.uWindBias.value
+  U.windEnabled.value = shared.uWindEnabled.value
+  if (shared.uSunDir) U.sunDir.value.copy(shared.uSunDir.value)
+  if (shared.uSunColor) U.sunColor.value.copy(shared.uSunColor.value)
+}
+
+/**
+ * 季节特效材质的逐帧同步入口 (sceneManager._renderFrame 调用)。
+ *
+ * @param {Array<THREE.Material>} materials build* 时登记的 GPU 特效材质表
+ * @param {Object} shared createSharedUniforms() 的结果
+ */
+export function syncEffectGpuUniforms(materials, shared) {
+  if (!materials || !shared) return
+  for (const mat of materials) {
+    const U = mat && mat.userData && mat.userData.effectShared
+    if (U) syncEffectShared(U, shared)
+  }
+}
+
+/* ---------------------------- 叶片粒子 ---------------------------- */
+/**
+ * 粒子四边形的半尺寸(世界单位)。
+ *
+ * WebGL 的点尺寸是 `uSize * uGlow * 600 / dist` 像素。把"像素"折回"世界单位":
+ *   worldSize = pixels * (2 * dist * tan(fov/2)) / 画面高度(px)
+ * 其中 dist 上下抵消, 于是只剩常数项:
+ *   halfSize = uSize * uGlow * 600 * tan(fov/2) / H
+ * tan(45°/2)=0.4142 —— TreeScene 的相机 fov 固定 45°, 所以这里写死 0.4142;
+ * 画面高度取 viewportSize.y, 于是缩放窗口时粒子占比保持不变(与 WebGL 一致)。
+ *
+ * @param {Object} U 粒子材质的 uniform 节点表
+ * @returns {Object} TSL 表达式
+ * @private
+ */
+function _particleHalfSize(U) {
+  return U.uSize.mul(U.uGlow).mul(600 * 0.4142)
+    .div(max(viewportSize.y, float(1)))
+}
+
+/**
+ * 叶片粒子的 Node 材质 (Mesh 四边形 billboard 版)。
+ *
+ * @param {Object} params 全量参数 (读 params.particles)
+ * @param {THREE.Texture|null} [texture] 未使用(粒子是程序化圆点), 仅为签名对齐
+ * @returns {MeshBasicNodeMaterial}
+ */
+export function createParticleMaterialGPU(params, texture) {
+  const P = params.particles || {}
+  const shared = createEffectSharedUniforms()
+  const U = {
+    ...shared,
+    uSize: uniform(P.size === undefined ? 0.05 : P.size),
+    uSpeed: uniform(P.speed === undefined ? 0.35 : P.speed),
+    uFall: uniform(P.fall === undefined ? 1 : P.fall),
+    uSway: uniform(P.sway === undefined ? 1 : P.sway),
+    uSwirl: uniform(P.swirl === undefined ? 0.6 : P.swirl),
+    // 下落总高度, 建材质时还不知道树高; updateParticleMaterial 会用叶片包围盒覆盖
+    uHeight: uniform(10),
+    uGlow: uniform(P.glow === undefined ? 0.8 : P.glow),
+    uColor: uniform(new THREE.Color(P.color || '#fff0b8')),
+    uOpacity: uniform(P.opacity === undefined ? 0.85 : P.opacity),
+    uWindFollow: uniform(P.windFollow === undefined ? 1 : P.windFollow),
+  }
+  const mat = new MeshBasicNodeMaterial({ transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })
+  mat.name = 'Particles-GPU'
+  mat.fog = false
+  mat.userData.effectShared = shared
+  // 私有 uniform 表: 键名与 particles.js 的 ShaderMaterial uniforms 一一对应,
+  // updateParticleMaterial() 因此可以原样复用(UniformNode 也有 .value)。
+  mat.userData.uniforms = {
+    uSize: U.uSize, uSpeed: U.uSpeed, uFall: U.uFall, uSway: U.uSway, uSwirl: U.uSwirl,
+    uHeight: U.uHeight, uGlow: U.uGlow, uColor: U.uColor, uOpacity: U.uOpacity,
+    uWindFollow: U.uWindFollow,
+  }
+
+  const aSeed = attribute('aSeed', 'vec3')
+  const phase = aSeed.x
+  const speedScale = aSeed.y
+  const swayScale = aSeed.z
+  // 生命循环 0..1
+  const t = fract(U.time.mul(U.uSpeed).mul(speedScale).add(phase))
+  const fallY = t.mul(U.uFall).mul(max(float(1), U.uHeight.mul(0.85)))
+
+  const windDir = normalize(U.windDir.add(vec2(1e-5, 1e-6)))
+  const gustWave = sin(U.time.mul(U.gustSpeed).add(phase.mul(6.28318))).mul(0.5).add(0.5)
+  const gust = float(1).sub(U.gust.mul(0.6).mul(float(1).sub(gustWave)))
+  const along = U.windStrength.mul(U.uWindFollow).mul(gust.mul(0.55).add(U.windBias.mul(0.45))).mul(U.windEnabled)
+  // 越到生命后期被吹得越远; 高频项让"被风带着走"带一点抖动
+  const carry = along.mul(float(2.5).add(t.mul(9.0))).mul(
+    float(1).add(sin(U.time.mul(U.windSpeed).mul(2.0).add(phase.mul(12.0))).mul(0.35)),
+  )
+  const lift = sin(U.time.mul(float(0.6).add(U.windSpeed)).add(phase.mul(9.0))).mul(along).mul(1.2)
+
+  const ang = phase.add(t).mul(6.28318).mul(phase.add(0.5))
+  const swayBase = t.mul(0.6).add(0.4)
+  const swayX = sin(ang).mul(U.uSway).mul(swayScale).mul(swayBase)
+    .add(sin(U.time.mul(0.7).add(phase.mul(12.0))).mul(U.uSwirl).mul(0.15))
+  const swayZ = cos(ang.mul(0.8)).mul(U.uSway).mul(swayScale).mul(swayBase)
+    .add(cos(U.time.mul(0.6).add(phase.mul(9.0))).mul(U.uSwirl).mul(0.15))
+
+  const spawn = positionLocal.add(vec3(
+    windDir.x.mul(carry).add(swayX),
+    float(0).sub(fallY).add(lift),
+    windDir.y.mul(carry).add(swayZ),
+  ))
+
+  // 正面朝向相机的四边形: 角点由 uv 推出来, 偏移量用"相机右/上"在世界空间叠加。
+  const corner = uv().sub(vec2(0.5)).mul(2.0)
+  const camRight = cameraWorldMatrix.mul(vec4(1, 0, 0, 0)).xyz
+  const camUp = cameraWorldMatrix.mul(vec4(0, 1, 0, 0)).xyz
+  const halfSize = _particleHalfSize(U)
+  const worldPos = modelWorldMatrix.mul(vec4(spawn, 1)).xyz
+    .add(camRight.mul(corner.x).add(camUp.mul(corner.y)).mul(halfSize))
+  // positionNode 是**局部空间**的位置, 内置流程还会再乘一次 modelViewMatrix, 所以要转回去
+  mat.positionNode = modelWorldMatrixInverse.mul(vec4(worldPos, 1)).xyz
+
+  // 圆形软边点精灵 + 首尾淡入淡出
+  const d = uv().sub(vec2(0.5))
+  const r = length(d)
+  const core = float(1).sub(smoothstep(0.05, 0.5, r))
+  const fadeIn = smoothstep(0, 0.15, t)
+  const fadeOut = float(1).sub(smoothstep(0.75, 1.0, t))
+  const alpha = core.mul(fadeIn).mul(fadeOut).mul(U.uOpacity)
+  mat.maskNode = r.lessThan(0.5).and(alpha.greaterThan(0.01))
+  mat.colorNode = vec4(U.uColor.mul(float(0.5).add(U.uGlow.mul(0.9))), alpha)
+  return mat
+}
+
+/* ------------------------------ 落叶 ------------------------------ */
+/**
+ * 落叶的 Node 材质 (MeshBasicNodeMaterial + 手写光照近似, 与 legacy 片元同构)。
+ *
+ * 顶点部分复刻 fallingLeaves.js 的 FALL_VERT:
+ *   t 生命进度 -> 局部卡片按 rotY*rotX*rotZ 翻滚 -> 出生点减下落 -> 风场/打旋 -> p+local
+ * 旋转用三次二维旋转展开(不用 mat3), 顺序与 GLSL 完全一致, 避免"矩阵列主序"误解。
+ *
+ * @param {Object} params 全量参数 (读 params.fall / params.effect*)
+ * @param {Object} ctx 几何信息: { map, halfW, halfH }
+ * @returns {MeshBasicNodeMaterial}
+ */
+export function createFallingLeavesMaterialGPU(params, ctx = {}) {
+  const F = params.fall || {}
+  // 贴图直接交给 sampleTexture, **不走 uniform**:
+  // TSL 的 texture() 节点要求拿到真实 Texture(要读 uuid/filter 等), 塞 UniformNode 会在
+  // 绑定阶段炸掉。贴图变了本来就走 fallRebuildKey 重建材质, 所以不需要动态替换。
+  const map = ctx.map || whiteTexture()
+  const shared = createEffectSharedUniforms()
+  const U = {
+    ...shared,
+    uFallSpeed: uniform(F.speed === undefined ? 1 : F.speed),
+    uFallHeight: uniform(Math.max(2, ctx.bbox ? ctx.bbox.max.y : 10)),
+    uSizeScale: uniform(F.size === undefined ? 0.35 : F.size),
+    uSwirl: uniform(F.swirl === undefined ? 1 : F.swirl),
+    uSpinSpeed: uniform(F.spinSpeed === undefined ? 1.2 : F.spinSpeed),
+    uStagger: uniform(F.stagger === undefined ? 0.6 : F.stagger),
+    uWindFollow: uniform(F.windFollow === undefined ? 1 : F.windFollow),
+    uHasMap: uniform(1),
+    uColor: uniform(new THREE.Color(F.color || '#d9a441')),
+    uOpacity: uniform(F.opacity === undefined ? 1 : F.opacity),
+    uAlphaTest: uniform(F.alphaTest === undefined ? 0.35 : F.alphaTest),
+    uHalf: uniform(new THREE.Vector2(ctx.halfW === undefined ? 0.5 : ctx.halfW, ctx.halfH === undefined ? 0.5 : ctx.halfH)),
+    uInherit: uniform(0),
+    uEmissive: uniform(0),
+    uEmissiveColor: uniform(new THREE.Color('#ffffff')),
+    uSpecular: uniform(0),
+    uSpecularShininess: uniform(28),
+    uSpecularColor: uniform(new THREE.Color('#ffffff')),
+    uScatter: uniform(0),
+    uScatterPower: uniform(2),
+  }
+  const mat = new MeshBasicNodeMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide })
+  mat.name = 'FallingLeaves-GPU'
+  mat.fog = false
+  mat.userData.effectShared = shared
+  mat.userData.uniforms = {
+    uFallSpeed: U.uFallSpeed, uFallHeight: U.uFallHeight, uSizeScale: U.uSizeScale,
+    uSwirl: U.uSwirl, uSpinSpeed: U.uSpinSpeed, uStagger: U.uStagger,
+    uWindFollow: U.uWindFollow, uHasMap: U.uHasMap, uColor: U.uColor,
+    uOpacity: U.uOpacity, uAlphaTest: U.uAlphaTest, uHalf: U.uHalf,
+    uInherit: U.uInherit, uEmissive: U.uEmissive, uEmissiveColor: U.uEmissiveColor,
+    uSpecular: U.uSpecular, uSpecularShininess: U.uSpecularShininess, uSpecularColor: U.uSpecularColor,
+    uScatter: U.uScatter, uScatterPower: U.uScatterPower,
+  }
+
+  const aLeafSeed = attribute('aLeafSeed', 'vec4')
+  const phase = aLeafSeed.x
+  const speedScale = aLeafSeed.y
+  const sizeScale = aLeafSeed.z
+  const spinDir = aLeafSeed.w
+
+  const t = fract(U.time.mul(U.uFallSpeed).mul(speedScale).mul(0.35).add(phase))
+  // 局部卡片: position 存的是出生点, 真正的形状由 uv 展开
+  const cardUv = uv().sub(vec2(0.5)).mul(2.0).mul(U.uHalf)
+  const local0 = vec3(cardUv.x, cardUv.y, float(0)).mul(U.uSizeScale).mul(sizeScale)
+
+  const spin = U.time.mul(U.uSpinSpeed).mul(spinDir)
+    .mul(float(0.6).add(speedScale.mul(0.8))).add(phase.mul(6.28318))
+  const tumble = t.mul(6.28318).mul(float(0.8).add(phase))
+  const theta = phase.mul(6.28318).add(spin.mul(0.4))
+
+  // ① 绕 Z 自旋
+  const cA = cos(theta)
+  const sA = sin(theta)
+  const v1 = vec3(
+    local0.x.mul(cA).sub(local0.y.mul(sA)),
+    local0.x.mul(sA).add(local0.y.mul(cA)),
+    local0.z,
+  )
+  // ② 绕 X 翻滚
+  const cB = cos(tumble)
+  const sB = sin(tumble)
+  const v2 = vec3(
+    v1.x,
+    v1.y.mul(cB).sub(v1.z.mul(sB)),
+    v1.y.mul(sB).add(v1.z.mul(cB)),
+  )
+  // ③ 绕 Y 旋转 (侧倾)
+  const cC = cos(spin)
+  const sC = sin(spin)
+  const v3 = vec3(
+    v2.x.mul(cC).add(v2.z.mul(sC)),
+    v2.y,
+    v2.x.negate().mul(sC).add(v2.z.mul(cC)),
+  )
+
+  const fall = t.mul(U.uFallHeight)
+  const windDir = normalize(U.windDir.add(vec2(1e-5, 1e-6)))
+  const gustWave = sin(U.time.mul(U.gustSpeed).add(phase.mul(6.28318))).mul(0.5).add(0.5)
+  const gust = float(1).sub(U.gust.mul(0.6).mul(float(1).sub(gustWave)))
+  const along = U.windStrength.mul(U.uWindFollow).mul(gust.mul(0.55).add(U.windBias.mul(0.45))).mul(U.windEnabled)
+  const drift = along.mul(float(3.0).add(t.mul(14.0)))
+  const ang2 = t.mul(6.28318).add(phase.mul(12.0)).mul(float(0.5).add(U.uSwirl))
+  const swirlBase = t.mul(0.75).add(0.25).mul(U.uStagger)
+  const swirlX = sin(ang2).mul(U.uSwirl).mul(swirlBase)
+  const swirlZ = cos(ang2.mul(0.85)).mul(U.uSwirl).mul(swirlBase)
+  const lift = sin(U.time.mul(float(1.0).add(U.windSpeed)).add(phase.mul(7.0))).mul(along).mul(0.8)
+
+  // positionNode = 出生点(含下落/风场位移) + 翻滚后的卡片顶点。
+  // treeGroup 无变换(恒等矩阵), 所以 model 空间与世界空间同一套数值 —— 与 legacy 一致。
+  mat.positionNode = vec3(
+    positionLocal.x.add(windDir.x.mul(drift).add(swirlX)),
+    positionLocal.y.sub(fall).add(lift),
+    positionLocal.z.add(windDir.y.mul(drift).add(swirlZ)),
+  ).add(v3)
+
+  // 翻滚时的明暗变化: legacy 取 R[1][1] = cos(theta)*cos(tumble), 这里用同一个量
+  const fade = float(1).sub(smoothstep(0.85, 1.0, t))
+  const vShade = varying(float(0.55).add(max(float(0), cA.mul(cB)).mul(0.45)).mul(fade))
+  // 卡片法线 = R * (0,0,1) = (sinSpin*cosTumble, -sinTumble, cosSpin*cosTumble)
+  const vNormal = varying(vec3(sC.mul(cB), sB.negate(), cC.mul(cB)))
+
+  // 片元: 贴图/兜底椭圆 -> 继承光照
+  const tex = sampleTexture(map, uv())
+  const hasMap = U.uHasMap
+  const dd = uv().sub(vec2(0.5))
+  const ellipseOk = length(vec2(dd.x.mul(1.6), dd.y)).lessThan(0.5)
+  mat.maskNode = select(
+    hasMap.greaterThan(0.5),
+    tex.a.greaterThanEqual(U.uAlphaTest),
+    ellipseOk,
+  )
+  const baseRgb = select(hasMap.greaterThan(0.5), tex.rgb, U.uColor).mul(vShade)
+
+  const N = normalize(vNormal).mul(select(frontFacing, float(1), float(-1)))
+  const V = normalize(cameraPosition.sub(positionWorld))
+  const L = normalize(U.sunDir)
+  const Hv = normalize(L.add(V))
+  const spec = pow(max(dot(N, Hv), float(0)), max(float(1), U.uSpecularShininess))
+  const fres = float(0.35).add(pow(float(1).sub(max(dot(N, V), float(0))), float(3)).mul(0.65))
+  const rim = pow(float(1).sub(abs(dot(N, V))), max(float(1), U.uScatterPower))
+  const lit = float(0.35).add(max(dot(N, L), float(0)).mul(0.65))
+  const extra = U.uEmissiveColor.mul(U.uEmissive)
+    .add(U.uSpecularColor.mul(U.uSpecular.mul(3).mul(spec).mul(fres)).mul(U.sunColor))
+    .add(tex.rgb.mul(U.uScatter.mul(rim).mul(lit)).mul(U.sunColor))
+  const rgb = baseRgb.add(select(U.uInherit.greaterThan(0.5), extra, vec3(0)))
+  const alpha = select(hasMap.greaterThan(0.5), float(1), U.uOpacity).mul(vShade)
+  mat.colorNode = vec4(rgb, alpha)
+  return mat
+}
+
+/* --------------------------- 地面落叶堆积 --------------------------- */
+/**
+ * 堆积的 Node 材质: 贴图 × 顶点色 × 明暗 + 可选继承光照。
+ * 几何有 normal 属性, 所以直接用 normalWorld(不需要自己造 varying)。
+ *
+ * @param {Object} params 全量参数 (读 params.litter)
+ * @param {Object} ctx { map }
+ * @returns {MeshBasicNodeMaterial}
+ */
+export function createLitterMaterialGPU(params, ctx = {}) {
+  const L = params.litter || {}
+  // 同落叶: 贴图直接给 sampleTexture, 不进 uniform(贴图变化走 litterRebuildKey 重建)
+  const map = ctx.map || whiteTexture()
+  // 堆积的"太阳"沿用 legacy 的固定常量(场景没有昼夜系统, 只为继承光照分支提供 L 与光色)
+  const shared = createEffectSharedUniforms()
+  const U = {
+    ...shared,
+    uAlphaTest: uniform(L.alphaTest === undefined ? 0.35 : L.alphaTest),
+    uShade: uniform(L.shade === undefined ? 0.78 : L.shade),
+    uInherit: uniform(0),
+    uEmissive: uniform(0),
+    uEmissiveColor: uniform(new THREE.Color('#ffffff')),
+    uSpecular: uniform(0),
+    uSpecularShininess: uniform(28),
+    uSpecularColor: uniform(new THREE.Color('#ffffff')),
+    uScatter: uniform(0),
+    uScatterPower: uniform(2),
+  }
+  const mat = new MeshBasicNodeMaterial({ side: THREE.DoubleSide })
+  mat.name = 'Litter-GPU'
+  mat.fog = false
+  mat.userData.effectShared = shared
+  mat.userData.uniforms = {
+    uAlphaTest: U.uAlphaTest, uShade: U.uShade,
+    uInherit: U.uInherit, uEmissive: U.uEmissive, uEmissiveColor: U.uEmissiveColor,
+    uSpecular: U.uSpecular, uSpecularShininess: U.uSpecularShininess, uSpecularColor: U.uSpecularColor,
+    uScatter: U.uScatter, uScatterPower: U.uScatterPower,
+  }
+
+  const tex = sampleTexture(map, uv())
+  const vColor = attribute('color', 'vec3')
+  const baseRgb = tex.rgb.mul(vColor).mul(U.uShade)
+  mat.maskNode = tex.a.greaterThanEqual(U.uAlphaTest)
+
+  const N = normalize(normalWorld).mul(select(frontFacing, float(1), float(-1)))
+  const V = normalize(cameraPosition.sub(positionWorld))
+  const Ld = normalize(U.sunDir)
+  const Hv = normalize(Ld.add(V))
+  const spec = pow(max(dot(N, Hv), float(0)), max(float(1), U.uSpecularShininess))
+  const fres = float(0.35).add(pow(float(1).sub(max(dot(N, V), float(0))), float(3)).mul(0.65))
+  const rim = pow(float(1).sub(abs(dot(N, V))), max(float(1), U.uScatterPower))
+  const lit = float(0.35).add(max(dot(N, Ld), float(0)).mul(0.65))
+  const extra = U.uEmissiveColor.mul(U.uEmissive)
+    .add(U.uSpecularColor.mul(U.uSpecular.mul(3).mul(spec).mul(fres)).mul(U.sunColor))
+    .add(tex.rgb.mul(U.uScatter.mul(rim).mul(lit)).mul(U.sunColor))
+  const rgb = baseRgb.add(select(U.uInherit.greaterThan(0.5), extra, vec3(0)))
+  mat.colorNode = vec4(rgb, tex.a)
+  return mat
+}
+

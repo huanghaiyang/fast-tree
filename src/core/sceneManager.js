@@ -50,9 +50,9 @@ import {
   createTreeDepthMaterial,
   updateMaterials, updateWindUniforms, updateGrowthUniforms, rebindCustomShader,
 } from './materials.js'
-import { exportGLB, exportOBJ, exportScreenshot } from './exporter.js'
+import { exportGLB, exportOBJ, exportDataURLPNG } from './exporter.js'
 import { applyRendererSettings } from './rendererBackend.js'
-import { buildParticlePoints, updateParticleMaterial } from './particles.js'
+import { buildParticlePoints, buildParticleBillboards, updateParticleMaterial } from './particles.js'
 import { buildFallingLeaves, updateFallingLeaves, fallRebuildKey } from './fallingLeaves.js'
 import { buildLeafLitter, litterRebuildKey, updateLitterEffects } from './litter.js'
 import { generateImpostor } from './impostor.js'
@@ -101,6 +101,14 @@ void main() {
   float h = normalize(vSkyPos + vec3(0.0, uOffset, 0.0)).y * 0.5 + 0.5;
   vec3 col = mix(uBottom, uTop, pow(clamp(h, 0.0, 1.0), 0.85));
   gl_FragColor = vec4(col, 1.0);
+  // 必须自己做输出变换 —— 自定义 ShaderMaterial 不会被内置材质那套 chunk 包起来:
+  //   uTop/uBottom 是 THREE.Color, 赋值时已经被 ColorManagement 转成**线性**工作空间,
+  //   而这里如果没有 tonemapping/colorspace chunk, 值会原样写进帧缓冲,
+  //   表现就是天空比预设色('skyTop' 那张色卡)暗一整个 sRGB 编码,
+  //   0x2a3c52 打出来接近纯黑。WebGPU 的 MeshBasicNodeMaterial 由输出阶段统一处理,
+  //   所以只有经典 WebGL 路径会暗 —— 两条路径"天空色不一样"的根因就在这里。
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
 }`
 
 /**
@@ -478,6 +486,12 @@ export class TreeScene {
 
     // 材质延迟到 ensureMaterials() 里创建: 第一次 build 时才有 params 可以配置。
     this.materials = null
+    // Node 路径后处理 (postGPU.js): 懒加载, 未就绪时 _renderFrame 先直出。
+    this._postFX = null
+    this._postFxLoading = false
+    // 季节特效(NodeMaterial 版)的材质表, 每帧 syncEffectGpuUniforms 从这里取。
+    // 只有 Node 渲染路径会往里填; WebGL 路径的 ShaderMaterial 直接共享 uniform 对象。
+    this._gpuEffectMats = []
     // 三块源网格。注意它们被 hideSourceMesh 移到 SOURCE_ONLY_LAYER(31),
     // 默认相机看不到 —— 真正渲染的是下面的 _cullChunks 或 LOD 网格。
     this.barkMesh = null
@@ -663,6 +677,45 @@ export class TreeScene {
   }
 
   /**
+   * 重算"当前活着的 Node 特效材质"清单 (供每帧同步共享风场用)。
+   *
+   * 为什么现算而不是挂监听: 特效网格会被 rebuild* 整体替换(旧材质 dispose, 新材质 new),
+   * 缓存引用很容易指向已销毁的对象; 这里每帧 O(5) 次判空, 比维护失效通知便宜得多。
+   * @private
+   */
+  _refreshEffectMaterials() {
+    const arr = this._gpuEffectMats
+    arr.length = 0
+    const collect = (mesh) => {
+      if (!mesh || !mesh.material) return
+      const ud = mesh.material.userData
+      if (ud && ud.effectShared && ud.uniforms) arr.push(mesh.material)
+    }
+    collect(this.particles)
+    collect(this.fallMesh)
+    collect(this.flowerFallMesh)
+    collect(this.litterMesh)
+    collect(this.flowerLitterMesh)
+  }
+
+  /**
+   * Node 路径下"用哪个材质工厂"
+   *
+   * 传 undefined 就是让各构建器走默认的 ShaderMaterial (WebGL 路径);
+   * 传函数则走 materialsGPU.js 里的 NodeMaterial 版本。工厂签名统一为 (params, ctx)。
+   *
+   * @param {string} fn materialsGPU 里的工厂函数名
+   * @returns {Function|undefined}
+   * @private
+   */
+  _effectFactory(fn) {
+    if (!this.isNodeRenderer) return undefined
+    const g = this.gpuMaterials
+    if (!g || typeof g[fn] !== 'function') return undefined
+    return (params, ctx) => g[fn](params, ctx)
+  }
+
+  /**
    * 单帧渲染入口: 后处理开启时走 composer, 否则保持原来的直出路径。
    * tick / 截图都走这里, 保证"所见即所存"。
    */
@@ -670,9 +723,22 @@ export class TreeScene {
     // Node 路径的 uniform 是 TSL 副本, 必须每帧从共享表同步一次 (uTime 每帧变)。
     if (this.isNodeRenderer && this.gpuMaterials && this.materials) {
       this.gpuMaterials.syncGpuUniforms(this.materials, this.uniforms)
+      // 季节特效(NodeMaterial 版)的共享 wind/time uniform 也要每帧同步。
+      // 材质表每次现算: 特效网格会因为参数变化被重建, 缓存下来的引用会指向已 dispose 的材质。
+      if (this.gpuMaterials.syncEffectGpuUniforms) {
+        this._refreshEffectMaterials()
+        this.gpuMaterials.syncEffectGpuUniforms(this._gpuEffectMats, this.uniforms)
+      }
+    }
+    if (this.isNodeRenderer) {
+      // Node 路径: Bloom/DOF 由 postGPU.js 的 RenderPipeline 接管 (r183 起 PostProcessing 改名)。
+      const fx = this._ensureGpuPost()
+      if (fx && fx.render(this.scene, this.camera, this._post)) return
+      this.renderer.render(this.scene, this.camera)
+      return
     }
     const s = this._post
-    if (this.isNodeRenderer || !s || (!s.bloomEnabled && !s.dofEnabled)) {
+    if (!s || (!s.bloomEnabled && !s.dofEnabled)) {
       this.renderer.render(this.scene, this.camera)
       return
     }
@@ -699,6 +765,33 @@ export class TreeScene {
     }
     composer.render()
   }
+
+  /**
+   * Node 路径后处理懒加载。
+   *
+   * 为什么要异步: postGPU.js 依赖 three/webgpu 与 TSL 的 display 节点, 这些代码
+   * 只对 Node 渲染路径有意义, 不能让 WebGL 用户白下载(Vite 会把它们打进 webgpu 块)。
+   * 首次 _renderFrame 时发起 import, 加载完成前先直出 —— 用户看不到黑屏, 只是
+   * Bloom/DOF 晚一两帧生效。
+   *
+   * @returns {import('./postGPU.js').GpuPostFX|null} 未就绪时返回 null
+   */
+  _ensureGpuPost() {
+    if (!this.isNodeRenderer) return null
+    if (this._postFX) return this._postFX
+    if (this._postFxLoading) return null
+    this._postFxLoading = true
+    import('./postGPU.js').then((m) => {
+      if (this.disposed) return
+      this._postFX = new m.GpuPostFX(this.renderer)
+    }).catch((err) => {
+      // 加载失败不能让整棵树黑掉: 退化为直出, 并在控制台留一条可排查的记录
+      console.warn('[fast-tree] Node 后处理模块加载失败, Bloom/DOF 将保持关闭:', err)
+      this._postFxLoading = false
+    })
+    return null
+  }
+
 
   /* ------------------------------------------------------------------ */
   /* 材质                                                                */
@@ -799,7 +892,7 @@ export class TreeScene {
     // WebGPU/TSL 无法嵌入自定义 GLSL: 这里直接跳过并提示一次, 而不是静默失效。
     if (this.isNodeRenderer) {
       if (this.callbacks.onShaderError && params && params.custom) {
-        this.callbacks.onShaderError('WebGPU 渲染后端不支持自定义 GLSL 着色器; 如需该功能请在「场景 → 渲染后端」切换到 WebGL 并刷新页面。')
+        this.callbacks.onShaderError('当前 Node 渲染后端 (WebGPU / WebGL 2 Node) 不支持自定义 GLSL 着色器; 如需该功能请在左下角「引擎」或「场景 → 渲染引擎」切到 WebGL（立即生效，无需刷新）。')
       }
       return
     }
@@ -1947,25 +2040,32 @@ export class TreeScene {
   applyShadowFlags() {
     const isolate = this.selectMode === 2
     const on = !!this.shadowsEnabled && !isolate
-    // WebGPU 不支持 customDepthMaterial (动态风场阴影), 只能退化为静态深度:
-    // 静态阴影仍然正确, 只是影子不会跟着风摆。Node 路径下强制按静态处理。
-    const dynamic = on && !!this.dynamicShadows && !this.isNodeRenderer
+    // 动态阴影的两种实现:
+    //   WebGL 路径 —— 每个主材质挂一份 customDepthMaterial (materials.js 的 createTreeDepthMaterial);
+    //   Node 路径  —— **不需要** customDepthMaterial: three 的 Renderer._getShadowNodes() 会把主材质的
+    //                 positionNode(以及 alphaTest/map 决定的阴影 alpha)复用到阴影深度材质上,
+    //                 所以 materialsGPU.js 里那套风场节点图在阴影 pass 里同样生效。
+    //                 (以前这里按"Node 路径不支持 customDepthMaterial"整体关掉动态阴影, 属于误判:
+    //                  节点材质的风场阴影是白送的, 只是阴影贴图要每帧重算。)
+    const dynamic = on && !!this.dynamicShadows
     if (this.barkMesh) this.barkMesh.castShadow = on
     if (this.leafMesh) this.leafMesh.castShadow = on
     for (const c of this._cullChunks) {
       c.mesh.castShadow = on
-      c.mesh.customDepthMaterial = dynamic ? this._depthMaterialFor(c.mesh.material) : undefined
+      // Node 材质的阴影走节点继承, 显式指定一个 MeshDepthMaterial 反而会丢掉风场位移
+      if (!this.isNodeRenderer) c.mesh.customDepthMaterial = dynamic ? this._depthMaterialFor(c.mesh.material) : undefined
     }
     for (const e of this.lodCache.values()) {
       if (e.leafMesh) e.leafMesh.castShadow = on
       if (e.barkMesh) e.barkMesh.castShadow = on
       if (e.flowerMesh) e.flowerMesh.castShadow = on
+      if (this.isNodeRenderer) continue
       for (const m of [e.barkMesh, e.leafMesh, e.flowerMesh]) {
         if (m) m.customDepthMaterial = dynamic ? this._depthMaterialFor(m.material) : undefined
       }
     }
     // 静态阴影只在"标志变了"时重算一次; 动态阴影由 autoUpdate 每帧刷新。
-    if (this.shadowsEnabled && (!this.dynamicShadows || this.isNodeRenderer)) this.renderer.shadowMap.needsUpdate = true
+    if (this.shadowsEnabled && !dynamic) this.renderer.shadowMap.needsUpdate = true
   }
 
   /**
@@ -2160,8 +2260,10 @@ export class TreeScene {
     // 关 = 只在场景参数或几何变化时重算一次(autoUpdate=false), 省掉每帧
     // 多一遍全树深度绘制。老预设没有该字段时按开启处理。
     this.dynamicShadows = s.dynamicShadows === undefined ? true : !!s.dynamicShadows
-    // Node/WebGPU 路径没有 customDepthMaterial, 动态阴影退化为静态 (见 applyShadowFlags)。
-    this.renderer.shadowMap.autoUpdate = this.shadowsEnabled && this.dynamicShadows && !this.isNodeRenderer
+    // 两种后端都支持动态阴影: WebGL 靠 customDepthMaterial 注入风场位移,
+    // Node 路径靠阴影深度材质自动继承主材质的 positionNode (见 applyShadowFlags)。
+    // 关掉动态阴影时 autoUpdate=false, 只在参数/几何变化时重算一次, 省掉每帧一遍全树深度绘制。
+    this.renderer.shadowMap.autoUpdate = this.shadowsEnabled && this.dynamicShadows
     this.sun.color.set(s.sunColor || '#fff2e0')
     this.sun.intensity = s.sunIntensity === undefined ? 3.1 : s.sunIntensity
     this.hemi.color.set(s.hemiSky || '#c8dcff')
@@ -2478,11 +2580,10 @@ export class TreeScene {
    * @sideeffect 释放旧粒子几何与材质; 新粒子挂到 treeGroup(renderOrder=3)
    */
   rebuildParticles(params) {
-    if (this.isNodeRenderer) return
     if (!this.treeGroup) return
     if (this.particles) {
       this.treeGroup.remove(this.particles)
-      // 粒子的几何与材质都是 buildParticlePoints 现造的独立资源, 两个都要释放。
+      // 粒子的几何与材质都是 build* 现造的独立资源, 两个都要释放。
       this.particles.geometry.dispose()
       this.particles.material.dispose()
       this.particles = null
@@ -2490,7 +2591,15 @@ export class TreeScene {
     const P = params.particles || {}
     // 没有树叶就没有可采样位置 —— 直接返回, 保持"无粒子"状态。
     if (!P.enabled || !this.leafMesh) return
-    this.particles = buildParticlePoints(this.leafMesh.geometry, params, this.uniforms, params.seed)
+    if (this.isNodeRenderer) {
+      // Node 路径: Points 的点尺寸在 WGSL 里恒为 1px, 必须换成四边形 billboard
+      this.particles = buildParticleBillboards(
+        this.leafMesh.geometry, params, this.uniforms, params.seed,
+        this._effectFactory('createParticleMaterialGPU'),
+      )
+    } else {
+      this.particles = buildParticlePoints(this.leafMesh.geometry, params, this.uniforms, params.seed)
+    }
     // renderOrder=3: 落在树叶(默认 0)与落叶/堆积(1~2)之上, 保证小光点不被遮掉。
     this.particles.renderOrder = 3
     this.treeGroup.add(this.particles)
@@ -2506,7 +2615,6 @@ export class TreeScene {
    * @sideeffect 可能触发 rebuildParticles(仅当 count 变化或首次启用)
    */
   updateParticles(params) {
-    if (this.isNodeRenderer) return
     const P = params.particles || {}
     if (!this.particles) {
       if (P.enabled) this.rebuildParticles(params)
@@ -2515,8 +2623,9 @@ export class TreeScene {
     this.particles.visible = !!P.enabled
     // 数量默认 240: 少到不吓人、多到能看出"有东西在飘"。
     const want = Math.max(0, Math.round(P.count === undefined ? 240 : P.count))
-    // 顶点数就是粒子数(每粒子 1 个 position), 用它和期望值比较即可。
-    const have = this.particles.geometry.attributes.position.count
+    // 顶点数就是粒子数: WebGL 版每粒子 1 个顶点, Node 版每粒子 4 个(四边形), 所以按 4 折算。
+    const per = this.particles.isPoints ? 1 : 4
+    const have = Math.floor(this.particles.geometry.attributes.position.count / per)
     if (want !== have) {
       this.rebuildParticles(params)
       return
@@ -2545,7 +2654,6 @@ export class TreeScene {
    * @sideeffect 释放旧落叶网格; 新网格挂到 treeGroup(renderOrder=2)
    */
   rebuildFall(params) {
-    if (this.isNodeRenderer) return
     if (!this.treeGroup) return
     if (this.fallMesh) {
       this.treeGroup.remove(this.fallMesh)
@@ -2561,7 +2669,7 @@ export class TreeScene {
     // followMap 只在"确实设置了树叶贴图"时给: 否则叶子是纯色卡, 落叶也跟着纯色。
     const followMap = params.leafMat && params.leafMat.texture ? (this.materials.leaf.map || null) : null
     const adapted = { ...params, effectSource: 'leaf', effectInherit: params.fall.inheritLeafMat !== false }
-    this.fallMesh = buildFallingLeaves(geo, adapted, this.uniforms, followMap, geo.boundingBox)
+    this.fallMesh = buildFallingLeaves(geo, adapted, this.uniforms, followMap, geo.boundingBox, this._effectFactory('createFallingLeavesMaterialGPU'))
     // renderOrder=2: 落叶要压在堆积(1)之上、粒子(3)之下, 层次才符合真实前后关系。
     this.fallMesh.renderOrder = 2
     this.treeGroup.add(this.fallMesh)
@@ -2579,7 +2687,6 @@ export class TreeScene {
    * @sideeffect 可能重建网格; 关闭时只隐藏(不释放, 便于再次开启时秒回)
    */
   updateFall(params) {
-    if (this.isNodeRenderer) return
     const F = params.fall || {}
     if (!F.enabled) {
       if (this.fallMesh) this.fallMesh.visible = false
@@ -2654,7 +2761,6 @@ export class TreeScene {
    * @sideeffect 释放旧落花网格; 新网格挂到 treeGroup(renderOrder=2)
    */
   rebuildFlowerFall(params) {
-    if (this.isNodeRenderer) return
     if (!this.treeGroup) return
     if (this.flowerFallMesh) {
       this.treeGroup.remove(this.flowerFallMesh)
@@ -2669,7 +2775,7 @@ export class TreeScene {
     if (!geo.boundingBox) geo.computeBoundingBox()
     const followMap = (this.materials.flower && this.materials.flower.map) || null
     const adapted = this._flowerFallParams(params)
-    this.flowerFallMesh = buildFallingLeaves(geo, adapted, this.uniforms, followMap, geo.boundingBox)
+    this.flowerFallMesh = buildFallingLeaves(geo, adapted, this.uniforms, followMap, geo.boundingBox, this._effectFactory('createFallingLeavesMaterialGPU'))
     this.flowerFallMesh.renderOrder = 2
     this.treeGroup.add(this.flowerFallMesh)
   }
@@ -2679,7 +2785,6 @@ export class TreeScene {
    * @sideeffect 可能重建落花网格; 关闭时仅隐藏
    */
   updateFlowerFall(params) {
-    if (this.isNodeRenderer) return
     const FF = params.flowerFall || {}
     if (!FF.enabled) {
       if (this.flowerFallMesh) this.flowerFallMesh.visible = false
@@ -2706,7 +2811,6 @@ export class TreeScene {
    * @sideeffect 释放旧堆积网格; 新网格挂到 treeGroup
    */
   rebuildFlowerLitter(params) {
-    if (this.isNodeRenderer) return
     if (!this.treeGroup) return
     if (this.flowerLitterMesh) {
       this.treeGroup.remove(this.flowerLitterMesh)
@@ -2721,7 +2825,7 @@ export class TreeScene {
     if (!geo.boundingBox) geo.computeBoundingBox()
     const followMap = (this.materials.flower && this.materials.flower.map) || null
     const adapted = this._flowerLitterParams(params)
-    this.flowerLitterMesh = buildLeafLitter(adapted, followMap, geo.boundingBox)
+    this.flowerLitterMesh = buildLeafLitter(adapted, followMap, geo.boundingBox, this._effectFactory('createLitterMaterialGPU'))
     this.flowerLitterMesh.renderOrder = 1
     this.treeGroup.add(this.flowerLitterMesh)
   }
@@ -2732,7 +2836,6 @@ export class TreeScene {
    * @sideeffect 可能重建堆积网格; 关闭时仅隐藏
    */
   updateFlowerLitter(params) {
-    if (this.isNodeRenderer) return
     const FL2 = params.flowerLitter || {}
     if (!FL2.enabled) {
       if (this.flowerLitterMesh) this.flowerLitterMesh.visible = false
@@ -2767,7 +2870,6 @@ export class TreeScene {
    * @sideeffect 释放旧堆积网格; 新网格挂到 treeGroup(renderOrder=1)
    */
   rebuildLitter(params) {
-    if (this.isNodeRenderer) return
     if (!this.treeGroup) return
     if (this.litterMesh) {
       this.treeGroup.remove(this.litterMesh)
@@ -2781,7 +2883,7 @@ export class TreeScene {
     if (leafGeo && !leafGeo.boundingBox) leafGeo.computeBoundingBox()
     const followMap = params.leafMat && params.leafMat.texture ? (this.materials.leaf.map || null) : null
     const adapted = { ...params, effectSource: 'leaf', effectInherit: params.litter.inheritLeafMat !== false }
-    this.litterMesh = buildLeafLitter(adapted, followMap, leafGeo ? leafGeo.boundingBox : null)
+    this.litterMesh = buildLeafLitter(adapted, followMap, leafGeo ? leafGeo.boundingBox : null, this._effectFactory('createLitterMaterialGPU'))
     // renderOrder=1: 紧贴地面, 应在所有空中特效之前绘制。
     this.litterMesh.renderOrder = 1
     this.treeGroup.add(this.litterMesh)
@@ -2793,7 +2895,6 @@ export class TreeScene {
    * @sideeffect 可能重建堆积网格; 关闭时仅隐藏
    */
   updateLitter(params) {
-    if (this.isNodeRenderer) return
     const L = params.litter || {}
     if (!L.enabled) {
       if (this.litterMesh) this.litterMesh.visible = false
@@ -2835,11 +2936,7 @@ export class TreeScene {
    * @sideeffect 临时隐藏场景对象(由 generateImpostor 负责恢复)
    * @throws {Error} 场景里还没有任何树时可渲染内容时抛错
    */
-  makeImpostor(opts = {}) {
-    // 伪装卡生成依赖 WebGL 的 render target 读回, WebGPU 路径下不可用。
-    if (this.isNodeRenderer) {
-      throw new Error('当前是 WebGPU 渲染后端, 伪装卡生成仍依赖 WebGL 读回; 请在「场景 → 渲染后端」切换到 WebGL 并刷新页面后再试。')
-    }
+  async makeImpostor(opts = {}) {
     // 生成前先撤掉上一张伪装卡:
     // 1) 它会让真树处于隐藏状态 -> 新图集拍不到树
     // 2) 它本身也在场景里 -> 会被拍进新图集 (卡里套卡 = 叠加态)
@@ -2852,6 +2949,8 @@ export class TreeScene {
     const bbox = { min: box.min, max: box.max }
     const hide = [this.ground, this.grid, this.forceGroup, this.sky, this.particles, this.fallMesh, this.litterMesh, this.flowerMesh, this.flowerFallMesh, this.flowerLitterMesh, this._impostorGroup,
       ...this._cullChunks.filter((c) => c.kind === 'flower').map((c) => c.mesh)]
+    // Node 路径的读回是异步的(GPU -> staging buffer), 所以生成器是 async:
+    // 调用方必须 await, 否则拿到的还是 Promise, 后续 setImpostorPreview 会拿到空图。
     return generateImpostor({
       renderer: this.renderer,
       scene: this.scene,
@@ -2894,7 +2993,6 @@ export class TreeScene {
   setImpostorPreview(result) {
     this.clearImpostorPreview()
     // 预览面片用的是 ShaderMaterial (图集逐帧选格), Node 路径不支持, 直接跳过。
-    if (this.isNodeRenderer) return
     if (!result) return
     const meta = result.meta || {}
     const layout = meta.layout || { cols: 1, rows: 1 }
@@ -2917,7 +3015,13 @@ export class TreeScene {
 
     const group = new THREE.Group()
     group.position.copy(center)
-    const mkMat = (cell) => new THREE.ShaderMaterial({
+    const mkMat = (cell) => {
+      // Node 路径没有 ShaderMaterial: 用 materialsGPU 里的等价 NodeMaterial 版本
+      // (同一套 (uv+cell)/grid 选格公式, 见 createImpostorPreviewMaterialGPU)
+      if (this.isNodeRenderer && this.gpuMaterials && this.gpuMaterials.createImpostorPreviewMaterialGPU) {
+        return this.gpuMaterials.createImpostorPreviewMaterialGPU(tex, layout.cols, layout.rows, cell.x, cell.y)
+      }
+      return new THREE.ShaderMaterial({
       uniforms: {
         uMap: { value: tex },
         uGrid: { value: new THREE.Vector2(layout.cols, layout.rows) },
@@ -2938,7 +3042,8 @@ export class TreeScene {
       transparent: true,
       side: THREE.DoubleSide,
       depthWrite: true,
-    })
+      })
+    }
     // 渲染用的视锥在树心处的半高 = dist * tan(fov/2); 面片应与之一致, 这样和真树同尺寸
     // fov 默认 18°(长焦): 伪装卡是正交化的替身, 视场越窄透视畸变越小,
     // 一张平面贴图才可能在各个角度都"看起来对"; 拍宽了边缘会明显拉伸。
@@ -3040,7 +3145,9 @@ export class TreeScene {
       const dd = Math.abs(e - el)
       if (dd < best) { best = dd; row = i }
     })
-    a.mat.uniforms.uCell.value.set(col, a.layout.rows - 1 - row)
+    // NodeMaterial 没有 .uniforms, 参数表在 userData.uniforms
+    const matU = a.mat.uniforms || (a.mat.userData && a.mat.userData.uniforms)
+    if (matU && matU.uCell) matU.uCell.value.set(col, a.layout.rows - 1 - row)
     // 面片始终转向相机 (球面 billboard): 否则绕到背面看到的是同一张图的**镜像**,
     // 看起来就像"只拍了 180°, 之后对称排列"。
     const upVec = Math.abs(el) > 88 ? new THREE.Vector3(0, 0, -1) : new THREE.Vector3(0, 1, 0)
@@ -3210,14 +3317,89 @@ export class TreeScene {
    * @returns {Promise<Object>} 预览对象(含 blob/dataUrl/byteSize 等, 由 exportPreview 决定)
    * @throws {Error} kind 不支持时抛错(这是编程错误, 不该静默)
    */
+  /**
+   * 抓一帧成 PNG dataURL —— 截图与 PNG 预览共用。
+   *
+   * 两条路径差别很大:
+   *   - WebGL: canvas 可以用 toDataURL 直接拿 (前提是本帧刚渲染过, 所以先 _renderFrame);
+   *   - Node/WebGPU: canvas 后面是交换链, 帧一旦结束内容就可能不可读, 帧外 toDataURL
+   *     大概率得到一张透明图。可靠做法是**渲染到自己的 RT** 再异步读回 Uint8Array,
+   *     于是这条路径是 async 的, 调用方必须 await。
+   *
+   * @returns {Promise<string>} PNG dataURL
+   */
+  async _captureFrameDataUrl() {
+    if (!this.isNodeRenderer) {
+      this._renderFrame()
+      return this.renderer.domElement.toDataURL('image/png')
+    }
+    const db = this.renderer.getDrawingBufferSize(new THREE.Vector2())
+    const w = Math.max(1, Math.floor(db.x))
+    const h = Math.max(1, Math.floor(db.y))
+    const rt = new THREE.WebGLRenderTarget(w, h, {
+      format: THREE.RGBAFormat,
+      type: THREE.UnsignedByteType,
+      depthBuffer: true,
+    })
+    // 颜色空间要跟着"谁来编码"走 —— 这是个只有截图路径才会踩到的坑:
+    //   · 直出渲染时, 编码(ACES + sRGB)由材质自己按**目标纹理声明的 colorSpace** 做,
+    //     所以 RT 必须声明 sRGB, 读回值才是显示值;
+    //   · 走 RenderPipeline 时, 管线固定按 `renderer.outputColorSpace` 编码 (不看目标),
+    //     如果 RT 也声明 sRGB, 就会编码两次: 天空 0x2a3c52 从 42 变成 112 那一档,
+    //     整幅画面像被提亮一档 (截图"比看到的亮", 但画布上其实是正常的)。
+    // 于是: 后处理生效时给线性 RT, 否则给 sRGB RT。
+    const postActive = !!(this._postFX && this._postFX.active)
+    rt.texture.colorSpace = postActive ? THREE.NoColorSpace : THREE.SRGBColorSpace
+    const prev = this.renderer.getRenderTarget()
+    this.renderer.setRenderTarget(rt)
+    try {
+      // 走 _renderFrame: 后处理开着时截到的就是"带后处理"的画面(所见即所存)
+      this._renderFrame()
+    } finally {
+      this.renderer.setRenderTarget(prev)
+    }
+    const raw = await this.renderer.readRenderTargetPixelsAsync(rt, 0, 0, w, h)
+    rt.dispose()
+    if (!raw) throw new Error('_captureFrameDataUrl: readRenderTargetPixelsAsync 返回空 (后端不支持读回?)')
+    // 行序取决于**底层 backend**, 不是"是不是 Node" —— 这是个踩了两次的坑:
+    //   · WebGPUBackend: readRenderTargetPixelsAsync -> copyTextureToBuffer 走队列, 返回纹理行序
+    //     (纹理原点左上, 已经是自上而下), **不能翻**; 照 GL 习惯翻一次, 截图整幅上下颠倒
+    //     (树冠朝下、地面在上, 但看着"很像一张图", 不仔细看很容易当成渲染 bug 去查材质)。
+    //   · WebGLBackend (即 "WebGL 2 (Node)" 分支, Safari / 关 WebGPU 的 Chrome):
+    //     同一个 API 在内部还是 gl.readPixels (WebGLTextureUtils.copyTextureToBuffer), 自下而上, **必须翻**。
+    // 两条分支只差这一个布尔, 所以判断写在 backend 上, 而不是渲染器类型上。
+    const back = this.renderer.backend
+    const topDown = !!(back && back.isWebGPUBackend)
+    // (Uint8Array 与 Uint16Array 都可能返回, 统一按字节视图处理)
+    const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength)
+    const rgba = new Uint8Array(bytes.subarray(0, w * h * 4))
+    if (!topDown) {
+      // 逐行翻转 (自下而上 -> 自上而下); 按行整块拷贝比逐像素快得多
+      const row = w * 4
+      const tmp = new Uint8Array(row)
+      for (let y = 0; y < (h >> 1); y++) {
+        const a = y * row
+        const b = (h - 1 - y) * row
+        tmp.set(rgba.subarray(a, a + row))
+        rgba.copyWithin(a, b, b + row)
+        rgba.set(tmp, b)
+      }
+    }
+    const cv = document.createElement('canvas')
+    cv.width = w
+    cv.height = h
+    cv.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(rgba), w, h), 0, 0)
+    return cv.toDataURL('image/png')
+  }
+
   async prepareExport(kind, name) {
     if (kind === 'glb') return buildGLBPreview(this.buildExportGroup(), name || `fasttree-${this.lastParams?.seed || 'tree'}.glb`)
     if (kind === 'obj') return buildOBJPreview(this.buildExportGroup(), name || `fasttree-${this.lastParams?.seed || 'tree'}.obj`)
     if (kind === 'png') {
-      this._renderFrame()
-      const el = this.renderer.domElement
-      const dataUrl = el.toDataURL('image/png')
-      return buildPNGPreview(dataUrl, name || `fasttree-${this.lastParams?.seed || 'tree'}.png`, el.width, el.height)
+      const dataUrl = await this._captureFrameDataUrl()
+      const w = this.renderer.domElement.width
+      const h = this.renderer.domElement.height
+      return buildPNGPreview(dataUrl, name || `fasttree-${this.lastParams?.seed || 'tree'}.png`, w, h)
     }
     throw new Error('不支持的导出预览类型: ' + kind)
   }
@@ -3227,11 +3409,12 @@ export class TreeScene {
    * 先手动 render: 保证拿到的是"此刻"的画面, 而不是浏览器上一次合成的结果。
    *
    * @param {string} [name] 文件名
-   * @returns {*} exportScreenshot 的返回值
+   * @returns {Promise<Blob>} 已下载的 PNG Blob
    */
-  screenshot(name) {
-    this._renderFrame()
-    return exportScreenshot(this.renderer, name)
+  async screenshot(name) {
+    const dataUrl = await this._captureFrameDataUrl()
+    // 与 exportScreenshot 同语义: 下载 + 返回 Blob
+    return exportDataURLPNG(dataUrl, name)
   }
 
   /* ------------------------------------------------------------------ */
@@ -3363,6 +3546,13 @@ export class TreeScene {
     // 动态阴影深度材质(每个主材质一份)
     for (const dm of this._depthMaterials.values()) dm.dispose()
     this._depthMaterials.clear()
+    // Node 路径的后处理管线 (RenderPipeline + PassNode 的 RT)
+    if (this._postFX) {
+      this._postFX.dispose()
+      this._postFX = null
+    }
+    // Node 路径特效材质 (ShaderMaterial 版由各 rebuild* 的 dispose 处理, 这里补 GPU 版的兜底)
+    this._gpuEffectMats.length = 0
     disposeFruitExportMaterial(this._fruitExportMaterial)
     this._fruitExportMaterial = null
     /* ---- 空间引导力: 变换轴 + 示意图 ---- */

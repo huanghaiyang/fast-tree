@@ -238,6 +238,29 @@ export function exportScreenshot(renderer, filename = 'fasttree.png') {
   })
 }
 
+/**
+ * 把已有 PNG dataURL 直接下载。
+ *
+ * 为什么需要它: Node/WebGPU 路径的截图是"渲染到 RT -> 异步读回像素 -> 画进临时 canvas"
+ * 得到的, 拿到的本身就是 dataURL; 再走 canvas.toBlob 等于让同一张图多编码一次。
+ * 这里直接用 atob 还原成二进制再包 Blob, 不经过任何图像编解码。
+ *
+ * @param {string} dataUrl PNG dataURL
+ * @param {string} [filename='fasttree.png']
+ * @returns {Blob} 已下载的 Blob (文件名为空或浏览器拒绝时为未下载的 Blob, 但依然返回)
+ */
+export function exportDataURLPNG(dataUrl, filename = 'fasttree.png') {
+  const comma = dataUrl.indexOf(',')
+  const header = dataUrl.slice(0, comma)
+  const mime = (/:([^;]+)/.exec(header) || [])[1] || 'image/png'
+  const bin = atob(dataUrl.slice(comma + 1))
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  const blob = new Blob([bytes], { type: mime })
+  if (filename) downloadBlob(blob, filename)
+  return blob
+}
+
 /** 读取本地文件为文本 */
 export function readTextFile(file) {
   return new Promise((resolve, reject) => {

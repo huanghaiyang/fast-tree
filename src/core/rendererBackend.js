@@ -19,10 +19,15 @@
  *   isWebGPU       —— 底层是否真的跑在 WebGPU 上 (决定能力提示: 后处理/读回)
  *   backendName    —— 给人看的名字, 显示在状态栏 / 面板提示里
  *
- * 已知能力边界 (WebGPU 路径):
+ * 已知能力边界 (Node 路径, 对应 three r187 的现状):
  *   - ShaderMaterial / onBeforeCompile 不可用 -> 树材质走 materialsGPU.js 的 TSL 版本;
- *   - EffectComposer 是 WebGL 专用 -> Bloom/DOF 暂时跳过 (UI 会提示);
- *   - 伪装卡生成依赖 WebGL 的 readRenderTargetPixels -> WebGPU 下暂不可用。
+ *     这也是**唯一**保留的功能差异 (自定义 GLSL 在产品上仍是 WebGL 专有能力);
+ *   - 后处理不再跳过: postGPU.js 用 RenderPipeline + TSL 的 bloom()/dof() 复刻 Bloom/DOF,
+ *     参数语义与 EffectComposer 版本对齐 (两套 API 的取值换算见该文件头部注释);
+ *   - 伪装卡/截图: readRenderTargetPixels 是 WebGL 专用, 但 Node 侧有
+ *     readRenderTargetPixelsAsync, 读回逻辑已改写为 async (见 impostor.js / sceneManager._captureFrameDataUrl);
+ *   - 动态阴影同样不再降级: 阴影深度材质会自动继承主材质的 positionNode 与 maskNode/alphaTest,
+ *     所以风场位移与树叶裁剪在阴影 pass 里天然生效, 不需要 customDepthMaterial。
  */
 
 import * as THREE from 'three'

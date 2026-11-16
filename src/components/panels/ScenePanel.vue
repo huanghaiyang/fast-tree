@@ -11,9 +11,17 @@
   </Section>
 
   <Section title="场景" hint="Scene">
-    <SelectRow label="渲染后端" v-model="s.renderer" :options="renderOptions" />
+    <SelectRow
+      label="渲染引擎"
+      hint="选择渲染路径: auto 优先 WebGPU, 不可用时自动回退 (WebGL 2 Node / 经典 WebGL)。切换后立即重建场景, 保留当前视角, 不需要刷新页面。"
+      :model-value="s.renderer"
+      :options="renderOptions"
+      @update:model-value="onEngineChange"
+    />
     <p class="muted" style="margin: 0 0 6px">
-      当前: {{ state.renderBackend || '初始化中…' }}。auto 会优先 WebGPU，不可用时自动回退 WebGL；切换后需刷新页面生效。
+      当前: {{ state.renderBackend || '初始化中…' }}<span v-if="state.engineSwitching"> · 切换中…</span>。
+      切换立即生效（销毁旧 renderer 后按同一套参数重建场景，视角保持不变）；auto 会优先 WebGPU，
+      不可用时自动回退到 WebGL 2 (Node) 或经典 WebGL。
     </p>
     <ToggleRow label="渐变天空" v-model="s.gradient" />
     <ColorRow label="背景色" v-model="s.background" />
@@ -53,7 +61,7 @@
 
   <Section title="后处理" hint="Post FX" :default-collapsed="true">
     <p v-if="isNodeRenderer" class="muted" style="margin: 0 0 6px">
-      WebGPU 渲染后端暂不支持 Bloom / DOF（后处理仍依赖 WebGL 管线）；如需这两个效果，请把「渲染后端」切到 WebGL 并刷新。
+      当前 Node 后端由 TSL 管线（RenderPipeline）实现 Bloom / DOF，参数口径与 WebGL 对齐（DOF 按几何关系换算，同一光圈/最大虚化下观感接近）；首次开启会编译着色器，可能有一帧卡顿。
     </p>
     <ToggleRow label="泛光 (Bloom)" v-model="s.bloomEnabled"
       hint="让亮部渗出光晕, 逆光叶片/天空更通透" />
@@ -78,7 +86,7 @@ import SliderRow from '../ui/SliderRow.vue'
 import ToggleRow from '../ui/ToggleRow.vue'
 import SelectRow from '../ui/SelectRow.vue'
 import ColorRow from '../ui/ColorRow.vue'
-import { state } from '../../store/treeStore.js'
+import { state, sceneApi } from '../../store/treeStore.js'
 import { computed } from 'vue'
 import { ENVIRONMENTS, applyEnvironment } from '../../core/environments.js'
 
@@ -100,6 +108,17 @@ const playing = computed(() => state.playing)
 
 function useEnv(id) {
   applyEnvironment(s, id)
+}
+
+/**
+ * 切换渲染引擎: 先写参数 (下次启动/导入工程时沿用), 再让视口热切换。
+ * 真正的重建在 Viewport 的 switchBackend 里 (保存相机位姿 -> dispose -> 新后端重建 -> 还原视角);
+ * 这里不 await, 免得把面板操作卡住 —— 进度由 state.engineSwitching 反映。
+ */
+function onEngineChange(v) {
+  if (v !== 'auto' && v !== 'webgpu' && v !== 'webgl') return
+  s.renderer = v
+  sceneApi.switchBackend?.(v)
 }
 
 function frame() {

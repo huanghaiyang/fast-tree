@@ -132,9 +132,11 @@ const impModes = [
   { value: 'atlas', label: '图集伪装卡 (多视角)' },
   { value: 'cross', label: '交叉卡 (2~4 面片)' },
 ]
-function onImpostor() {
+async function onImpostor() {
   try {
-    doGenerateImpostor({ mode: impMode.value, views: impViews.value, elevations: impElev.value, size: impSize.value })
+    // 生成器是 async 的(Node 渲染路径的像素读回必须异步), 这里必须 await:
+    // 否则 catch 抓不到生成期间抛的错, 状态栏会永远停在空白。
+    await doGenerateImpostor({ mode: impMode.value, views: impViews.value, elevations: impElev.value, size: impSize.value })
   } catch (e) {
     status.value = '伪装卡生成失败: ' + (e && e.message ? e.message : e)
   }

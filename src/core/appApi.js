@@ -45,6 +45,44 @@ import { COMMAND_NAMES } from './apiRegistry.js'
  * 保证纯静态预览也能正常加载模块 —— 只是连不上桥, 命令会一直排队到超时。
  */
 const BRIDGE = 'http://127.0.0.1:' + (typeof __APP_BRIDGE_PORT__ !== 'undefined' ? __APP_BRIDGE_PORT__ : 5275)
+
+/**
+ * 把一张已有 PNG dataURL 收敛成"模型友好的截图": 默认 JPEG + 最长边 900px。
+ *
+ * 给 Node/WebGPU 截图路径用的收尾步骤 —— 那边只能给出 dataURL(直接从 RT 读回),
+ * 拿不到 canvas 句柄, 所以要重新解码 -> 缩放 -> 编码。缩放交给 2D canvas,
+ * 与 WebGL 路径的产出口径保持一致(max/quality 语义相同)。
+ *
+ * @param {string} dataUrl 原始 PNG dataURL
+ * @param {{max?:number, quality?:number}} [a] 与 app.screenshot 参数一致
+ * @returns {Promise<{dataUrl:string, bytes:number, width:number, height:number, format:string}>}
+ */
+async function finishShot(dataUrl, a) {
+  const max = a?.max === undefined ? 900 : Number(a.max)
+  const quality = Math.min(0.95, Math.max(0.4, Number(a?.quality) || 0.82))
+  // 解码 dataURL: Image 的 onload 是异步的, 所以整个函数必须 async
+  const img = await new Promise((resolve, reject) => {
+    const im = new Image()
+    im.onload = () => resolve(im)
+    im.onerror = () => reject(new Error('截图解码失败'))
+    im.src = dataUrl
+  })
+  const srcW = Math.max(1, img.width)
+  const srcH = Math.max(1, img.height)
+  if (Number.isFinite(max) && max > 0) {
+    const longest = Math.max(srcW, srcH)
+    const scale = Math.min(1, max / longest)
+    const width = Math.max(1, Math.round(srcW * scale))
+    const height = Math.max(1, Math.round(srcH * scale))
+    const cv = document.createElement('canvas')
+    cv.width = width
+    cv.height = height
+    cv.getContext('2d').drawImage(img, 0, 0, width, height)
+    const url = cv.toDataURL('image/jpeg', quality)
+    return { dataUrl: url, bytes: Math.round(url.length * 0.75), width, height, format: 'jpeg' }
+  }
+  return { dataUrl, bytes: Math.round(dataUrl.length * 0.75), width: srcW, height: srcH, format: 'png' }
+}
 /**
  * 按点号路径就地写值, 途经的中间层若为 null/undefined 会自动补成空对象。
  *
@@ -532,7 +570,7 @@ export const COMMAND_HANDLERS = {
    * @param {{max?:number, quality?:number}} [a] max=最长边像素(0=不缩放), quality=JPEG 质量 0.4~0.95
    * @returns {{dataUrl:string, bytes:number, width:number, height:number, format:string}}
    */
-  'app.screenshot': (a) => {
+  'app.screenshot': async (a) => {
     const sc = window.__fastTreeScene
     const renderer = sc && sc.renderer
     const canvas = renderer && renderer.domElement
@@ -562,6 +600,12 @@ export const COMMAND_HANDLERS = {
       }
     }
     try {
+      // Node/WebGPU 路径: canvas 后面是交换链, 帧外 toDataURL 拿不到内容,
+      // 只能由 TreeScene 渲染到 RT 再异步读回 (顺带把后处理也带进截图)。
+      if (sc.isNodeRenderer && typeof sc._captureFrameDataUrl === 'function') {
+        const dataUrl = await sc._captureFrameDataUrl()
+        return await finishShot(dataUrl, a)
+      }
       renderer.render(sc.scene, sc.camera)
       const max = a?.max === undefined ? 900 : Number(a.max)
       const quality = Math.min(0.95, Math.max(0.4, Number(a?.quality) || 0.82))
@@ -599,8 +643,8 @@ export const COMMAND_HANDLERS = {
    * 返回的 dataUrl 是整张图集 PNG; meta 里带 center/radius/fov/distance/
    * layout(行列)/views/elevations, 是 setImpostorPreview 重建 3D 预览的唯一依据。
    */
-  'app.impostor': (a) => {
-    const res = doGenerateImpostor({ mode: a?.mode || 'atlas', views: a?.views, size: a?.size, elevations: a?.elevations })
+  'app.impostor': async (a) => {
+    const res = await doGenerateImpostor({ mode: a?.mode || 'atlas', views: a?.views, size: a?.size, elevations: a?.elevations })
     return { meta: res.meta, width: res.width, height: res.height, coverage: res.coverage, dataUrl: res.dataUrl }
   },
   /**

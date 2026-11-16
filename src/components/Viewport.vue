@@ -8,7 +8,7 @@
       <pre style="margin: 4px 0 0; white-space: pre-wrap">{{ state.shaderError }}</pre>
     </div>
 
-    <div v-if="state.busy" class="busy">重建几何中…</div>
+    <div v-if="state.busy" class="busy">{{ state.engineSwitching ? '切换渲染引擎中…' : '重建几何中…' }}</div>
 
     <div class="overlay stats">
       <div><span class="k">树枝</span> <b>{{ state.stats.branches }}</b> · <span class="k">叶片</span> <b>{{ state.stats.leaves }}</b></div>
@@ -28,6 +28,28 @@
 
     <div class="overlay growth-quick">
       <button class="btn small" @click="playGrowth">🌱 从 0 播放生长</button>
+    </div>
+
+    <!-- 渲染引擎切换: 视口右上角悬浮 (顶栏在窄窗口下已经排满, 塞那里会被挤出屏幕)。
+         左边是"意图"(auto/webgpu/webgl), 右边是"实际后端"徽标 —— auto 在没 WebGPU 的机器上
+         会落到 WebGL 2 (Node) 或经典 WebGL, 两个都得看得到。
+         切换是热切换 (重建场景、保留视角), 不需要刷新页面。 -->
+    <div class="overlay engine-switch" :title="engineTitle">
+      <span class="engine-label">引擎</span>
+      <select
+        class="engine-select"
+        :value="engineMode"
+        :disabled="state.engineSwitching"
+        aria-label="渲染引擎"
+        @change="onEngineChange($event.target.value)"
+      >
+        <option value="auto">自动</option>
+        <option value="webgpu">WebGPU</option>
+        <option value="webgl">WebGL</option>
+      </select>
+      <span class="engine-badge" :class="{ busy: state.engineSwitching }">
+        {{ state.engineSwitching ? '切换中…' : (state.renderBackend || '…') }}
+      </span>
     </div>
 
     <WindCompass />
@@ -72,6 +94,51 @@ import {
 const host = ref(null)
 const fps = ref(0)
 const axisCv = ref(null)
+
+/* ---------------- 渲染引擎切换 (右上角悬浮控件) ----------------
+ * engineMode 是用户的**意图** (auto/webgpu/webgl, 存在 params.scene.renderer 里,
+ * 会随 .ftree 导出/导入走); state.renderBackend 是**实际**后端。
+ * 两者可能不一致: auto 在没 WebGPU 的机器上会落到 WebGL 2 (Node) 或经典 WebGL —— 这正是要展示的信息。
+ * 真正的重建在 switchBackend() 里 (保存位姿 -> dispose -> 新后端重建 -> 还原视角)。 */
+const engineMode = computed(() => state.params.scene.renderer || 'auto')
+const engineTitle = computed(() => {
+  const cur = state.renderBackend || '初始化中'
+  if (engineMode.value === 'auto') {
+    return `当前实际后端: ${cur}\n自动模式: 优先 WebGPU, 不可用时回退 WebGL 2 (Node) / 经典 WebGL\n切换会立即重建场景, 保留当前视角, 无需刷新页面`
+  }
+  const want = engineMode.value === 'webgpu' ? 'WebGPU' : 'WebGL'
+  return `当前实际后端: ${cur}\n已指定: ${want}\n切换会立即重建场景, 保留当前视角, 无需刷新页面`
+})
+const ENGINE_KEY = 'fasttree.renderer'
+
+/** 读上次手动选择的渲染引擎 (localStorage)。参数表本身不持久化, 所以引擎选择单独存一份。 */
+function loadEnginePreference() {
+  try {
+    const v = localStorage.getItem(ENGINE_KEY)
+    return v === 'webgl' || v === 'webgpu' || v === 'auto' ? v : null
+  } catch { return null }
+}
+
+function saveEnginePreference(v) {
+  try { localStorage.setItem(ENGINE_KEY, v) } catch { /* 隐私模式下忽略 */ }
+}
+
+function onEngineChange(v) {
+  if (v !== 'auto' && v !== 'webgpu' && v !== 'webgl') return
+  // 参数立即写回 (下次启动 / 导出工程时沿用); **不要**在这里请求取景, 否则视角会被冲掉
+  state.params.scene.renderer = v
+  saveEnginePreference(v)
+  // 手动切换后把 URL 上的 ?renderer= 去掉: 它会让下次刷新又跳回旧后端,
+  // 而用户刚刚明确选过 (探针页从不点这个控件, 所以不影响 A/B 回归)。
+  try {
+    const u = new URL(window.location.href)
+    if (u.searchParams.has('renderer')) {
+      u.searchParams.delete('renderer')
+      window.history.replaceState(null, '', u.toString())
+    }
+  } catch { /* ignore */ }
+  switchBackend(v)
+}
 
 /* ---------------- Blender 风格 XYZ 坐标轴指示器 ----------------
  * 世界坐标系的 X/Y/Z 三个轴通过相机四元数的逆变换投到屏幕:
@@ -194,10 +261,62 @@ let lastCustomCode = ''
 
 onMounted(async () => {
   startBridgeClient()
-  // 渲染器初始化是异步的 (WebGPU 要 await device 就绪), 所以 onMounted 也改成 async。
-  // createRenderer 内部已处理"WebGPU 不可用 -> 回退 WebGL", 不会 throw。
+  // 渲染器初始化是异步的 (WebGPU 要 await device 就绪)。
+  // URL 覆盖: dev/renderer-backend-check.html 需要同一棵树分别在两种后端下截图对比,
+  // 而参数表每次刷新都回到默认值('auto'), 没有 URL 入口就没法在页面间固定后端。
+  // 只接受 webgl / webgpu 两个值, 其它一律忽略 (避免把非法值带进 createRenderer)。
+  try {
+    const forced = new URLSearchParams(window.location.search).get('renderer')
+    if (forced === 'webgl' || forced === 'webgpu') state.params.scene.renderer = forced
+    else {
+      // URL 没指定时, 用上次手动选择的引擎 (存 localStorage): 引擎是个"环境偏好",
+      // 不该每刷新一次就悄悄回到 auto。
+      const saved = loadEnginePreference()
+      if (saved) state.params.scene.renderer = saved
+    }
+  } catch { /* 老浏览器不支持 URLSearchParams / localStorage 被禁时静默忽略 */ }
+  await mountScene({ frameCamera: true })
+
+  if (import.meta.env && import.meta.env.DEV) {
+    window.__fastTreeScene = scene
+    window.__fastTreeSceneApi = sceneApi
+  }
+
+  // FPS 统计 (只挂一次: 切换后端时 scene 会被换掉, 循环本身不重建)
+  let last = performance.now()
+  const tickFps = () => {
+    const now = performance.now()
+    fpsFrames++
+    if (now - last >= 500) {
+      fps.value = Math.round((fpsFrames * 1000) / (now - last))
+      fpsFrames = 0
+      last = now
+    }
+    drawAxes()
+    requestAnimationFrame(tickFps)
+  }
+  requestAnimationFrame(tickFps)
+
+  setupWatchers()
+})
+
+/**
+ * 建渲染器 + 建场景 + 把当前 state 灌进去。
+ *
+ * 为什么单独抽成函数: 前端「渲染引擎」切换是**热切换** —— 销毁旧 renderer 之后,
+ * 用同一套参数在新后端上重新建一遍。渲染器本身无法原地换类型 (材质体系都不同),
+ * 所以"换引擎"必然等于"重建 scene"; 抽出来是为了让首屏和切换走同一条代码路径,
+ * 不存在"初始化能用、切换走另一套魔法"的分叉。
+ *
+ * @param {{frameCamera?: boolean, pose?: {pos: Vector3, target: Vector3} | null}} opts
+ *   frameCamera: 建完是否重新取景 (首屏 true; 切换时 false, 用 pose 还原用户视角)
+ * @returns {Promise<void>}
+ */
+async function mountScene(opts = {}) {
   const { createRenderer } = await import('../core/rendererBackend.js')
-  const backend = await createRenderer({ mode: (state.params.scene && state.params.scene.renderer) || 'auto' })
+  const mode = (state.params.scene && state.params.scene.renderer) || 'auto'
+  // createRenderer 内部已处理"WebGPU 不可用 -> 回退 WebGL", 不会 throw。
+  const backend = await createRenderer({ mode })
   let gpuMaterials = null
   if (backend.isNodeRenderer) {
     // 只有 Node 渲染路径才需要 TSL 材质; 动态 import 避免 WebGL 用户白下载这份代码。
@@ -278,36 +397,82 @@ onMounted(async () => {
     scene.setSelection(state.selection)
     return stats
   }
-  if (import.meta.env && import.meta.env.DEV) {
-    window.__fastTreeScene = scene
-    window.__fastTreeSceneApi = sceneApi
-  }
+  // 渲染引擎热切换 (顶栏「引擎」下拉 / 场景面板"渲染后端"共用这一个入口)
+  sceneApi.switchBackend = (mode) => switchBackend(mode)
+  sceneApi.captureCameraPose = () => captureCameraPose()
 
   scene.updateScene(state.params.scene)
   scene.updateGrowth(state.params.growth, state.params.growth.value)
   scene.setGrowthAuto(state.params.growth.enabled && state.params.growth.auto, state.params.growth.speed)
   scene.windTimeScale = state.params.wind.timeScale
   scene.setPlaying(state.playing)
-  rebuild(true)
+  scene.updateForceGizmos(state.params.forces)
   lastCustomCode = customSignature()
-
-  // FPS 统计
-  let last = performance.now()
-  const tickFps = () => {
-    const now = performance.now()
-    fpsFrames++
-    if (now - last >= 500) {
-      fps.value = Math.round((fpsFrames * 1000) / (now - last))
-      fpsFrames = 0
-      last = now
-    }
-    drawAxes()
-    requestAnimationFrame(tickFps)
+  if (opts.frameCamera || !opts.pose) {
+    rebuild(true)
+  } else {
+    // 热切换: 不重新取景 —— 用户刚摆好的视角不能因为换引擎就跳走
+    scene.build(state.params, { frameCamera: false })
+    scene.setSelection(state.selection)
+    scene.camera.position.copy(opts.pose.pos)
+    scene.controls.target.copy(opts.pose.target)
+    scene.controls.update()
+    state.busy = false
+    state.shaderError = ''
   }
-  requestAnimationFrame(tickFps)
+  if (import.meta.env && import.meta.env.DEV) {
+    window.__fastTreeScene = scene
+    window.__fastTreeSceneApi = sceneApi
+  }
+}
 
-  setupWatchers()
-})
+/** 取当前相机位姿 (热切换前后还原视角用) */
+function captureCameraPose() {
+  if (!scene || !scene.camera || !scene.controls) return null
+  return {
+    pos: scene.camera.position.clone(),
+    target: scene.controls.target.clone(),
+  }
+}
+
+/**
+ * 热切换渲染后端: auto / webgpu / webgl。
+ *
+ * 为什么不能"原地换": 两条路径的材质体系完全不同 (NodeMaterial/TSL vs PBR+onBeforeCompile),
+ * 后处理管线、阴影深度材质、粒子材质也都绑在 renderer 上。所以只能
+ * 保存相机位姿 -> dispose 旧 scene(连带 renderer/canvas) -> 用新后端重建 -> 还原视角。
+ * 参数全在 state.params 里 (含 seed), 重建出来的是**同一棵树**, 无缝切换。
+ *
+ * @param {'auto'|'webgpu'|'webgl'} mode
+ * @returns {Promise<boolean>} 是否真的执行了切换 (重复点击同一模式返回 false)
+ */
+async function switchBackend(mode) {
+  const want = mode === 'webgl' || mode === 'webgpu' ? mode : 'auto'
+  state.params.scene.renderer = want
+  if (state.engineSwitching || !scene) return false
+  // 已经是目标后端时不要白重建一次 (auto 与 webgpu 在真有 WebGPU 的机器上等价)
+  const cur = state.renderBackend
+  if (want === 'webgl' && cur === 'WebGL') return false
+  if (want === 'webgpu' && cur === 'WebGPU') return false
+  if (want === 'auto' && cur === 'WebGPU') return false
+  const pose = captureCameraPose()
+  state.engineSwitching = true
+  state.busy = true
+  try {
+    scene.dispose()
+    scene = null
+    await mountScene({ frameCamera: false, pose })
+    state.rebuildVersion++ // 让外部(桥接/脚本)知道场景换了实例
+    return true
+  } catch (e) {
+    console.error('[fast-tree] 切换渲染引擎失败:', e)
+    state.shaderError = String((e && e.stack) || e)
+    return false
+  } finally {
+    state.engineSwitching = false
+    state.busy = false
+  }
+}
 
 onBeforeUnmount(() => {
   unmounted = true
@@ -438,4 +603,38 @@ function setupWatchers() {
   cursor: pointer;
   z-index: 5;
 }
+
+/* 渲染引擎切换: 贴左下角、压在操作提示上方。
+   为什么不在顶栏: 顶栏按钮多, 窄窗口(≈1150px)已经排满, 塞进去会被挤出屏幕;
+   为什么不在右上: 那里是"播放生长 / 风向罗盘 / XYZ 指示器"三件套。 */
+.overlay.engine-switch {
+  left: 12px;
+  bottom: 44px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  pointer-events: auto;
+  z-index: 6;
+  font-size: 11px;
+}
+.engine-label { color: var(--fg-dim); }
+.engine-select {
+  height: 24px;
+  padding: 0 4px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: rgba(10, 18, 26, 0.9);
+  color: var(--fg);
+  font-size: 11px;
+  cursor: pointer;
+}
+.engine-select:disabled { cursor: progress; opacity: 0.6; }
+.engine-badge {
+  min-width: 62px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+.engine-badge.busy { color: var(--fg-dim); }
 </style>

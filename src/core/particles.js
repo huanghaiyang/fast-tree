@@ -217,7 +217,10 @@ export function createParticleMaterial(params, sharedUniforms) {
 export function updateParticleMaterial(mat, params, leafBBox) {
   if (!mat) return
   const P = params.particles || {}
-  const u = mat.uniforms
+  // Node 渲染路径的材质是 NodeMaterial: 它没有 .uniforms, 参数挂在 userData.uniforms
+  // (键名与这里的 ShaderMaterial 完全一致, 见 materialsGPU.createParticleMaterialGPU)。
+  const u = mat.uniforms || (mat.userData && mat.userData.uniforms)
+  if (!u) return
   u.uSize.value = P.size === undefined ? 0.05 : P.size
   u.uSpeed.value = P.speed === undefined ? 0.35 : P.speed
   u.uFall.value = P.fall === undefined ? 1 : P.fall
@@ -257,3 +260,75 @@ export function buildParticlePoints(leafGeometry, params, sharedUniforms, seed) 
   points.visible = !!P.enabled
   return points
 }
+
+/**
+ * 构建粒子层的 Node 渲染路径版本 (**四边形 billboard**, 不是 Points)。
+ *
+ * 为什么不是继续用 Points:
+ *   WGSL 没有 gl_PointSize, WebGPU 的 point primitive 恒为 1 像素; three 的
+ *   WebGL2(Node) 后端也把 gl_PointSize 写死 1.0。所以 Node 路径下用 Points 画出来
+ *   只会是一堆肉眼几乎看不见的单像素点 —— 必须退化成"面向相机的四边形"。
+ *
+ * 几何组织与 *Points 版完全同构(同一套出生点、同一套 aSeed 随机流), 只多了 uv 与索引:
+ *   - position: 出生点, 4 个顶点相同(卡片形状由 uv 在着色器里展开)
+ *   - aSeed:    vec3, 4 个顶点相同
+ *   - uv:       四角 (0,0)/(1,0)/(1,1)/(0,1)
+ * 这样"同一 seed 同一个粒子分布"在两种后端下也保持一致。
+ *
+ * @param {THREE.BufferGeometry} leafGeometry 叶片几何, 用于采样出生点
+ * @param {object} params 全量参数
+ * @param {object} sharedUniforms 共享 uniform 池(仅 legacy 材质用, GPU 材质走逐帧同步)
+ * @param {number} seed
+ * @param {Function} materialFactory (params, sharedUniforms) => NodeMaterial
+ * @returns {THREE.Mesh}
+ */
+export function buildParticleBillboards(leafGeometry, params, sharedUniforms, seed, materialFactory) {
+  const P = params.particles || {}
+  const spawn = sampleEmitPositions(leafGeometry, params, seed)
+  const count = spawn.length / 3
+  const vertsPer = 4
+  const pos = new Float32Array(count * vertsPer * 3)
+  const uvs = new Float32Array(count * vertsPer * 2)
+  const seeds = new Float32Array(count * vertsPer * 3)
+  const idx = new Uint32Array(count * 6)
+  const cornerUv = [[0, 0], [1, 0], [1, 1], [0, 1]]
+  const seedBuf = buildParticleSeeds(count, seed)
+  for (let i = 0; i < count; i++) {
+    const sx = spawn[i * 3], sy = spawn[i * 3 + 1], sz = spawn[i * 3 + 2]
+    const b = i * vertsPer
+    for (let v = 0; v < vertsPer; v++) {
+      const k = b + v
+      pos[k * 3] = sx
+      pos[k * 3 + 1] = sy
+      pos[k * 3 + 2] = sz
+      uvs[k * 2] = cornerUv[v][0]
+      uvs[k * 2 + 1] = cornerUv[v][1]
+      seeds[k * 3] = seedBuf[i * 3]
+      seeds[k * 3 + 1] = seedBuf[i * 3 + 1]
+      seeds[k * 3 + 2] = seedBuf[i * 3 + 2]
+    }
+    const o = i * 6
+    idx[o] = b; idx[o + 1] = b + 1; idx[o + 2] = b + 2
+    idx[o + 3] = b; idx[o + 4] = b + 2; idx[o + 5] = b + 3
+  }
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+  geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+  geo.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 3))
+  geo.setIndex(new THREE.BufferAttribute(idx, 1))
+
+  const mat = materialFactory(params, sharedUniforms)
+  if (leafGeometry) {
+    if (!leafGeometry.boundingBox) leafGeometry.computeBoundingBox()
+    updateParticleMaterial(mat, params, leafGeometry.boundingBox)
+  }
+  const mesh = new THREE.Mesh(geo, mat)
+  // 顶点在着色器里大幅位移 -> 包围球不准, 必须关掉视锥剔除
+  mesh.frustumCulled = false
+  mesh.visible = !!P.enabled
+  // 粒子是加法混合的薄片, 不投影不接收
+  mesh.castShadow = false
+  mesh.receiveShadow = false
+  return mesh
+}
+

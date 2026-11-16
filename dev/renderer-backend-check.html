@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>renderer-backend-check: booting</title>
+    <style>
+      body { margin: 0; background: #111; color: #ddd; font: 12px monospace }
+      iframe { width: 1280px; height: 800px; border: 0; display: block }
+      pre { margin: 0; padding: 6px; white-space: pre-wrap }
+    </style>
+  </head>
+  <body>
+    <iframe id="f" src="/?renderer=webgpu"></iframe>
+    <pre id="out"></pre>
+    <script type="module">
+      /*
+       * renderer-backend-check: WebGPU(Node) 与 WebGL 两条渲染路径的回归探针
+       * ------------------------------------------------------------
+       * 同一棵树依次跑两种后端, 每个后端做同一组开关操作:
+       *   ① 基线画面(像素统计 + 图元统计)
+       *   ② Bloom / DOF 开关(后处理是否真的接上)
+       *   ③ 关掉后处理(应回到接近基线的画面)
+       *   ④ 季节特效(粒子/落叶/堆积)开关(材质是否被 Node 路径接受)
+       *   ⑤ 动态阴影开关(shadowMap.autoUpdate 是否跟随参数)
+       *   ⑥ PNG 截图(RT + 异步读回)
+       *   ⑦ 伪装卡(离屏多视角 + 异步读回 + Node 版预览面片)
+       *
+       * 像素统计一律走 **dataURL 解码** 而不是直接 drawImage(canvas):
+       *   WebGPU 的 canvas 后面是交换链, 帧外 drawImage/toDataURL 很可能拿到空白,
+       *   那样两条后端都会测出"全黑", 探针就失去意义。_captureFrameDataUrl 是
+       *   应用自己的截图实现(渲染到 RT 再读回), 两条后端都能给出真实像素。
+       *
+       * 后端靠 URL 参数固定: /?renderer=webgpu 与 /?renderer=webgl
+       * (Viewport.vue 的 onMounted 读这个参数 —— 参数表每次刷新都会回到 auto)
+       *
+       * 结果写进 document.title, 截图 POST 到 127.0.0.1:5274 (没起接收端时忽略)。
+       */
+      const RECV = 'http://127.0.0.1:5274/shot'
+      const f = document.getElementById('f')
+      const out = document.getElementById('out')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const all = []
+
+      /** 等 iframe 里的应用真正就绪 (state.ready && TreeScene 实例存在) */
+      function bootAndWait(win, ms = 20000) {
+        const t0 = Date.now()
+        return new Promise((resolve, reject) => {
+          const tick = () => {
+            const st = win.__fastTree
+            const sc = win.__fastTreeScene
+            if (st && st.ready && sc && sc.renderer) return resolve({ st, sc })
+            if (Date.now() - t0 > ms) return reject(new Error('boot timeout'))
+            setTimeout(tick, 250)
+          }
+          tick()
+        })
+      }
+
+      /** 取当前帧的 PNG dataURL: 优先用应用自己的 RT 读回, 退化为 canvas 编码 */
+      async function frameDataUrl(win, doc, sc) {
+        try {
+          if (sc && typeof sc._captureFrameDataUrl === 'function') return await sc._captureFrameDataUrl()
+        } catch { /* 退化为 canvas */ }
+        return doc.querySelector('canvas').toDataURL('image/png')
+      }
+
+      function decode(win, dataUrl) {
+        return new Promise((resolve, reject) => {
+          const im = new win.Image()
+          im.onload = () => resolve(im)
+          im.onerror = () => reject(new Error('decode fail'))
+          im.src = dataUrl
+        })
+      }
+
+      /** 画面像素统计: 亮度占比 / 不透明占比 / 最大亮度 / 平均色 / 采样哈希
+       *  注意"绿色占比"只在绿色叶系树种上有意义(默认是浅色叶的榆树), 所以改用平均 RGB 做色调比较。 */
+      async function px(win, doc, sc) {
+        const dataUrl = await frameDataUrl(win, doc, sc)
+        const img = await decode(win, dataUrl)
+        const W = 320, H = 200
+        const c2 = doc.createElement('canvas')
+        c2.width = W; c2.height = H
+        const ctx = c2.getContext('2d')
+        ctx.drawImage(img, 0, 0, W, H)
+        const d = ctx.getImageData(0, 0, W, H).data
+        let bright = 0, lit = 0, maxLum = 0, hash = 2166136261
+        let sr = 0, sg = 0, sb = 0
+        for (let i = 0; i < d.length; i += 4) {
+          const r = d[i], g = d[i + 1], b = d[i + 2]
+          const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+          if (lum > maxLum) maxLum = lum
+          if (lum > 60) bright++
+          if (r + g + b > 40) lit++
+          sr += r; sg += g; sb += b
+          if (i % 64 === 0) { hash ^= r + g * 3 + b * 7; hash = Math.imul(hash, 16777619) }
+        }
+        const n = W * H
+        return {
+          bright: +((bright / n) * 100).toFixed(2),
+          lit: +((lit / n) * 100).toFixed(2),
+          rgb: [Math.round(sr / n), Math.round(sg / n), Math.round(sb / n)],
+          maxLum: Math.round(maxLum),
+          h: (hash >>> 0).toString(16),
+        }
+      }
+
+      async function shot(win, doc, sc, name) {
+        try {
+          const url = await frameDataUrl(win, doc, sc)
+          await fetch(`${RECV}?name=${name}`, { method: 'POST', body: url })
+        } catch {
+          // 接收端没起 = 正常开发态, 不中断探针
+        }
+      }
+
+      /**
+       * 跑一个后端。
+       * @param {'webgpu'|'webgl'} mode
+       */
+      async function runCase(mode) {
+        const res = { mode, ok: true, steps: {}, errs: [] }
+        f.src = '/?renderer=' + mode
+        const loaded = new Promise((r) => f.addEventListener('load', r, { once: true }))
+        await loaded
+        const win = f.contentWindow
+        const doc = f.contentDocument
+        // 捕获三类异常: 同步抛错 / Promise 拒绝 / console.error
+        win.addEventListener('error', (e) => res.errs.push('ONERROR:' + String(e.message).slice(0, 140)))
+        win.addEventListener('unhandledrejection', (e) => res.errs.push('REJ:' + String(e.reason).slice(0, 140)))
+        const oe = win.console.error
+        win.console.error = function (...a) { res.errs.push('CERR:' + a.map(String).join(' ').slice(0, 150)); oe.apply(win.console, a) }
+
+        const { st, sc } = await bootAndWait(win)
+        res.backend = st.renderBackend
+        res.isNode = !!sc.isNodeRenderer
+        res.gpu = typeof win.navigator.gpu !== 'undefined'
+        await sleep(900)
+        res.steps.base = await px(win, doc, sc)
+        res.steps.baseStats = {
+          // stats 里没有 triangles 汇总字段, 只有 bark/leaf/flower 三段
+          tris: (st.stats.barkTriangles || 0) + (st.stats.leafTriangles || 0) + (st.stats.flowerTriangles || 0),
+          leaves: st.stats.leaves || 0,
+          nodes: st.stats.nodeCount || 0,
+          // draw calls 两条后端的计数口径不同(WebGPU 的 info.render 只统计部分 pass,
+          // WebGL 会把阴影 pass 一起算), 所以只记录、不做相等断言
+          calls: st.renderInfo ? st.renderInfo.calls : null,
+        }
+        await shot(win, doc, sc, mode + '-1-base')
+
+        /* ---- ② Bloom ---- */
+        st.params.scene.bloomEnabled = true
+        st.params.scene.bloomStrength = 0.9
+        st.params.scene.bloomThreshold = 0.35
+        await sleep(1400)
+        res.steps.bloom = await px(win, doc, sc)
+        res.steps.bloomState = {
+          chainKey: sc._postFX ? sc._postFX.chainKey : null,
+          composer: !!sc._composer,
+          bloomPass: !!(sc._bloomPass && sc._bloomPass.enabled),
+        }
+        await shot(win, doc, sc, mode + '-2-bloom')
+
+        /* ---- ③ Bloom + DOF ---- */
+        st.params.scene.dofEnabled = true
+        st.params.scene.dofFocus = 6
+        st.params.scene.dofAperture = 0.0001
+        st.params.scene.dofMaxBlur = 0.012
+        await sleep(1600)
+        res.steps.dof = await px(win, doc, sc)
+        res.steps.dofState = {
+          chainKey: sc._postFX ? sc._postFX.chainKey : null,
+          dofPass: !!(sc._bokehPass && sc._bokehPass.enabled),
+        }
+        await shot(win, doc, sc, mode + '-3-dof')
+
+        /* ---- ④ 关掉后处理 ---- */
+        st.params.scene.bloomEnabled = false
+        st.params.scene.dofEnabled = false
+        await sleep(900)
+        res.steps.postOff = await px(win, doc, sc)
+        res.steps.postOffState = {
+          chainKey: sc._postFX ? sc._postFX.chainKey : null,
+          active: sc._postFX ? sc._postFX.active : false,
+        }
+
+        /* ---- ⑤ 季节特效 ---- */
+        st.params.particles.enabled = true
+        st.params.fall.enabled = true
+        st.params.litter.enabled = true
+        await sleep(1600)     // 特效重建 + 一小段下落动画
+        res.steps.fx = await px(win, doc, sc)
+        res.steps.fxState = {
+          particles: !!sc.particles,
+          fall: !!sc.fallMesh,
+          litter: !!sc.litterMesh,
+          // Node 路径应为 NodeMaterial; WebGL 路径应为 ShaderMaterial
+          particleMat: sc.particles ? sc.particles.material.type : null,
+          fallMat: sc.fallMesh ? sc.fallMesh.material.type : null,
+          litterMat: sc.litterMesh ? sc.litterMesh.material.type : null,
+          particleVerts: sc.particles ? sc.particles.geometry.attributes.position.count : null,
+        }
+        await shot(win, doc, sc, mode + '-4-fx')
+
+        /* ---- ⑥ 动态阴影 ---- */
+        st.params.scene.shadows = true
+        st.params.scene.dynamicShadows = false
+        await sleep(500)
+        const staticAuto = sc.renderer.shadowMap ? !!sc.renderer.shadowMap.autoUpdate : null
+        st.params.scene.dynamicShadows = true
+        await sleep(700)
+        res.steps.shadow = {
+          staticAutoUpdate: staticAuto,
+          dynamicAutoUpdate: sc.renderer.shadowMap ? !!sc.renderer.shadowMap.autoUpdate : null,
+        }
+
+        /* ---- ⑦ PNG 截图 ---- */
+        try {
+          const dataUrl = await sc._captureFrameDataUrl()
+          const img = await decode(win, dataUrl)
+          res.steps.screenshot = {
+            w: img.width, h: img.height,
+            lit: (await px(win, doc, sc)).lit,
+            bytes: dataUrl.length,
+          }
+        } catch (e) {
+          res.steps.screenshot = { error: String(e && e.message ? e.message : e) }
+        }
+
+        /* ---- ⑧ 伪装卡 ---- */
+        try {
+          const imp = await sc.makeImpostor({ mode: 'atlas', views: 4, elevations: 1, size: 256 })
+          res.steps.impostor = {
+            w: imp.width, h: imp.height,
+            coverage: +Number(imp.coverage).toFixed(3),
+            cells: imp.meta ? imp.meta.views : null,
+            bytes: imp.dataUrl ? imp.dataUrl.length : 0,
+          }
+          sc.setImpostorPreview(imp)
+          await sleep(700)
+          res.steps.impostorPreview = { group: !!sc._impostorGroup, active: !!sc._impostorAtlas }
+          await shot(win, doc, sc, mode + '-5-impostor')
+          sc.clearImpostorPreview()
+        } catch (e) {
+          res.steps.impostor = { error: String(e && e.message ? e.message : e) }
+        }
+
+        if (st.shaderError) res.errs.push('SHADER:' + String(st.shaderError).slice(0, 160))
+        res.errCount = res.errs.length
+        return res
+      }
+
+      setTimeout(async () => {
+        const lines = []
+        for (const mode of ['webgpu', 'webgl']) {
+          try {
+            const r = await runCase(mode)
+            all.push(r)
+            lines.push(
+              `[${mode}] backend=${r.backend} node=${r.isNode} navigator.gpu=${r.gpu} errs=${r.errCount}`,
+              `   base=${JSON.stringify(r.steps.base)} stats(tris/leaves/nodes/calls)=${r.steps.baseStats.tris}/${r.steps.baseStats.leaves}/${r.steps.baseStats.nodes}/${r.steps.baseStats.calls}`,
+              `   bloom=${JSON.stringify(r.steps.bloom)} state=${JSON.stringify(r.steps.bloomState)}`,
+              `   dof=${JSON.stringify(r.steps.dof)} state=${JSON.stringify(r.steps.dofState)}`,
+              `   postOff=${JSON.stringify(r.steps.postOff)} state=${JSON.stringify(r.steps.postOffState)}`,
+              `   fx=${JSON.stringify(r.steps.fx)} state=${JSON.stringify(r.steps.fxState)}`,
+              `   shadow=${JSON.stringify(r.steps.shadow)}`,
+              `   screenshot=${JSON.stringify(r.steps.screenshot)}`,
+              `   impostor=${JSON.stringify(r.steps.impostor)} preview=${JSON.stringify(r.steps.impostorPreview)}`,
+              r.errs.length ? `   errs=${r.errs.slice(0, 4).join(' ;; ')}` : '   errs=none'
+            )
+          } catch (e) {
+            lines.push(`[${mode}] FAILED: ${String(e && e.stack ? e.stack : e).slice(0, 600)}`)
+          }
+        }
+        // 跨后端比较: 几何统计必须完全一致(与后端无关); 画面亮度/色调允许小差异
+        // (不同光栅化 + 抗锯齿), 但主色调差距过大就说明有一条后端的材质/色调映射跑偏了。
+        // draw calls 不在比较范围内: 两条后端的 info.render 计数口径不同, 见 baseStats 注释。
+        if (all.length === 2) {
+          const [a, b] = all
+          const sameTris = a.steps.baseStats.tris === b.steps.baseStats.tris
+          const sameLeaves = a.steps.baseStats.leaves === b.steps.baseStats.leaves
+          const dr = Math.abs(a.steps.base.rgb[0] - b.steps.base.rgb[0])
+          const dg = Math.abs(a.steps.base.rgb[1] - b.steps.base.rgb[1])
+          const db = Math.abs(a.steps.base.rgb[2] - b.steps.base.rgb[2])
+          const dlit = Math.abs(a.steps.base.lit - b.steps.base.lit)
+          lines.push(
+            `[compare] tris-equal=${sameTris} leaves-equal=${sameLeaves}` +
+            ` rgb=${a.steps.base.rgb.join('/')} vs ${b.steps.base.rgb.join('/')} dRGB=${dr}/${dg}/${db}` +
+            ` lit=${a.steps.base.lit} vs ${b.steps.base.lit} dLit=${dlit.toFixed(2)}` +
+            ` calls=${a.steps.baseStats.calls}/${b.steps.baseStats.calls}(口径不同, 不作断言)`
+          )
+        }
+        const text = lines.join('\n')
+        out.textContent = text
+        document.title = 'RENDERERCHECK :: ' + text.replace(/\s+/g, ' ').slice(0, 3000)
+      }, 1500)
+    </script>
+  </body>
+</html>

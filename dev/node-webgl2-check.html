@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>node-webgl2-check: booting</title>
+    <style>
+      body { margin: 0; background: #111; color: #ddd; font: 12px monospace }
+      /* 不能让 #app 脱离布局: Viewport 的绘制尺寸来自容器实际像素, display:none 会
+         让 drawing buffer 退化成 1x1, 探针就测出一张纯色平图(曾经踩过)。 */
+      pre { position: fixed; left: 0; bottom: 0; right: 0; max-height: 40vh; overflow: auto;
+            margin: 0; padding: 6px; white-space: pre-wrap; background: rgba(0,0,0,.75); z-index: 9999 }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <pre id="out"></pre>
+    <script type="module">
+      /*
+       * node-webgl2-check: "WebGL 2 (Node)" 分支的回归探针
+       * ------------------------------------------------------------
+       * 这是 renderer-backend-check.html 覆盖不到的第三条路径:
+       *   Safari / 旧 Firefox / 关闭了 WebGPU 的 Chrome 上, WebGPURenderer 会在
+       *   `navigator.gpu` 缺失时**自行回退到 WebGL 2 后端**(three r187:
+       *   WebGPUBackend.init 失败 -> getFallback() -> WebGLBackend)。
+       *   此时 renderer 仍然是 WebGPURenderer 实例(isNodeRenderer=true, 走 NodeMaterial),
+       *   但底层是 WebGL 2 —— 所以它是"Node 材质 + GL 执行"的混合体,
+       *   `renderer.isWebGLRenderer` 为 false, 异步读回走的是 Node 那套签名。
+       *   这条路径的 readRenderTargetPixelsAsync 签名与经典 WebGLRenderer 不同,
+       *   一旦踩错就是伪装卡/截图直接报错, 所以必须有独立探针。
+       *
+       * 做法: 在**导入应用之前**把 navigator.gpu 置为 undefined(同源同 document,
+       *       不需要 iframe), 再 import('/src/main.js') 正常启动应用。
+       *       这样不污染产品代码(不需要在产品里留测试开关)。
+       *
+       * 结果写进 document.title, <pre> 里是人读版; 截图 POST 到 127.0.0.1:5274。
+       */
+      const RECV = 'http://127.0.0.1:5274/shot'
+      const out = document.getElementById('out')
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const lines = []
+      const errs = []
+      window.addEventListener('error', (e) => errs.push('ONERROR:' + String(e.message).slice(0, 140)))
+      window.addEventListener('unhandledrejection', (e) => errs.push('REJ:' + String(e.reason).slice(0, 140)))
+      const oe = console.error
+      console.error = function (...a) {
+        errs.push('CERR:' + a.map(String).join(' ').slice(0, 150))
+        oe.apply(console, a)
+      }
+
+      // ① 先断掉 WebGPU, 再启应用 —— 顺序不能反, 反了 renderer 已经拿到 gpu 对象
+      const gpuDesc = Object.getOwnPropertyDescriptor(Navigator.prototype, 'gpu')
+      if (gpuDesc && gpuDesc.configurable) delete Navigator.prototype.gpu
+      Object.defineProperty(navigator, 'gpu', { value: undefined, configurable: true })
+
+      await import('/src/main.js')
+
+      function bootAndWait(ms = 25000) {
+        const t0 = Date.now()
+        return new Promise((resolve, reject) => {
+          const tick = () => {
+            const st = window.__fastTree
+            const sc = window.__fastTreeScene
+            if (st && st.ready && sc && sc.renderer) return resolve({ st, sc })
+            if (Date.now() - t0 > ms) return reject(new Error('boot timeout'))
+            setTimeout(tick, 250)
+          }
+          tick()
+        })
+      }
+
+      async function frameDataUrl(sc) {
+        if (sc && typeof sc._captureFrameDataUrl === 'function') return await sc._captureFrameDataUrl()
+        return document.querySelector('canvas').toDataURL('image/png')
+      }
+
+      function decode(dataUrl) {
+        return new Promise((resolve, reject) => {
+          const im = new Image()
+          im.onload = () => resolve(im)
+          im.onerror = () => reject(new Error('decode fail'))
+          im.src = dataUrl
+        })
+      }
+
+      async function px(sc) {
+        const dataUrl = await frameDataUrl(sc)
+        const img = await decode(dataUrl)
+        const W = 320, H = 200
+        const c2 = document.createElement('canvas')
+        c2.width = W; c2.height = H
+        const ctx = c2.getContext('2d')
+        ctx.drawImage(img, 0, 0, W, H)
+        const d = ctx.getImageData(0, 0, W, H).data
+        let bright = 0, lit = 0, maxLum = 0, sr = 0, sg = 0, sb = 0
+        for (let i = 0; i < d.length; i += 4) {
+          const r = d[i], g = d[i + 1], b = d[i + 2]
+          const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+          if (lum > maxLum) maxLum = lum
+          if (lum > 60) bright++
+          if (r + g + b > 40) lit++
+          sr += r; sg += g; sb += b
+        }
+        const n = W * H
+        return {
+          bright: +((bright / n) * 100).toFixed(2),
+          lit: +((lit / n) * 100).toFixed(2),
+          rgb: [Math.round(sr / n), Math.round(sg / n), Math.round(sb / n)],
+          maxLum: Math.round(maxLum),
+        }
+      }
+
+      async function shot(sc, name) {
+        try {
+          const url = await frameDataUrl(sc)
+          await fetch(`${RECV}?name=${name}`, { method: 'POST', body: url })
+        } catch { /* 接收端没起 = 正常开发态 */ }
+      }
+
+      setTimeout(async () => {
+        try {
+          const { st, sc } = await bootAndWait()
+          lines.push(
+            `backend=${st.renderBackend} isNode=${!!sc.isNodeRenderer} ` +
+            `isWebGLRenderer=${!!sc.renderer.isWebGLRenderer} navigator.gpu=${typeof navigator.gpu} ` +
+            `backendObj=${sc.renderer.backend && (sc.renderer.backend.isWebGPUBackend ? 'WebGPUBackend' : 'WebGLBackend')}`
+          )
+          await sleep(900)
+          const base = await px(sc)
+          lines.push(`base=${JSON.stringify(base)} stats(tris/leaves/nodes)=${
+            (st.stats.barkTriangles || 0) + (st.stats.leafTriangles || 0) + (st.stats.flowerTriangles || 0)}/${
+            st.stats.leaves || 0}/${st.stats.nodeCount || 0}`)
+          await shot(sc, 'node-webgl2-1-base')
+
+          st.params.scene.bloomEnabled = true
+          st.params.scene.bloomStrength = 0.9
+          st.params.scene.bloomThreshold = 0.35
+          await sleep(1400)
+          lines.push(`bloom=${JSON.stringify(await px(sc))} chainKey=${sc._postFX ? sc._postFX.chainKey : null}`)
+          await shot(sc, 'node-webgl2-2-bloom')
+
+          st.params.scene.dofEnabled = true
+          st.params.scene.dofFocus = 6
+          st.params.scene.dofAperture = 0.0001
+          st.params.scene.dofMaxBlur = 0.012
+          await sleep(1600)
+          lines.push(`dof=${JSON.stringify(await px(sc))} chainKey=${sc._postFX ? sc._postFX.chainKey : null}`)
+          await shot(sc, 'node-webgl2-3-dof')
+
+          st.params.scene.bloomEnabled = false
+          st.params.scene.dofEnabled = false
+          await sleep(900)
+          lines.push(`postOff=${JSON.stringify(await px(sc))} active=${sc._postFX ? sc._postFX.active : false}`)
+
+          st.params.particles.enabled = true
+          st.params.fall.enabled = true
+          st.params.litter.enabled = true
+          await sleep(1600)
+          lines.push(`fx=${JSON.stringify(await px(sc))} mats=${[
+            sc.particles && sc.particles.material.type,
+            sc.fallMesh && sc.fallMesh.material.type,
+            sc.litterMesh && sc.litterMesh.material.type,
+          ].join('/')} verts=${sc.particles ? sc.particles.geometry.attributes.position.count : null}`)
+          await shot(sc, 'node-webgl2-4-fx')
+
+          st.params.scene.shadows = true
+          st.params.scene.dynamicShadows = false
+          await sleep(500)
+          const staticAuto = sc.renderer.shadowMap ? !!sc.renderer.shadowMap.autoUpdate : null
+          st.params.scene.dynamicShadows = true
+          await sleep(700)
+          lines.push(`shadow static=${staticAuto} dynamic=${sc.renderer.shadowMap ? !!sc.renderer.shadowMap.autoUpdate : null}`)
+
+          // 最关键的项: Node + WebGL2 的异步读回签名
+          try {
+            const dataUrl = await sc._captureFrameDataUrl()
+            const img = await decode(dataUrl)
+            lines.push(`screenshot=${img.width}x${img.height} bytes=${dataUrl.length} lit=${(await px(sc)).lit}`)
+          } catch (e) {
+            lines.push(`screenshot=ERROR ${String(e && e.message ? e.message : e)}`)
+          }
+
+          try {
+            const imp = await sc.makeImpostor({ mode: 'atlas', views: 4, elevations: 1, size: 256 })
+            lines.push(`impostor=${imp.width}x${imp.height} coverage=${Number(imp.coverage).toFixed(3)} cells=${
+              imp.meta ? imp.meta.views : null} bytes=${imp.dataUrl ? imp.dataUrl.length : 0}`)
+            sc.setImpostorPreview(imp)
+            await sleep(700)
+            lines.push(`preview group=${!!sc._impostorGroup} active=${!!sc._impostorAtlas}`)
+            await shot(sc, 'node-webgl2-5-impostor')
+            sc.clearImpostorPreview()
+          } catch (e) {
+            lines.push(`impostor=ERROR ${String(e && e.message ? e.message : e)}`)
+          }
+
+          if (st.shaderError) errs.push('SHADER:' + String(st.shaderError).slice(0, 160))
+          lines.push(`errs=${errs.length}${errs.length ? ' :: ' + errs.slice(0, 4).join(' ;; ') : ''}`)
+        } catch (e) {
+          lines.push('FAILED: ' + String(e && e.stack ? e.stack : e).slice(0, 600))
+        }
+        const text = lines.join('\n')
+        out.textContent = text
+        document.title = 'NODEWEBGL2CHECK :: ' + text.replace(/\s+/g, ' ').slice(0, 2000)
+      }, 1200)
+    </script>
+  </body>
+</html>

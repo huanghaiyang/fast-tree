@@ -124,8 +124,10 @@ function effectUniforms(params) {
  * @param {object} params 全量参数
  */
 export function updateLitterEffects(mesh, params) {
-  if (!mesh || !mesh.material || !mesh.material.uniforms) return
-  const u = mesh.material.uniforms
+  if (!mesh || !mesh.material) return
+  // Node 路径的 NodeMaterial 没有 .uniforms, 参数表在 userData.uniforms
+  const u = mesh.material.uniforms || (mesh.material.userData && mesh.material.userData.uniforms)
+  if (!u) return
   const e = resolveLeafEffects(params, params.effectSource || 'leaf', params.effectInherit !== false)
   if (u.uInherit) u.uInherit.value = e.inherit
   if (u.uEmissive) u.uEmissive.value = e.emissive
@@ -169,7 +171,7 @@ export function litterRebuildKey(params) {
  * @param {{min:{x,y,z},max:{x,y,z}}|null} bbox 树冠包围盒 (米), 决定散布半径
  * @returns {THREE.Mesh} 合批后的落叶网格 (材质为自定义 ShaderMaterial)
  */
-export function buildLeafLitter(params, map, bbox) {
+export function buildLeafLitter(params, map, bbox, materialFactory) {
   const L = params.litter || {}
   const count = Math.max(1, Math.round(L.count === undefined ? 260 : L.count))
   const seed = params.seed || 1
@@ -304,7 +306,9 @@ export function buildLeafLitter(params, map, bbox) {
   // 为什么不用 MeshStandardMaterial: 落叶是"贴图 + 顶点色"的简单表面, 用 PBR 会
   // 带来不必要的开销, 而且无法精确复刻树冠材质的"边缘散射"观感。手写着色器的代价是
   // 光照参数得自己从 leafEffects 拷过来 —— 这就是下面 ...effectUniforms(params) 的用途。
-  const mat = new THREE.ShaderMaterial({
+  const mat = materialFactory
+    ? materialFactory(params, { map: resolved.map })
+    : new THREE.ShaderMaterial({
     uniforms: {
       uMap: { value: resolved.map },
       // uAlphaTest 默认 0.35: 卡片的贴图 alpha 在边缘是羽化的, 阈值过高会把叶片削瘦,
