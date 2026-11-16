@@ -257,6 +257,20 @@ roughness 也从颜色贴图亮度/梯度推导（不是随机噪声）；glTF �
 果实导出使用独立的 `Fruit` 材质，带 `fruit_diff_1k` / `fruit_alpha_1k` / `fruit_nor_gl_1k` / `fruit_rough_1k`；
 果实 normal/alpha 来自果皮高度场（有壳斗帽棱线/鳞片细节），颜色细节由 `COLOR_0` 顶点色提供。
 
+### 8.1 渲染后端（默认 WebGPU）
+
+three 已升级到 **0.187.0**，渲染器默认 `auto`：优先创建 `WebGPURenderer`，初始化失败自动回退经典 WebGL。
+入口在「场景 → 渲染后端」（`auto | webgpu | webgl`），**切换后需刷新页面生效**。
+
+- **Node 路径**（WebGPU / WebGL 2 Node）：材质走 `materialsGPU.js` 的 `MeshStandardNodeMaterial` + TSL，
+  风场 / 生长 / 苔藓 / 附生 / 双面叶片 / 节点选中全部保留；
+- **经典路径**（WebGL）：`materials.js` 的 `onBeforeCompile` 注入，功能与升级前一致；
+- WebGPU 顶点缓冲上限 8 个：`aWind/aPhase/aOrigin/aGrow/aNodeId/aEpiphyte` 已打包进一个 `InterleavedBuffer`（共 5 个 buffer）。
+
+**WebGPU 下暂未补齐**：Bloom/DOF、季节特效（落叶/落花/粒子/堆积）、动态风场阴影、自定义 GLSL、伪装卡读回。
+架构说明、能力矩阵与后续实现方案（含 three r187 具体 API 与踩坑记录）见
+[WebGPU 渲染后端技术文档](docs/WebGPU-渲染后端-技术文档.md)。
+
 ---
 
 ## 随机种子与可复现性
@@ -330,7 +344,9 @@ src/
    ├─ textureNaming.js 导出贴图资源命名/补全/成套对齐 (diff/alpha/nor_gl/rough + 1K/2K/4K 后缀, 法线/粗糙度从贴图亮度推导, alpha 生成黑白 PNG, 叶/花/果四张图统一尺寸/朝向/UV 变换)
    ├─ fruitMaterial.js 果实导出材质 (独立 Fruit 材质 + fruit_diff/alpha/nor_gl/rough 贴图)
    ├─ exportPreview.js 导出预览数据 (GLB 产物/内嵌贴图/节点列表, OBJ 节点列表, PNG dataURL)
-   ├─ materials.js     PBR + 风场/生长/自定义 GLSL + 节点选中高亮
+   ├─ materials.js     PBR + 风场/生长/自定义 GLSL + 节点选中高亮 (经典 WebGL 路径)
+   ├─ materialsGPU.js  Node 材质 (TSL): 树皮/树叶/花朵/天空 + 顶点属性交错打包 (WebGPU 路径)
+   ├─ rendererBackend.js 渲染器工厂 (WebGPU 优先, 失败自动回退经典 WebGL)
    ├─ exporter.js      GLB / OBJ / JSON / PNG
    ├─ apiRegistry.js   应用命令注册表 (MCP / 大模型 tool-calling 共用同一份定义)
    ├─ appApi.js        浏览器侧命令执行器 + 本地桥客户端
@@ -606,6 +622,9 @@ npm run sandbox:build   # 受限环境构建 (等价 npm run build 的沙箱版)
 **第三方 API 版本提醒**：three r186 起
 `vColor` 恒为 `vec4`（自定义 GLSL 里请用 `vColor.rgb`）、
 `THREE.Clock` 已废弃（本项目自行计时）、`PCFSoftShadowMap` 已移除（改用 `PCFShadowMap`）。
+three r187 起默认渲染器为 `WebGPURenderer`（自动回退 WebGL 2）；Node 路径不支持
+`onBeforeCompile` / `ShaderMaterial` / `EffectComposer`，详见
+[WebGPU 渲染后端技术文档](docs/WebGPU-渲染后端-技术文档.md)。
 
 ---
 
