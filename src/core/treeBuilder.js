@@ -26,6 +26,8 @@ import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { makeRng } from './rng.js'
 import { createForceField } from './forceField.js'
+// 竹子的"特有参数"在这里展开成通用结构 (见 core/bamboo.js 的说明)
+import { applyBambooParams } from './bamboo.js'
 import { createBarkSkeleton, addBarkBranch, finalizeBarkSkeleton, enforceChildBranchRadii } from './barkSkeleton.js'
 import { buildBarkSkin } from './barkSkin.js'
 import { buildSpeedtreeBark } from './speedtreeBark.js'
@@ -169,7 +171,9 @@ function frameBasisAt(frames, t) {
  */
 export function buildTree(params, options = {}) {
   const t0 = now()
-  const P = params
+  // 竹种: 先把 bamboo 组展开成 trunk/branches/leaves/bark 再走同一条生成链。
+  // 非竹子时 applyBambooParams 原样返回, 没有任何额外开销。
+  const P = applyBambooParams(params)
   // 空间引导力: 把吸引子/排斥子变成逐段转向器; 未启用或没有对象时为 null。
   // 只作用于树干与树枝 (树根在地表以下, 不受场景障碍物影响), 见 forceField.js。
   const forceField = createForceField(P.forces)
@@ -2093,6 +2097,10 @@ export function buildTree(params, options = {}) {
 
   return {
     barkGeometry,
+    // "真正被用来生成"的参数树 (竹子会在这里被 applyBambooParams 展开过)。
+    // 材质侧要读 bark.uvScaleV 这类"由竹子参数反推"的值, 必须用这份而不是原始 params,
+    // 否则改"每竿节数"后几何/贴图密度会对不上。
+    effectiveParams: P,
     leafGeometry,
     flowerGeometry,
     nodes,

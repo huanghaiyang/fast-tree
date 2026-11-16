@@ -196,6 +196,7 @@ const LEAF_PALETTES = {
   shrub: ['#5a9243', '#96c463'],
   dead: ['#7d7d6a', '#a3a38c'],
   banyan: ['#3f6b2b', '#79a84c'],
+  bamboo: ['#7d9c40', '#bdd073'],
 }
 
 /* 自动生成: 一个种子 => 一棵随机但合理的树                              */
@@ -208,8 +209,9 @@ const LEAF_PALETTES = {
  *     seedling / sapling / young / mature / ancient, 权重对应 5 个值
  *   - 季节:    由 SEASONS 派生 id, 顺序固定为 spring / summer / autumn / winter
  * 这些权重直接决定"点随机生成 10 次会看到什么", 改它们等于改产品的默认观感。 */
-const ARCHETYPE_IDS = ['oak', 'maple', 'pine', 'birch', 'willow', 'sakura', 'shrub', 'dead', 'banyan']
-const ARCHETYPE_WEIGHTS = [0.16, 0.12, 0.14, 0.13, 0.09, 0.09, 0.1, 0.08, 0.09]
+const ARCHETYPE_IDS = ['oak', 'maple', 'pine', 'birch', 'willow', 'sakura', 'shrub', 'dead', 'banyan', 'bamboo']
+// 竹子权重 0.05: 结构很特别, 随机生成时应该偶尔出现而不是像橡树那么常见
+const ARCHETYPE_WEIGHTS = [0.15, 0.12, 0.13, 0.12, 0.09, 0.09, 0.09, 0.08, 0.08, 0.05]
 // 随机时"大树/小树"更常见, 树苗与古树是少数
 const STAGE_IDS = GROWTH_STAGES.map((s) => s.id)
 const STAGE_WEIGHTS = [0.1, 0.16, 0.24, 0.36, 0.14]

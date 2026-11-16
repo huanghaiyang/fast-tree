@@ -185,6 +185,8 @@ const barkStyles = [
   { value: 'birch', label: '白桦 birch' },
   { value: 'pine', label: '松鳞 pine' },
   { value: 'smooth', label: '光滑 smooth' },
+  // 竹竿: 光滑革质 + 等距竹节环 (环数由竹种面板的"每竿节数"反推)
+  { value: 'bamboo', label: '竹竿 bamboo' },
 ]
 
 const b = computed(() => state.params.bark)

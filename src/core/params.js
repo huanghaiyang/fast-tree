@@ -506,6 +506,28 @@ export function defaultParams() {
       radial: 8,
     },
 
+    /* 竹子特有参数 (只有竹种把 enabled 打开; 其它树种保持 false 时完全不参与生成)。
+     * 为什么单独开一组: 竹子的结构是"多竿丛生 + 竹节环 + 顶端少枝披针叶",
+     * 用橡树那套"主干 + 逐层分枝"参数硬凑会得到一棵矮胖的灌木。这里的数值由
+     * core/bamboo.js 在 build 时展开成 trunk / branches / leaves / bark 的通用结构,
+     * 所以面板上改这些滑杆走的是"几何组"重建 (见 GEOMETRY_KEYS)。 */
+    bamboo: {
+      enabled: false,
+      culms: 8,            // 一丛几根竹竿 (1 = 单竿)
+      height: 9.0,         // 竹高 (米, 成熟株; 生长阶段会再乘 size)
+      culmRadius: 0.048,   // 竹竿基部半径 (米)
+      baseHeight: 0.4,     // 丛基(地下根茎隆起)高度 (米): 竿子从这段矮茎上分出
+      tilt: 7.0,           // 竹竿外倾角 (度, 离竖直方向)
+      nodeCount: 14,       // 每竿竹节数 (驱动树皮"竹节环"的密度)
+      branchStart: 0.42,   // 侧枝起始高度比例 (0 = 从地面, 1 = 只在竿顶)
+      twigs: 5,            // 每竿侧枝数
+      twigLength: 0.9,     // 侧枝长度 (米)
+      leafPerTwig: 14,     // 每根侧枝上的竹叶数
+      leafSize: 0.3,       // 竹叶长度 (米)
+      leafWidth: 0.16,     // 竹叶宽/长比 (竹子是细长披针叶)
+      leafDroop: 0.55,     // 竹叶下垂 0..1
+    },
+
     // 单枝手工编辑: 以骨架分支下标为 key (同一 seed/结构下稳定)
     // { radiusScale, moveX, moveY, moveZ, rotX, rotY, rotZ, twist }
     branchEdits: {},
@@ -931,7 +953,7 @@ export function normalizeParams(p) {
  * 放错组的代价: 把纯 uniform 参数放进 geometry 会导致拖滑杆时反复重建几何 (卡顿);
  * 反之把几何参数放进 material 则会出现"改了没反应"的 bug。 */
 // 影响几何拓扑/顶点数据的键 (seed 改变会整体换个体, 所以也在几何组)
-const GEOMETRY_KEYS = ['seed', 'auto', 'trunk', 'roots', 'buttress', 'aerialRoots', 'epiphyte', 'oldTree', 'branches', 'leaves', 'flower', 'fruit', 'lod', 'ao', 'branchEdits', 'forces']
+const GEOMETRY_KEYS = ['seed', 'auto', 'trunk', 'roots', 'buttress', 'aerialRoots', 'epiphyte', 'bamboo', 'oldTree', 'branches', 'leaves', 'flower', 'fruit', 'lod', 'ao', 'branchEdits', 'forces']
 // 只影响材质/着色器/合批实例的键 (落叶/粒子等是"另一个几何体", 重建代价低, 归到材质组)
 const MATERIAL_KEYS = ['bark', 'leafMat', 'custom', 'particles', 'fall', 'litter', 'flowerFall', 'flowerLitter']
 // 只进顶点着色器 uniform 的键
@@ -966,8 +988,15 @@ function pickStringify(params, keys) {
  */
 export function serializeGroup(params, group) {
   switch (group) {
-    case 'geometry': return pickStringify(params, GEOMETRY_KEYS)
-    case 'material': return pickStringify(params, MATERIAL_KEYS)
+    // 附生贴图是**纯材质**参数 (只喂 uEpiphyteMap), 但它的字段嵌在几何组里的 epiphyte 下。
+    // 所以几何组要把它换成空串: 否则"换一张附生贴图"会重跑整棵树的几何 (200~800ms),
+    // 而材质组要单独把它带上, 否则换了贴图没人触发 updateMaterials。
+    case 'geometry': return JSON.stringify(
+      GEOMETRY_KEYS.map((k) => (k === 'epiphyte' && params.epiphyte
+        ? [k, { ...params.epiphyte, texture: '' }]
+        : [k, params[k]])))
+    case 'material': return pickStringify(params, MATERIAL_KEYS) +
+      JSON.stringify([['epiphyte.texture', params.epiphyte ? params.epiphyte.texture : '']])
     case 'wind': return pickStringify(params, WIND_KEYS)
     case 'scene': return pickStringify(params, SCENE_KEYS)
     default: return JSON.stringify(params)

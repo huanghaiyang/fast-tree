@@ -473,7 +473,7 @@ halfSize = uSize * uGlow * 600 * tan(fov/2) / viewportSize.y
 每次改动 WebGPU/Node 路径后至少跑一遍：
 
 ```bash
-node scripts/selftest.mjs        # 383 项: 确定性/参数隔离/几何合法性/导出格式
+node scripts/selftest.mjs        # 384 项: 确定性/参数隔离/几何合法性/导出格式
 node scripts/audit-params.mjs    # 参数有效性审计
 npm run build                    # 确认 postGPU / materialsGPU / three.webgpu 正常分包
 ```
@@ -544,3 +544,59 @@ node scripts/shot-receiver.mjs   # 可选: 5274 端口，把每步截图落到 .
 - WebGPU `bytesPerRow` 在非 256 对齐宽度下的读回未压测（见 4.7）。
 - 长时间稳定性（连续开关后处理/特效数十次是否漏纹理或膨胀）没有做过 soak 测试。
 
+---
+
+## 7. HUD「绘制调用」在 WebGPU 下持续增长 —— 是统计口径，不是渲染 bug
+
+> 结论先行：**不是 bug，没有改任何代码**（按用户明确要求"如果不是 bug 就切勿修改"）。
+> 现象只出现在 Node 后端（WebGPU / `WebGL 2 (Node)`）：HUD 上的「绘制调用」只增不减。
+> 经典 WebGL 后端显示的是"每帧调用数"（本仓库实测 7），两者**不能逐值比较**。
+
+### 7.1 现象
+
+| 后端 | HUD「绘制调用」 | 含义 |
+| --- | --- | --- |
+| 经典 WebGL（`WebGLRenderer`） | 每帧重置，实测 7 | 上一帧的 draw call 数 |
+| WebGPU（`WebGPURenderer`） | 从启动起单调累加（392 → 400+ …） | **进程启动以来的累计调用数** |
+
+两者差三个数量级并不是"WebGPU 画得更多"，而是同一个字段在两种后端里语义不同。
+
+### 7.2 源码证据（three r187，`node_modules/three/src/renderers/common/Info.js`）
+
+| 位置 | 内容 | 含义 |
+| --- | --- | --- |
+| `L24-31` | `autoReset` 注释：由自管动画循环的应用设为 `false`，并**每帧手动** `renderer.info.reset()` | 自动重置只在 three 自己的循环里发生 |
+| `L59` | `render.calls` 注释：*"The number of render calls **since the app has been started**"* | 这个字段从启动起累计 |
+| `L60` | `render.frameCalls` 注释：*"of the current frame"* | 每帧口径在这里 |
+| `L187-198` | `reset()` 只清 `render.drawCalls`、`render.frameCalls`、`compute.frameCalls`、`triangles/points/lines` | **不清 `render.calls`** |
+| `L203-214` | `dispose()` 才把 `calls`、`render.calls`、`compute.calls` 归零 | 只有销毁时归零 |
+| `renderers/common/Animation.js L83` | `if (this.info.autoReset === true) this.info.reset()` | 只存在于 three 的 `setAnimationLoop` 循环 |
+| `renderers/WebGLRenderer.js L1744` | 每次 `render()` 前 `if (this.info.autoReset === true) this.info.reset()` | 经典 WebGL 是"每帧重置"的实现，且它的 `reset()` 会清 `calls` |
+
+本仓库是**自管循环**：`src/core/sceneManager.js L554 / L3445` 用 `this._raf = requestAnimationFrame(this._loop)`，
+从不调用 `renderer.setAnimationLoop()`，因此 Node 后端里 three 的自动重置一次也不会执行
+→ `render.calls` 一路累加。HUD 读的正是这个字段：
+
+```vue
+<!-- src/components/Viewport.vue L18 -->
+<div><span class="k">绘制调用</span> <b>{{ state.renderInfo.calls }}</b></div>
+```
+
+`sceneManager.js L3478` 把 `renderer.info.render` 原样交给 UI（`onFrame(frameInfo)`），
+所以 UI 没有做错，是**字段选择**沿用了 WebGL 时代的写法。
+
+### 7.3 如果要显示"每帧 draw call"
+
+不用改渲染循环，只需换字段（本次**未实施**，仅记录改法）：
+
+- 通用写法：`renderer.info.render.drawCalls`（WebGL 与 Node 后端都有，且每帧清零）；
+- Node 后端更细的口径：`renderer.info.render.frameCalls`（含阴影 pass、后处理 pass）；
+- 因此 WebGPU 侧的数值天然会比 WebGL 的 7 大（多了 shadow / post 的 pass），
+  对照时应看"同一后端切换开关前后的差"，而不是跨后端比值。
+
+### 7.4 为什么"不改"是对的
+
+1. 没有资源泄漏：`render.calls` 只是个计数器，不持有 GPU 对象；
+2. 没有重复绘制：真正每帧的调用数在 `drawCalls/frameCalls` 里，同一帧稳定；
+3. 唯一"坏处"是 HUD 数字一直涨、看起来像漏了清理 —— 属于**展示口径**问题，
+   一旦改成累计口径之外的字段，WebGL/WebGPU 的读数就会重新可比。

@@ -120,6 +120,8 @@
       <ColorRow label="蕨叶颜色 B" v-model="E.colorTip" />
       <TextureRow label="自定义附生植物贴图" v-model="E.texture"
         hint="只作用于附生卡片; 留空则沿用树叶贴图/程序化叶形" />
+      <!-- 内置贴图库: 与"自定义附生植物贴图"共用 epiphyte.texture (URL 或 dataURL 都走同一条材质通路) -->
+      <EpiTexturePicker />
     </template>
   </Section>
 </template>
@@ -135,12 +137,15 @@ import SelectRow from '../ui/SelectRow.vue'
 import LeafShapeGallery from '../LeafShapeGallery.vue'
 import LeafCardPicker from '../LeafCardPicker.vue'
 import LeafMaterialSection from '../LeafMaterialSection.vue'
+import EpiTexturePicker from '../EpiTexturePicker.vue'
 import LeafEffectsSections from '../LeafEffectsSections.vue'
 import MaterialPreview from './MaterialPreview.vue'
 import { state } from '../../store/treeStore.js'
 
 const L = computed(() => state.params.leaves)
-const E = state.params.epiphyte
+// 同样用 computed: 撤销/导入参数会整体替换 state.params, 直接持有 epiphyte 对象引用
+// 会让面板写到一棵已经被丢弃的参数树上 (改动不生效或覆盖别人的修改)。
+const E = computed(() => state.params.epiphyte)
 const lod = computed(() => state.params.lod)
 const ao = computed(() => state.params.ao)
 const shapes = [

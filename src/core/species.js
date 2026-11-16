@@ -629,6 +629,90 @@ export const SPECIES = [
       leafMat: { roughness: 0.68, metalness: 0.0, translucency: 0.42, emissive: 0.015 },
     }),
   },
+  {
+    /* 竹子 (竹/毛竹): 和上面所有树种的结构都不一样 —— 不是"一根主干 + 逐层分枝",
+     * 而是"一丛近乎平行的细竿 + 竿上段侧枝 + 顶端细长披针叶"。
+     *
+     * 所以它带一组独有的 `bamboo` 参数 (core/params.js), 由 core/bamboo.js 在
+     * buildTree 时展开成通用结构:
+     *   - 竿数 / 竹高 / 竿基半径 / 丛基高度 → trunk + L1 (竿)
+     *   - 外倾角 / 侧枝起点 / 侧枝数 / 侧枝长 → L1/L2 的方向与分布
+     *   - 节数 → 树皮 'bamboo' 贴图的竹节环密度 (uvScaleV)
+     *   - 每枝叶数 / 竹叶长 / 宽长比 / 下垂 → leaves
+     * 面板上这些滑杆的说明见 paramDocs.js 的「竹子」段落。
+     *
+     * 这里的 patch 只给一份"成熟株的默认形态"给 composeTree 的流水线
+     * (applyVariation/applyStage 需要合法的 trunk 与 branches.level 才能算规模预算),
+     * 真正生成时以 bamboo 组的数值为准。 */
+    id: 'bamboo', name: '竹子', icon: '🎋',
+    desc: '丛生竹: 多竿直立、竹节环、上段侧枝与细长披针叶',
+    evergreen: true,
+    variation: {
+      height: 0.22, radius: 0.18, curve: 0.1, lean: 0.16, gnarl: 0.1,
+      crown: 0.2, count: 0.16, leaf: 0.18, fork: 0, trunkShare: 0.05,
+    },
+    seasonal: {
+      // 竹子是常绿, 秋冬只轻微减叶; 春天新叶更亮
+      autumn: { leafDensity: 0.92, palette: ['#6f8f38', '#93ae4a'], tipPalette: ['#c3d47a'] },
+      winter: { leafDensity: 0.88, palette: ['#587537', '#7f9b47'], tipPalette: ['#a8bb66'] },
+      spring: { leafDensity: 1.0, palette: ['#86b04a', '#a9c766'], tipPalette: ['#cbe08c'] },
+    },
+    patch: () => ({
+      // 主干在竹子里只是"丛基"(地下根茎隆起), 真实高度由 bamboo.height 控制
+      trunk: {
+        height: 0.5, baseRadius: 0.1, taper: 0.85, radiusCurve: 1.0,
+        segments: 6, radialSegments: 10, curve: 0.02, curveVariance: 0.02,
+        lean: 0.02, leanDirection: 0, twist: 0, gnarl: 0,
+        flare: 1.1, flareHeight: 0.9, knots: 0, knotSize: 0, squash: 1.0,
+        fork: { enabled: false },
+      },
+      roots: { enabled: false },
+      branches: {
+        levels: 2, apicalDominance: 0, phototropism: 0, gravityScale: 1,
+        lengthScale: 1, radiusScale: 1, startSpread: 0,
+        // 这里只是占位: 真实数值由 bamboo.js 在 build 时按 bamboo 组重写
+        level: levels(
+          {
+            count: 8, pitch: 7, pitchVariance: 4, lengthRatio: 18, lengthVariance: 0.2,
+            radiusRatio: 0.9, radiusVariance: 0.1, startT: 0.1, endT: 0.9, startJitter: 0.04,
+            taper: 0.42, radiusCurve: 1.05, curve: 0.02, curveVariance: 0.03, gravity: 0,
+            upBias: 0, phyllotaxis: 137.5, spread: 0.18, segments: 14, radialSegments: 8,
+            windGain: 1.3,
+          },
+          {
+            count: 3, pitch: 55, pitchVariance: 18, lengthRatio: 0.09, lengthVariance: 0.3,
+            radiusRatio: 0.08, radiusVariance: 0.2, startT: 0.42, endT: 0.98, startJitter: 0.02,
+            taper: 0.4, radiusCurve: 1.0, curve: 0.45, curveVariance: 0.5, gravity: -0.05,
+            upBias: 0.12, phyllotaxis: 137.5, spread: 0.5, segments: 5, radialSegments: 4,
+            windGain: 0.7,
+          },
+        ),
+      },
+      leaves: {
+        enabled: true, levels: [true, true],
+        perBranch: 12, clusterCount: 1, clusterRadius: 0.05, clusterSpread: 0.02,
+        size: 0.3, sizeVariance: 0.18, width: 0.16, shape: 'lance', shapeMix: [], segments: 4,
+        curl: 0.08, fold: 0.12, startT: 0.42, endT: 1.0,
+        pitch: -18, pitchVariance: 26, droop: 0.55, rollVariance: 120, faceUp: 0.35,
+        twist: 0.1, color: '#7d9c40', colorTip: '#bdd073', colorVariance: 0.2, petiole: 0.02,
+      },
+      bark: {
+        color: '#8a9a45', color2: '#c3cf7b', roughness: 0.6, metalness: 0.0,
+        // 竹节环靠贴图: 顶点色权重压低, 否则贴图细节被顶点色盖住
+        vertexColorMix: 0.25,
+        // 竹节环: UV 以米为单位, 因此重复次数 = 节数 / (每块贴图环数 × 竹高)
+        // (build 时 bamboo.js 会用实际竹高再算一遍, 这里给的是成熟株的展示值)
+        uvScaleU: 1.0, uvScaleV: 0.31, bump: 0.75, normalScale: 0.6,
+        procedural: { enabled: true, style: 'bamboo', scale: 1.0, contrast: 0.32 },
+      },
+      leafMat: { roughness: 0.62, metalness: 0.0, translucency: 0.46, emissive: 0.02 },
+      bamboo: {
+        enabled: true, culms: 8, height: 9.0, culmRadius: 0.048, baseHeight: 0.4,
+        tilt: 7.0, nodeCount: 14, branchStart: 0.42, twigs: 5, twigLength: 0.9,
+        leafPerTwig: 14, leafSize: 0.3, leafWidth: 0.16, leafDroop: 0.55,
+      },
+    }),
+  },
 ]
 
 /**
@@ -843,6 +927,19 @@ function applyStage(p, stage, rng) {
     leaf.startT = r4(clampNum(leaf.startT + 0.1, 0, 0.9))
     leaf.perBranch = Math.max(2, leaf.perBranch)
   }
+  /* 竹子特有的尺寸也要按年龄缩放, 否则换阶段时竿高/竿径纹丝不动,
+   * 自检 [11b] 的"整树高度递增"会失败, 面板上的阶段切换也会显得没反应。
+   * 竿数随年龄增加得比高度慢 (幼竹丛本来就只有两三根竿)。 */
+  if (p.bamboo && p.bamboo.enabled) {
+    const bb = p.bamboo
+    bb.height = r4(Math.max(0.3, bb.height * stage.size * rng.range(0.96, 1.04)))
+    bb.culmRadius = r4(Math.max(0.004, bb.culmRadius * stage.radius))
+    bb.culms = Math.max(1, Math.round(bb.culms * (0.5 + 0.5 * stage.size)))
+    bb.nodeCount = Math.max(4, Math.round(bb.nodeCount * (0.55 + 0.45 * Math.min(1.4, stage.size))))
+    bb.twigLength = r4(Math.max(0.1, bb.twigLength * (0.6 + 0.4 * Math.min(1.2, stage.size))))
+    bb.leafPerTwig = Math.max(1, Math.round(bb.leafPerTwig * stage.leafDensity))
+    bb.leafSize = r4(Math.max(0.05, bb.leafSize * stage.leafScale))
+  }
   return matureHeight
 }
 
@@ -899,6 +996,11 @@ function applySeason(p, sp, season, rng, baseLeaves) {
     leaf.startT = r4(clampNum(leaf.startT + 0.18, 0, 0.92))
   }
   p.leafMat.translucency = r4(clampNum(everScaled.translucency, 0, 1))
+  // 竹叶数量由 bamboo 组直接驱动 (不经过 leaves.perBranch 的预算链路),
+  // 所以季节叶量要在这里单独乘进去, 否则竹子一年四季叶子一样多。
+  if (p.bamboo && p.bamboo.enabled) {
+    p.bamboo.leafPerTwig = Math.max(1, Math.round(p.bamboo.leafPerTwig * clampNum(everScaled.leafDensity, 0.05, 1.1)))
+  }
   // 树皮色调: 冬季偏冷、秋季偏暖 —— 这是"季节感"在树干上的唯一体现 (不改几何)
   p.bark.tint = everScaled.barkTint || '#ffffff'
   return everScaled

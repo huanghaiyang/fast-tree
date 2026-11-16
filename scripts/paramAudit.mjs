@@ -231,6 +231,14 @@ export const CONDITIONS = {
   'bark.moss.heightBias': { 'bark.moss.enabled': true },
   'bark.moss.color': { 'bark.moss.enabled': true },
 }
+
+// 竹子特有参数: 只有 bamboo.enabled 打开时才参与展开 (其它树种保持 false = 零开销),
+// 所以审计每个子参数前先把开关打开, 否则永远比不出几何差异。
+// 'bamboo.enabled' 本身不设条件 —— 它就是要被扰动的开关。
+for (const k of ['culms', 'height', 'culmRadius', 'baseHeight', 'tilt', 'nodeCount',
+  'branchStart', 'twigs', 'twigLength', 'leafPerTwig', 'leafSize', 'leafWidth', 'leafDroop']) {
+  CONDITIONS['bamboo.' + k] = { 'bamboo.enabled': true }
+}
 // 果实子参数只有在"启用果实 + 指定挂果层级"时才有效果
 // 注意: fruit.enabled 不加条件 (它本身就是要被扰动的开关);
 // 探针小树只有 L1/L2, 挂果层级必须落在有效层级上, 否则怎么改都看不到效果

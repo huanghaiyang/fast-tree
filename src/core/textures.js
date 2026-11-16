@@ -27,6 +27,8 @@
 import * as THREE from 'three'
 import { mulberry32, mixSeed } from './rng.js'
 import { LEAF_OUTLINES } from './leaf.js'
+// 竹节环数: 与 bamboo.js 共用同一常量 (那边用它反推 uvScaleV)
+import { BAMBOO_NODE_BANDS } from './bamboo.js'
 
 /** 建一张离屏 canvas 并设定尺寸 (Node 环境无 document, 由调用方先判空) */
 function createCanvas(w, h) {
@@ -160,6 +162,10 @@ export function makeBarkTextures(o = {}) {
       // 细颗粒: 各向同性高频 (90,90), 放在最上层当"微观粗糙度"
       const grain = fbm(nB, fx * 90 * sx, fy * 90 * sx, 2)
       let h
+      // 竹节环额外的"压暗"系数 (0 = 不压暗)。竹节不只是凹凸: 真实竹竿的节
+      // 是一道明显更深的色带, 只靠高度场→颜色的插值太弱 (实测在 10 米外看不见),
+      // 所以这里单独记一份, 在写颜色时乘上去。
+      let ringDark = 0
       if (style === 'birch') {
         // 白桦: 整体基高 0.72 (亮), 起伏很小 -> 皮质细腻、颜色偏白
         h = 0.72 + (ridges - 0.5) * 0.35 + (grain - 0.5) * 0.12
@@ -176,6 +182,20 @@ export function makeBarkTextures(o = {}) {
       } else if (style === 'smooth') {
         // 光滑树皮 (山毛榉/樱桃): 只留极弱的条纹与颗粒
         h = 0.5 + (ridges - 0.5) * 0.22 + (grain - 0.5) * 0.06
+      } else if (style === 'bamboo') {
+        /* 竹竿: 革质光滑面 + 等距竹节环。
+         * 环数固定为 BAMBOO_NODE_BANDS 条/tile, 由 core/bamboo.js 按 nodeCount 反推
+         * uvScaleV 得到"一根竿上正好 nodeCount 个节" —— 改环数必须同时改那边。
+         * 做法: sin(fy·π·N) 在 fy=k/N 处过零, 1-|sin| 在环位置达到峰值。
+         * 峰值两侧要两种东西才像竹节 (只刻暗线看不出"节"):
+         *   ① 节上方一圈微凸的"节托" (pow 3, 正号) —— 环附近略高, 模拟鞘痕隆起;
+         *   ② 环本身一道窄而深的刻痕 (pow 14, 负号)。
+         * 早先用 pow 18 只刻线: 线宽不到 3px, 10 米外竿上直接看不见 (实测截图为证)。 */
+        h = 0.66 + (ridges - 0.5) * 0.08 + (grain - 0.5) * 0.04
+        const ring = Math.abs(Math.sin(fy * Math.PI * BAMBOO_NODE_BANDS))
+        h += Math.pow(1 - ring, 2.5) * 0.07
+        h -= Math.pow(1 - ring, 7) * 0.8
+        ringDark = Math.pow(1 - ring, 7) * 0.55
       } else {
         // rough
         // 粗糙树皮 (橡树/枫): 三个频段都吃进来, 纵向条纹占主导 (系数 0.85)
@@ -192,9 +212,10 @@ export function makeBarkTextures(o = {}) {
 
       // 颜色: 在 base(凹) .. tip(凸) 之间按 h 线性插值 -> 凸起处被"磨亮"
       const ci = idx * 4
-      cimg.data[ci] = Math.round(clamp01(base.r + (tip.r - base.r) * h) * 255)
-      cimg.data[ci + 1] = Math.round(clamp01(base.g + (tip.g - base.g) * h) * 255)
-      cimg.data[ci + 2] = Math.round(clamp01(base.b + (tip.b - base.b) * h) * 255)
+      const colMul = 1 - ringDark
+      cimg.data[ci] = Math.round(clamp01(base.r + (tip.r - base.r) * h) * colMul * 255)
+      cimg.data[ci + 1] = Math.round(clamp01(base.g + (tip.g - base.g) * h) * colMul * 255)
+      cimg.data[ci + 2] = Math.round(clamp01(base.b + (tip.b - base.b) * h) * colMul * 255)
       cimg.data[ci + 3] = 255
     }
   }

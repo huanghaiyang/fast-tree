@@ -972,8 +972,12 @@ export class TreeScene {
     this.lodLevel = 0
     /* ---------------- ② 生成几何 + 同步材质参数 ---------------- */
     const result = buildTree(params)
-    this.ensureMaterials(params)
-    this._updateMaterials(params)
+    // 材质必须跟着"实际用于生成的参数"走: 竹子这类在 build 时展开的树种,
+    // bark.uvScaleV 是由 竹高/节数 反推出来的 (见 core/bamboo.js),
+    // 用原始 params 会让贴图重复次数与几何对不上 (改节数看不到环变密)。
+    const materialParams = result.effectiveParams || params
+    this.ensureMaterials(materialParams)
+    this._updateMaterials(materialParams)
     // WebGPU 一个 attribute 占一个 vertex buffer (上限 8), 必须把 aWind/aPhase/
     // aOrigin/aGrow/aNodeId/aEpiphyte 打包成一个 InterleavedBuffer, 否则管线创建失败。
     this._interleaveForGpu(result)

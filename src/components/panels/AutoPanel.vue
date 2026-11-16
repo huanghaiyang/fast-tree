@@ -40,6 +40,9 @@
     </p>
   </Section>
 
+  <!-- 竹子独有参数: 只有在竹种下出现, 其它树种不显示 (避免一排无效滑杆) -->
+  <BambooSection v-if="cur.species === 'bamboo'" />
+
   <Section title="随机种子 · 自动生成" hint="Seed / Auto">
     <div class="seed-box">
       <span class="muted">种子</span>
@@ -74,6 +77,7 @@ import { computed } from 'vue'
 import Section from '../ui/Section.vue'
 import SliderRow from '../ui/SliderRow.vue'
 import SelectRow from '../ui/SelectRow.vue'
+import BambooSection from '../BambooSection.vue'
 import { SPECIES, GROWTH_STAGES, SEASONS, seasonProfile, classificationName, classificationDesc, speciesById } from '../../core/species.js'
 import { PRESETS } from '../../core/presets.js'
 import { defaultParams } from '../../core/params.js'
