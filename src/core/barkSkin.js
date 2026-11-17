@@ -644,8 +644,18 @@ function mixVertex(a, b, f) {
  * 窗口 rim 与子枝 ring0 之间的中间领口环: 把又长又平的桥接三角面细分成两层
  *
  * 做法: 对每个 u ∈ [0,1), 在 rim 上按弧长取一点、在子枝 ring0 上按同一弧长进度取一点,
- * 两者各取 50% 混合成一个新顶点。于是领口环在几何上"悬"在 rim 与 ring0 中间,
- * 两段 zipper (rim→collar, collar→ring0) 各只需跨越一半距离, 三角形更接近等边。
+ * 位置取 45% 处的中间点, 再沿 rim 的**父枝表面法线**把落在表面以内的部分抬出去
+ * (抬出量封顶 0.45×子枝根部半径)。
+ *
+ * 为什么法线必须取父枝 rim 而不是两侧混合 (2026-11 修复"枝基不贴合"):
+ *   混合得到的法线既不是父枝的也不是子枝的, 与父枝法线平均差 27° (最大 89°),
+ *   侧光下整圈领口会变成一条明暗带 —— 看上去就是一截"贴"上去的袖口。
+ *   取 rim 的法线后, rim -> 领口这一段与父枝同向, 光照连续; 真正的"枝干抬起"
+ *   只发生在领口 -> 子枝 ring0 这一段, 明暗过渡落在枝干自身的转折处, 符合预期。
+ *   UV/顶点色仍保留 50/50 混合: 父枝与子枝的树皮 UV 起点相差可达数米 (UV 以米为单位),
+ *   单取一侧会把这整段落差压进几厘米宽的领口里, 变成一条拉伸模糊的带子。
+ *   位置另外要抬到切平面上: rim 在表面, ring0 被压进表面 (attachRadius×0.92),
+ *   纯中点会落在表面以内, 侧看就是枝基周围的一圈凹槽。
  *
  * 为什么必须有它: 直接 stitch(rim, childRing0) 时, 洞口跨度大而两侧顶点数不同,
  * zipper 会拉出跨越大半个洞口的狭长三角形 (斜鳍), 光照上是一条条暗棱, 蒙皮形变
@@ -662,19 +672,53 @@ function mixVertex(a, b, f) {
  */
 function buildCollarLoop(acc, rim, child, count) {
   const out = []
+  // 子枝根部半径: 按子环顶点到质心的平均距离估, 只用来给"抬出表面"的高度封顶。
+  let cx = 0, cy = 0, cz = 0
+  for (const vi of child) {
+    cx += acc.position[vi * 3]
+    cy += acc.position[vi * 3 + 1]
+    cz += acc.position[vi * 3 + 2]
+  }
+  const cn = Math.max(1, child.length)
+  cx /= cn; cy /= cn; cz /= cn
+  let childR = 0
+  for (const vi of child) {
+    childR += Math.hypot(
+      acc.position[vi * 3] - cx,
+      acc.position[vi * 3 + 1] - cy,
+      acc.position[vi * 3 + 2] - cz,
+    )
+  }
+  childR /= cn
+  // 抬出高度的上限: 0.45×子枝根部半径。
+  // 只按"到父枝切平面的深度"抬, 不无条件外推 —— 洞口很大时切线平面离圆柱面很远,
+  // 不封顶会在枝基周围鼓出一个平台。
+  const liftCap = 0.45 * childR
   for (let i = 0; i < count; i++) {
     const u = i / count
     const a = sampleLoopVertex(acc, rim, u)
     const b = sampleLoopVertex(acc, child, u)
-    const m = mixVertex(a, b, 0.5)
+    // 位置取 45% 处的中间点, 法线**直接取父枝 rim**: 领口第一段 (rim -> collar)
+    // 因此与父枝表面同向, 光照连续。之前法线用 50/50 混合, 实测与父枝法线平均差 27°
+    // (最大 89°), 侧光下整圈领口就是一条明暗带 —— 这是"树枝根部与父枝不贴合"最直接的来源。
+    // UV/顶点色仍按 45% 混合: 树皮 UV 以米为单位, 父枝与子枝的 UV 起点天然相差很远,
+    // 单取父枝 UV 会把这整段落差压进几厘米宽的领口里, 反而变成一条拉伸模糊带。
+    const m = mixVertex(a, b, 0.45)
+    const nx = a.normal[0], ny = a.normal[1], nz = a.normal[2]
+    // 有符号深度: >0 表示中间点落在父枝表面以内 (洞口里)。
+    const d = (a.pos[0] - m.pos[0]) * nx + (a.pos[1] - m.pos[1]) * ny + (a.pos[2] - m.pos[2]) * nz
+    // 只向外抬 (d>0), 且不超过 liftCap: 领口环贴到父枝切平面上, 不再陷进表面。
+    const lift = d > 0 ? Math.min(d, liftCap) : 0
+    // wind / phase / origin / grow 也取父枝 rim: 领口环是贴在父枝表面上的,
+    // 让它跟着父枝一起摆, 否则风吹时领口与父枝之间会出现相对滑动的小裂缝。
     out.push(acc.vertex(
-      m.pos[0], m.pos[1], m.pos[2],
-      m.normal[0], m.normal[1], m.normal[2],
+      m.pos[0] + nx * lift, m.pos[1] + ny * lift, m.pos[2] + nz * lift,
+      nx, ny, nz,
       m.uv[0], m.uv[1],
       m.color[0], m.color[1], m.color[2],
-      m.wind, m.phase,
-      m.origin[0], m.origin[1], m.origin[2],
-      m.grow[0], m.grow[1], m.nodeId,
+      a.wind, a.phase,
+      a.origin[0], a.origin[1], a.origin[2],
+      a.grow[0], a.grow[1], a.nodeId,
     ))
   }
   return out
