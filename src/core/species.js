@@ -184,6 +184,18 @@ export const SEASONS = [
 /* 橡树的主干分叉基线, 同时被 oak.patch() 与"灌木/枯树"用不同覆盖值复用。
  * 字段与 params.js 的 trunk.fork 同名同义: height 是"占树干高度的比例",
  * angle 是度, 其余是无量纲倍率/弧度。 */
+/* 2026-11 形态校准 (按植物学原文献重设干冠比例, 不是凭感觉调参):
+ *   - 夏栎 Quercus robur: 20~40m, 孤立树粗壮单干 + 水平大枝, 冠幅约 0.8~1.0 倍树高
+ *     (RHS: magnificent broad crown and strong branches; 欧洲森林图集: expanded crown with horizontal primary branches)
+ *   - 油松 Pinus tabuliformis: 高达 25m, 幼中龄塔形/广卵形, 老树树冠平顶/伞形/盘状,
+ *     枝平展或向下斜展 (河北林草局 / 科普中国 / 太原园林局)
+ *   - 白桦 Betula platyphylla: 15~27m, 树皮白色, 树冠卵圆形, 小枝细而下垂
+ *     (抖音百科 / iPlant / 辽宁林草局; RHS silver birch: narrowly conical, slender drooping twigs)
+ *   - 垂柳 Salix babylonica: 12~18m, 树冠倒广卵形, 小枝细长下垂, 叶狭披针形 8~16cm
+ *     (中国林科院 / 南京林业大学 / 北京园林绿化局; Oregon State: 9-12m tall with a similar spread, pendulous branches weep toward the ground)
+ *   - 染井吉野樱 Prunus x yedoensis: 4~16m, 树冠伞形/宽杯形, 主枝横展
+ *     (Wikipedia 日文版 / RHS / National Arboretum: broad vase-shaped crown, spreading branches)
+ * 实测新旧尺寸见 docs/竹子与附生贴图-技术文档.md 第 11 节。 */
 const OAK_FORK = { count: 3, height: 0.33, angle: 27, spread: 0.85, radiusScale: 0.66, lengthScale: 1.0, taper: 0.3, curve: 0.45, gravity: 0.03 }
 
 /**
@@ -227,7 +239,7 @@ export const SPECIES = [
     },
     patch: () => ({
       trunk: {
-        height: 11.5, baseRadius: 0.56, taper: 0.09, radiusCurve: 1.5,
+        height: 14.5, baseRadius: 0.5, taper: 0.09, radiusCurve: 1.5,
         segments: 16, radialSegments: 16, curve: 0.3, curveVariance: 0.45,
         lean: 0.05, leanDirection: 20, twist: 0.12, gnarl: 0.8,
         flare: 1.5, flareHeight: 0.18, knots: 4, knotSize: 0.32, squash: 1.0,
@@ -240,28 +252,28 @@ export const SPECIES = [
         lengthScale: 1.0, radiusScale: 1.0, startSpread: 0,
         level: levels(
           {
-            count: 4, pitch: 66, pitchVariance: 14, lengthRatio: 0.6, lengthVariance: 0.2,
+            count: 4, pitch: 60, pitchVariance: 14, lengthRatio: 0.38, lengthVariance: 0.2,
             radiusRatio: 0.5, radiusVariance: 0.14, startT: 0.16, endT: 0.82, startJitter: 0.05,
-            taper: 0.34, radiusCurve: 1.3, curve: 0.52, curveVariance: 0.5, gravity: 0.14,
+            taper: 0.34, radiusCurve: 1.3, curve: 0.52, curveVariance: 0.5, gravity: 0.05,
             twist: 0.25, upBias: 0.12, phyllotaxis: 137.5, spread: 0.55,
             segments: 12, radialSegments: 8, windGain: 0.5,
           },
           {
-            count: 4, pitch: 52, pitchVariance: 16, lengthRatio: 0.6, lengthVariance: 0.22,
+            count: 4, pitch: 52, pitchVariance: 16, lengthRatio: 0.44, lengthVariance: 0.22,
             radiusRatio: 0.5, radiusVariance: 0.14, startT: 0.2, endT: 0.95, startJitter: 0.06,
-            taper: 0.36, radiusCurve: 1.25, curve: 0.55, curveVariance: 0.55, gravity: -0.06,
+            taper: 0.36, radiusCurve: 1.25, curve: 0.55, curveVariance: 0.55, gravity: 0.0,
             upBias: 0.08, spread: 0.6, segments: 8, radialSegments: 6, windGain: 0.7,
           },
           {
-            count: 4, pitch: 46, pitchVariance: 18, lengthRatio: 0.58, lengthVariance: 0.24,
+            count: 4, pitch: 46, pitchVariance: 18, lengthRatio: 0.42, lengthVariance: 0.24,
             radiusRatio: 0.46, startT: 0.25, endT: 1.0, startJitter: 0.07,
-            taper: 0.4, curve: 0.5, gravity: -0.14, upBias: 0.04, spread: 0.7,
+            taper: 0.4, curve: 0.5, gravity: -0.05, upBias: 0.04, spread: 0.7,
             segments: 6, radialSegments: 4, windGain: 0.9,
           },
           {
-            count: 3, pitch: 42, pitchVariance: 20, lengthRatio: 0.58, lengthVariance: 0.26,
+            count: 3, pitch: 42, pitchVariance: 20, lengthRatio: 0.42, lengthVariance: 0.26,
             radiusRatio: 0.5, startT: 0.3, endT: 1.0, startJitter: 0.08,
-            taper: 0.45, curve: 0.45, gravity: -0.16, spread: 0.8,
+            taper: 0.45, curve: 0.45, gravity: -0.08, spread: 0.8,
             segments: 4, radialSegments: 3, windGain: 1.0,
           },
         ),
@@ -380,21 +392,21 @@ export const SPECIES = [
       spring: { leafDensity: 0.9, palette: ['#5aa04a', '#7bbb62'], translucency: 0.28 },
     },
     patch: () => ({
-      trunk: { height: 11, baseRadius: 0.42, taper: 0.06, radiusCurve: 1.5, curve: 0.06, gnarl: 0.14, radialSegments: 11 },
+      trunk: { height: 13, baseRadius: 0.42, taper: 0.06, radiusCurve: 1.5, curve: 0.06, gnarl: 0.14, radialSegments: 11 },
       roots: { enabled: false, count: 6, length: 0.18 },
       branches: {
         levels: 3, apicalDominance: 0.8, phototropism: -0.08, gravityScale: 1.1,
         level: levels(
-          { count: 14, pitch: 76, pitchVariance: 12, lengthRatio: 0.3, lengthVariance: 0.22, radiusRatio: 0.3, gravity: -0.12, startT: 0.06, endT: 0.95, upBias: -0.06, phyllotaxis: 137.5, spread: 0.1, segments: 5, radialSegments: 5, curve: 0.3, windGain: 0.5 },
-          { count: 5, pitch: 56, lengthRatio: 0.46, radiusRatio: 0.4, gravity: -0.16, segments: 4, startT: 0.15, spread: 0.3 },
-          { count: 4, pitch: 48, lengthRatio: 0.52, radiusRatio: 0.46, gravity: -0.2, segments: 3, spread: 0.4 },
+          { count: 12, pitch: 72, pitchVariance: 12, lengthRatio: 0.46, lengthVariance: 0.22, radiusRatio: 0.3, gravity: -0.05, startT: 0.06, endT: 0.95, upBias: 0.02, phyllotaxis: 137.5, spread: 0.1, segments: 5, radialSegments: 5, curve: 0.3, windGain: 0.5 },
+          { count: 5, pitch: 56, lengthRatio: 0.5, radiusRatio: 0.4, gravity: -0.16, segments: 4, startT: 0.15, spread: 0.3 },
+          { count: 4, pitch: 48, lengthRatio: 0.55, radiusRatio: 0.46, gravity: -0.2, segments: 3, spread: 0.4 },
         ),
       },
       leaves: {
         enabled: true, levels: [true, true, true, false, false],
-        size: 0.5, width: 0.3, shape: 'needle',
-        clusterCount: 5, clusterRadius: 0, clusterSpread: 0, perBranch: 6,
-        startT: 0, pitch: -8, pitchVariance: 30, droop: 0.18,
+        size: 0.2, width: 0.22, shape: 'needle',
+        clusterCount: 5, clusterRadius: 0, clusterSpread: 0, perBranch: 14,
+        startT: 0, pitch: -8, pitchVariance: 30, droop: 0.1,
         color: '#4e8b46', colorTip: '#87c26c', colorVariance: 0.2,
       },
       bark: { color: '#5a4030', color2: '#7d5b41', procedural: { enabled: true, style: 'pine', scale: 0.8, contrast: 0.7 } },
@@ -405,7 +417,7 @@ export const SPECIES = [
     /* 细高白干: height 12m 而 baseRadius 只有 0.22 (高径比 ≈ 27, 常见乔木里最瘦),
      * taper 0.3 说明梢部收得很快; 树冠稀疏靠 perBranch 11 的小叶摊开, 秋季转金黄 (见 seasonal)。 */
     id: 'birch', name: '白桦', icon: '🌿',
-    desc: '细高白干、稀疏透光的树冠, 秋色金黄',
+    desc: '细高白干、卵圆树冠、细枝下垂, 秋色金黄',
     evergreen: false,
     variation: { height: 0.3, radius: 0.24, curve: 0.5, lean: 0.16, gnarl: 0.3, crown: 0.5, count: 0.3, leaf: 0.22 },
     seasonal: {
@@ -414,16 +426,16 @@ export const SPECIES = [
       spring: { palette: ['#8fc45a', '#b7d97e'], leafDensity: 0.7 },
     },
     patch: () => ({
-      trunk: { height: 12, baseRadius: 0.22, taper: 0.3, radiusCurve: 1.05, curve: 0.3, gnarl: 0.1, radialSegments: 9 },
+      trunk: { height: 15, baseRadius: 0.22, taper: 0.3, radiusCurve: 1.05, curve: 0.3, gnarl: 0.1, radialSegments: 9 },
       branches: {
         levels: 3, phototropism: 0.12, apicalDominance: 0.3,
         level: levels(
-          { count: 8, pitch: 52, pitchVariance: 12, lengthRatio: 0.3, lengthVariance: 0.2, radiusRatio: 0.3, gravity: -0.02, segments: 7, radialSegments: 5, curve: 0.5, curveVariance: 0.5 },
-          { count: 5, pitch: 46, lengthRatio: 0.45, radiusRatio: 0.4, gravity: -0.05, segments: 5 },
-          { count: 3, pitch: 42, lengthRatio: 0.55, radiusRatio: 0.5, gravity: -0.05, segments: 4 },
+          { count: 10, pitch: 48, pitchVariance: 12, lengthRatio: 0.34, lengthVariance: 0.2, radiusRatio: 0.3, gravity: -0.02, segments: 7, radialSegments: 5, curve: 0.5, curveVariance: 0.5 },
+          { count: 6, pitch: 46, lengthRatio: 0.38, radiusRatio: 0.4, gravity: -0.16, segments: 5 },
+          { count: 4, pitch: 42, lengthRatio: 0.44, radiusRatio: 0.5, gravity: -0.22, segments: 4 },
         ),
       },
-      leaves: { enabled: true, levels: [false, true, true, true, true], size: 0.28, width: 0.7, shape: 'birch', clusterCount: 2, perBranch: 11, color: '#8cc04f', colorTip: '#dcec8e', colorVariance: 0.22 },
+      leaves: { enabled: true, levels: [false, true, true, true, true], size: 0.24, width: 0.7, shape: 'birch', clusterCount: 2, perBranch: 12, color: '#8cc04f', colorTip: '#dcec8e', colorVariance: 0.22 },
       bark: { color: '#d8d3c4', color2: '#a9a396', roughness: 0.72, procedural: { enabled: true, style: 'birch', scale: 1.0, contrast: 0.75 } },
     }),
   },
@@ -440,16 +452,16 @@ export const SPECIES = [
       spring: { palette: ['#9ccb5c', '#c3e08a'], translucency: 0.68 },
     },
     patch: () => ({
-      trunk: { height: 8.5, baseRadius: 0.45, taper: 0.14, curve: 0.5, gnarl: 0.3, radialSegments: 11 },
+      trunk: { height: 12.5, baseRadius: 0.45, taper: 0.14, curve: 0.5, gnarl: 0.3, radialSegments: 11 },
       branches: {
         levels: 3, gravityScale: 1.6, phototropism: 0.16,
         level: levels(
-          { count: 6, pitch: 72, pitchVariance: 16, lengthRatio: 0.44, radiusRatio: 0.4, gravity: -0.1, segments: 9, curve: 0.28 },
-          { count: 4, pitch: 44, lengthRatio: 0.62, radiusRatio: 0.44, gravity: -0.34, segments: 8, curve: 0.2, lengthVariance: 0.3 },
-          { count: 2, pitch: 36, lengthRatio: 0.5, radiusRatio: 0.5, gravity: -0.42, segments: 6, curve: 0.15 },
+          { count: 7, pitch: 64, pitchVariance: 16, lengthRatio: 0.5, radiusRatio: 0.4, gravity: 0.0, segments: 9, curve: 0.28 },
+          { count: 5, pitch: 38, lengthRatio: 0.72, radiusRatio: 0.44, gravity: -0.4, segments: 8, curve: 0.2, lengthVariance: 0.3 },
+          { count: 3, pitch: 30, lengthRatio: 0.62, radiusRatio: 0.5, gravity: -0.55, segments: 6, curve: 0.15 },
         ),
       },
-      leaves: { enabled: true, levels: [false, true, true, true, true], size: 0.4, width: 0.22, shape: 'lance', perBranch: 12, clusterCount: 2, pitch: -22, droop: 0.55, color: '#7cab41', colorTip: '#b6d878', colorVariance: 0.2 },
+      leaves: { enabled: true, levels: [false, true, true, true, true], size: 0.36, width: 0.22, shape: 'lance', perBranch: 14, clusterCount: 2, pitch: -22, droop: 0.55, color: '#7cab41', colorTip: '#b6d878', colorVariance: 0.2 },
       bark: { color: '#4f4230', color2: '#6d5c44', procedural: { enabled: true, style: 'rough', scale: 1.2, contrast: 0.45 } },
     }),
   },
@@ -465,13 +477,13 @@ export const SPECIES = [
       winter: { leafDensity: 0.03 },
     },
     patch: () => ({
-      trunk: { height: 5.2, baseRadius: 0.34, taper: 0.2, curve: 0.55, gnarl: 0.5, knots: 3, flare: 0.8, radialSegments: 10 },
+      trunk: { height: 4.6, baseRadius: 0.34, taper: 0.2, curve: 0.55, gnarl: 0.5, knots: 3, flare: 0.8, radialSegments: 10 },
       branches: {
         levels: 3, apicalDominance: 0.28, phototropism: 0.02, gravityScale: 1.15,
         level: levels(
-          { count: 5, pitch: 66, pitchVariance: 18, lengthRatio: 0.5, radiusRatio: 0.42, gravity: -0.04, curve: 0.55, curveVariance: 0.5, segments: 9 },
-          { count: 4, pitch: 52, lengthRatio: 0.6, radiusRatio: 0.46, gravity: -0.1, curve: 0.6, segments: 7 },
-          { count: 3, pitch: 48, lengthRatio: 0.6, radiusRatio: 0.5, gravity: -0.12, curve: 0.6, segments: 5 },
+          { count: 5, pitch: 74, pitchVariance: 18, lengthRatio: 0.58, radiusRatio: 0.42, gravity: -0.04, curve: 0.55, curveVariance: 0.5, segments: 9 },
+          { count: 4, pitch: 58, lengthRatio: 0.62, radiusRatio: 0.46, gravity: -0.1, curve: 0.6, segments: 7 },
+          { count: 3, pitch: 54, lengthRatio: 0.6, radiusRatio: 0.5, gravity: -0.12, curve: 0.6, segments: 5 },
         ),
       },
       // 樱花: 叶片走素材卡片 (程序化叶形用 oval); 花朵是独立的平面花卡系统
@@ -783,7 +795,7 @@ export const SPECIES = [
     patch: () => ({
       trunk: {
         // 古榕主干短而粗, 低处分出多条主枝; 不规则度高、节瘤多
-        height: 9.5, baseRadius: 0.72, taper: 0.055, radiusCurve: 1.55,
+        height: 14.5, baseRadius: 0.72, taper: 0.055, radiusCurve: 1.55,
         segments: 18, radialSegments: 18, curve: 0.34, curveVariance: 0.5,
         lean: 0.06, leanDirection: 15, twist: 0.18, gnarl: 0.95,
         flare: 1.2, flareHeight: 0.2, knots: 6, knotSize: 0.42, squash: 1.0,
@@ -802,7 +814,7 @@ export const SPECIES = [
         lengthScale: 1.0, radiusScale: 1.0,
         mode: 'sca',
         sca: {
-          attractors: 180, crownWidth: 1.6, crownHeight: 0.46, crownDrop: 0.1,
+          attractors: 180, crownWidth: 1.3, crownHeight: 0.46, crownDrop: 0.1,
           step: 0.042, killRadius: 0.15, branchiness: 0.44, maxBranches: 110,
           startT: 0.46, droop: 0.3, wander: 0.34, collision: 0.09,
           radiusScale: 0.42, taper: 0.15,
