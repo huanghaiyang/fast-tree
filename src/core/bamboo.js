@@ -58,6 +58,10 @@ export function applyBambooParams(params) {
   const nodeCount = clamp(Math.round(num(b.nodeCount, 14)), 2, 60)
   // 竹节几何凸起强度 (半径倍率): 0 = 只剩贴图环, 0.2 = 默认的真实鼓包
   const nodeBulge = clamp(num(b.nodeBulge, 0.2), 0, 0.6)
+  // 竹节分布曲线: 节心位置 pow(t, curve) * count = k (k=0,1,...,count-1),
+  // 也就是节心在 t 上按 t = (k/count)^(1/curve) 分布。curve > 1 时,
+  // 靠近竿顶的节间距变短 (= 上密下疏, 真实竹子的样子); 1.0 是等距 (旧行为)。
+  const nodeCurve = clamp(num(b.nodeCurve, 1.3), 1, 1.8)
   const branchStart = clamp(num(b.branchStart, 0.42), 0.05, 0.95)
   const twigs = clamp(Math.round(num(b.twigs, 5)), 0, 8)
   const twigLength = Math.max(0.1, num(b.twigLength, 0.9))
@@ -178,7 +182,16 @@ export function applyBambooParams(params) {
       count: nodeCount,
       bulge: nodeBulge,
       ridge: nodeBulge * 0.6,
-      width: 1.5 / segs,
+      // 宽度按"环"给: 1.5 个环只有 2 圈采样, 画出来是一圈细棱 (特写下能看到
+      // 半径只在一条环上跳一下), 2.5 个环才有 4~6 圈过渡, 是真正的"鼓包";
+      // 再宽 (3.5+) 在密节处会和上下节连成一片波浪。
+      width: 2.5 / segs,
+      // 节心在 t 上的分布曲线 (见 nodeCurve 注释)
+      curve: nodeCurve,
+      // 竿高 (米): 蒙皮用 v = pow(t, curve) * span 写 UV, 让贴图环节心与几何节心
+      // **永远**重合 —— 直接拿弧长当 v 时, 竿的实际长度与设定竹高差几个百分点,
+      // 节环就会一路越漂越远 (实测竿顶偏半节)。span 与材质的 uvScaleV 反推同理。
+      span: height,
     },
     windGain: 1.3,
   }

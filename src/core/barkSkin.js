@@ -146,17 +146,25 @@ function ringModifier(branch, ringIndex, angle) {
   // 为什么放在 ringModifier 而不在骨架里: 节是"周长方向一整圈"的凸起,
   // 用逐环半径调制即可, 不必新增分支/节点; 窗口宽度估计 (averageRingRadius)
   // 也走同一个调制器, 所以侧枝开口不会算错。
-  // 相位对齐贴图: 竹节贴图的环心在 v = (k+0.5)/BANDS, 对应 t = (k+0.5)/count,
-  // 因此这里用 (t*count - 0.5) 取最近节心。
+  // 相位对齐贴图: 竹节贴图的暗环峰值在 sin(π·fy·BANDS)=0, 即 v_tex·BANDS = 整数;
+  // 换算回 t 就是 pow(t,curve)*count = 整数。所以这里取 gp*count 的小数部分当相位,
+  // 不能带 -0.5 (带了就整体偏半个节间距, 这是用户报"突起和暗环没对齐"的根因之一)。
   const nb = r.nodeBands
   if (nb && nb.count > 0) {
-    const phase = (((f.t * nb.count - 0.5) % 1) + 1) % 1
+    // 节心分布在 t 上按 pow(t, curve): curve>1 时越靠竿顶节越密 (真实竹子)
+    const gp = Math.pow(clamp01(f.t), nb.curve || 1)
+    // 节心相位必须与贴图暗环"同一个零点": 贴图里 ringDark 的峰值在
+    // sin(π·fy·BANDS)=0, 即 v_tex·BANDS = 整数。而 v_tex = pow(t,curve)*span*uvScaleV
+    // = pow(t,curve)*count/BANDS, 所以贴图暗环落在 pow(t,curve)*count = 整数处。
+    // 这里若写成 (gp*count - 0.5) 取模, 几何节心就会整体偏"半个节间距"
+    // (9 m 高、14 节的竿上是 32 cm), 看上去就是"突起在暗环上方/下方"——本轮修掉的就是这个常量偏移。
+    const phase = ((gp * nb.count) % 1 + 1) % 1
     const dNode = Math.min(phase, 1 - phase) / nb.count
     const w = Math.max(1e-6, nb.width)
     // ① 节间的鼓包 (宽): 竹子节部整圈略粗
     if (nb.bulge) mod *= 1 + nb.bulge * Math.exp(-Math.pow(dNode / w, 2))
     // ② 节环 (窄): 鼓包中间一道更细的凸脊, 这才是"节"的硬边
-    if (nb.ridge) mod *= 1 + nb.ridge * Math.exp(-Math.pow(dNode / (w * 0.42), 2))
+    if (nb.ridge) mod *= 1 + nb.ridge * Math.exp(-Math.pow(dNode / (w * 0.55), 2))
   }
   const bf = r.baseFlare || 0
   if (bf > 0) {
@@ -1076,6 +1084,11 @@ export function buildBarkSkin(skeleton, opts = {}) {
       // 记下本圈第一个顶点的全局下标: ⑤ 的桥接正是用 "环起点 + 列号" 定位 A_s / B_s。
       rings[branch.index].push(baseIndex)
       const wind = wind0 + (wind1 - wind0) * Math.pow(clamp01(f.t), windCurve)
+      // v 坐标: 默认用弧长 (米); 竹子这类"节位由骨架 t 定义"的分支改用
+      // v = pow(t, curve) × span, 保证贴图环节心与几何节心逐节重合 (见 bamboo.js nodeBands.span)
+      const nbSpan = r.nodeBands && r.nodeBands.span ? r.nodeBands.span : 0
+      const nbCurve = (r.nodeBands && r.nodeBands.curve) || 1
+      const vCoord = nbSpan > 0 ? Math.pow(clamp01(f.t), nbCurve) * nbSpan : arc * uvScaleV
       for (let j = 0; j <= Mf; j++) {
         const jm = j % Mf
         const angle = (jm / Mf) * TAU
@@ -1117,7 +1130,7 @@ export function buildBarkSkin(skeleton, opts = {}) {
         acc.vertex(
           px, py, pz,
           nx / nl, ny / nl, nz / nl,
-          (j / Mf) * uMeters, arc * uvScaleV,
+          (j / Mf) * uMeters, vCoord,
           clamp01(cr), clamp01(cg), clamp01(cb),
           wind, phase,
           origin.x, origin.y, origin.z,

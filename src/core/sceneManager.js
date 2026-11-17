@@ -64,6 +64,8 @@ import { cloneParams } from './params.js'
 import { makeRng } from './rng.js'
 import { TWIST_TIMES } from './twist.js'
 import { barkExportParts } from './exportSplit.js'
+// 彩带布料: 只负责"逐帧步进 + 回写顶点", 形状/约束都在 cloth.js 里
+import { stepCloth, writeCloth } from './cloth.js'
 
 /**
  * 天空穹顶的顶点着色器: 只把局部坐标原样传给片元, 不做任何位移。
@@ -379,6 +381,21 @@ export class TreeScene {
     }
     renderer.domElement.addEventListener('pointerdown', this._onForcePointerDown)
 
+    /* ---------------- ③.6 手工挂件点选 ----------------
+     * 只在附属物面板点开"点选摆放"时启用: 左键点竹竿/枝条 -> 反解出
+     * { node: 骨架分支下标, t: 沿枝位置 } 交给上层追加一件挂件。
+     * 不复用 aNodeId 顶点属性: 挂件要的是"枝上参数 t", 顶点里没有; 而
+     * 骨架折线只有 ~61 支 × 10 帧, 逐个线段投影的代价对点击完全可以忽略。 */
+    this._attachmentPicking = false
+    this._onAttachmentPointerDown = (e) => {
+      if (!this._attachmentPicking || this._forceDragging || e.button !== 0) return
+      // 变换轴正被拖动/悬停时让位给轴, 否则拖轴会顺手放下一个挂件。
+      if (this.forceControls.axis || this.transformControls.axis) return
+      const hit = this._pickAttachmentAt(e)
+      if (hit && this.callbacks.onAttachmentPick) this.callbacks.onAttachmentPick(hit)
+    }
+    renderer.domElement.addEventListener('pointerdown', this._onAttachmentPointerDown)
+
     /* ---------------- ④ 天空穹顶 + 星空 ---------------- */
     // --- 天空穹顶 (跟随相机的渐变球; 半径远小于远裁剪面, 避免被裁出硬边) ---
     // WebGPU 不支持 ShaderMaterial (不在 NodeLibrary 里, 每帧报 not compatible),
@@ -497,6 +514,14 @@ export class TreeScene {
     this.barkMesh = null
     this.leafMesh = null
     this.flowerMesh = null
+    // 挂件网格 (竹笋/鸟巢/槲寄生/彩带): 独立网格, 见 core/attachments.js
+    this.attachmentsMesh = null
+    // 彩带布料句柄 (attachmentsCloth): { handles:[{cloth,base,quads}], wind }
+    // 只有彩带需要逐帧求解, 巢/槲寄生/笋都是静态几何
+    this.attachmentsCloth = null
+    // 布料固定步长的累积器: dt 抖动时不能直接拿帧间隔积分, Verlet 会抖
+    this._clothAcc = 0
+    this._clothWind = null
     // 果实导出材质(只在导出且拆出 Bark_Fruit 时创建), 缓存键见 _getFruitExportMaterial
     this._fruitExportMaterial = null
     this._fruitExportKey = ''
@@ -826,6 +851,16 @@ export class TreeScene {
           uniforms: this.uniforms,
         }
       }
+      // 挂件 (竹笋/鸟巢/槲寄生/彩带): 纯色 + 顶点色。WebGL/WebGPU 通用 (MeshStandardMaterial),
+      // 双面是因为彩带是单层布片, 不双面就有一半角度看不见。
+      const attachMat = new THREE.MeshStandardMaterial({
+        vertexColors: true,
+        roughness: 0.86,
+        metalness: 0.0,
+        side: THREE.DoubleSide,
+      })
+      attachMat.name = 'Attachments'
+      this.materials.attachments = attachMat
     }
     return this.materials
   }
@@ -1001,6 +1036,15 @@ export class TreeScene {
       this.flowerMesh.material = null
       this.flowerMesh = null
     }
+    if (this.attachmentsMesh) {
+      this.treeGroup.remove(this.attachmentsMesh)
+      this.attachmentsMesh.geometry.dispose()
+      this.attachmentsMesh = null
+    }
+    // 旧布料的句柄跟着旧几何一起作废: 顶点下标是按旧几何的顶点顺序记的,
+    // 留着会在重建后的新几何上乱写 (画面会变成一片尖刺)。
+    this.attachmentsCloth = null
+    this._clothAcc = 0
 
     this.barkMesh = new THREE.Mesh(result.barkGeometry, this.materials.bark)
     this.barkMesh.castShadow = true
@@ -1024,6 +1068,19 @@ export class TreeScene {
       this.flowerMesh.receiveShadow = false
       this.flowerMesh.name = 'Flowers'
       this.treeGroup.add(this.flowerMesh)
+    }
+    // 挂件: 独立网格 + 独立纯色材质 (不进树皮蒙皮)
+    if (result.attachmentsGeometry) {
+      this.attachmentsMesh = new THREE.Mesh(result.attachmentsGeometry, this.materials.attachments)
+      this.attachmentsMesh.castShadow = true
+      this.attachmentsMesh.receiveShadow = true
+      this.attachmentsMesh.name = 'Attachments'
+      // 彩带会飘出构建时的包围球, 逐帧重算包围球不划算; 挂件本来就只有一块, 关掉视锥剔除
+      this.attachmentsMesh.frustumCulled = false
+      this.treeGroup.add(this.attachmentsMesh)
+      // 布料句柄挂在网格旁边: 运行时要"逐帧步进 + 回写顶点", 只服务彩带
+      this.attachmentsCloth = result.attachmentsCloth || null
+      this._clothAcc = 0
     }
     /* ---------------- ④ 分块剔除 + 阴影 + 季节特效 ---------------- */
     // 空间引导力示意图: 每次重建都按最新 params.forces 重挂一遍 (只是辅助显示)。
@@ -1351,6 +1408,15 @@ export class TreeScene {
     this._forcePicking = !!v
   }
 
+  /** 挂件点选开关: 仅附属物面板点"点选摆放"时开启 */
+  setAttachmentPicking(v) {
+    this._attachmentPicking = !!v
+    // 光标提示: 点选模式与"旋转视角"共用左键, 不给十字光标用户分不清现在点下去会干嘛。
+    if (this.renderer && this.renderer.domElement) {
+      this.renderer.domElement.style.cursor = this._attachmentPicking ? 'crosshair' : ''
+    }
+  }
+
   /** 收起力场变换轴 (detach + 隐藏 helper) */
   _hideForceGizmo() {
     if (!this.forceControls) return
@@ -1473,6 +1539,112 @@ export class TreeScene {
     if (!targets.length) return null
     const hits = this._raycaster.intersectObjects(targets, false)
     return hits.length ? (hits[0].object.userData.forceId || null) : null
+  }
+
+  /**
+   * 挂件点选: 打到树皮网格, 再把命中点反解成"骨架第几支 + 沿枝 t"。
+   *
+   * 为什么投影到骨架折线而不是直接读命中三角面的 aNodeId:
+   *   ① 挂件需要的是沿枝归一化位置 t (aNodeId 只有节点 id, 没有 t);
+   *   ② 骨架折线是树皮的"源头", 命中点本身就落在折线附近, 最近线段投影
+   *      精度足够 (竹竿半径 5cm 级, 线段间距厘米级)。
+   * @param {PointerEvent} e 原始指针事件
+   * @returns {{node: number, t: number}|null} 宿主位置
+   */
+  _pickAttachmentAt(e) {
+    if (!this.skeleton || !this.skeleton.branches) return null
+    if (!this._raycaster) this._raycaster = new THREE.Raycaster()
+    const canvas = this.renderer.domElement
+    const rect = canvas.getBoundingClientRect()
+    if (!rect.width || !rect.height) return null
+    this._raycaster.setFromCamera({
+      x: ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      y: -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    }, this.camera)
+    // 骨架帧在 treeGroup 局部坐标里 (生长动画会整体缩放/移动), 先把射线换到同一空间,
+    // 否则"点到了却差一个树高"——这类坐标系错位在缩放生长时最容易被忽略。
+    const origin = this._raycaster.ray.origin.clone()
+    const dir = this._raycaster.ray.direction.clone()
+    if (this.treeGroup) {
+      const inv = this.treeGroup.matrixWorld.clone().invert()
+      origin.applyMatrix4(inv)
+      dir.transformDirection(inv)
+    }
+    return this._nearestBranchRay(origin, dir)
+  }
+
+  /**
+   * 求射线与骨架折线的最近交点 (只认最近且足够贴近的一条)。
+   *
+   * 为什么不用 Raycaster 打树皮网格: 实测 WebGPU 路径下 intersectObject 返回 0
+   * (网格可见、几何也在, 但射线穿不过去); 而骨架折线本身就是树皮的源头,
+   * 直接算"射线到线段的最近距离"既不受材质/绕序/后端影响, 也省掉一次全网格求交。
+   * 阈值不能写死成一个绝对值: 竹竿半径约 5cm 时 0.12 m 刚好, 但橡树/榕树主干
+   * 半径可以到 20~30cm —— 点在主干轮廓边缘时离骨架线已经超过 0.12, 会"点不中"。
+   * 因此按线段两端的骨架半径自适应 (半径 + 5cm 余量, 保底 0.12 m 方便点细枝)。
+   */
+  _nearestBranchRay(origin, dir) {
+    const branches = this.skeleton.branches
+    const a = new THREE.Vector3()
+    const b = new THREE.Vector3()
+    const w0 = new THREE.Vector3()
+    const best = { node: -1, t: 0, d2: Infinity, s: Infinity, lim2: Infinity }
+    // 阈值不能写死 0.12 m: 竹竿半径约 5cm 时这个值刚好, 但橡树/榕树的主干半径
+    // 可以到 20~30cm —— 点在主干轮廓边缘时到骨架线的距离已经超过 0.12, 会"点不中"。
+    // 所以按线段两端的骨架半径自适应: 半径 + 5cm 余量, 并保底 0.12 (细枝也容易点)。
+    const MIN_THRESHOLD = 0.12
+    const MARGIN = 0.05
+    for (let i = 0; i < branches.length; i++) {
+      const fs = branches[i].frames
+      if (!fs || fs.length < 2) continue
+      for (let j = 0; j < fs.length - 1; j++) {
+        a.copy(fs[j].pos)
+        b.copy(fs[j + 1].pos)
+        // 射线 (origin + dir*s, s>=0) 与线段 a->b 的最近点对
+        const vx = b.x - a.x, vy = b.y - a.y, vz = b.z - a.z
+        const wx = origin.x - a.x, wy = origin.y - a.y, wz = origin.z - a.z
+        const uu = 1 // dir 已归一化
+        const uv = dir.x * vx + dir.y * vy + dir.z * vz
+        const vv = vx * vx + vy * vy + vz * vz
+        const ud = dir.x * wx + dir.y * wy + dir.z * wz
+        const vd = vx * wx + vy * wy + vz * wz
+        const denom = uu * vv - uv * uv
+        let sc
+        let tc
+        if (denom > 1e-9) {
+          sc = (uv * vd - vv * ud) / denom
+          tc = (uu * vd - uv * ud) / denom
+        } else {
+          sc = 0
+          tc = vv > 1e-12 ? vd / vv : 0
+        }
+        if (sc < 0) { sc = 0; tc = vv > 1e-12 ? vd / vv : 0 }
+        if (tc < 0) { tc = 0; sc = Math.max(0, -ud) }
+        if (tc > 1) { tc = 1; sc = Math.max(0, uv - ud) }
+        w0.set(origin.x + dir.x * sc - (a.x + vx * tc),
+          origin.y + dir.y * sc - (a.y + vy * tc),
+          origin.z + dir.z * sc - (a.z + vz * tc))
+        const d2 = w0.lengthSq()
+        const rA = fs[j].radius || fs[j + 1].radius || 0.02
+        const rB = fs[j + 1].radius || fs[j].radius || 0.02
+        const lim = Math.max(MIN_THRESHOLD, Math.max(rA, rB) + MARGIN)
+        const lim2 = lim * lim
+        // 超出自身阈值的线段直接跳过: 否则"离得最近但太细的点"会挡住旁边真正点中的粗主干
+        if (d2 > lim2) continue
+        // 距离相同取更靠近相机的那条 (避免"点前枝却选中后枝")
+        if (d2 < best.d2 - 1e-6 || (Math.abs(d2 - best.d2) < 1e-6 && sc < best.s)) {
+          const ta = Number.isFinite(fs[j].t) ? fs[j].t : j / (fs.length - 1)
+          const tb = Number.isFinite(fs[j + 1].t) ? fs[j + 1].t : (j + 1) / (fs.length - 1)
+          best.node = i
+          best.t = Math.min(1, Math.max(0, ta + (tb - ta) * tc))
+          best.d2 = d2
+          best.s = sc
+          best.lim2 = lim2
+        }
+      }
+    }
+    if (best.node < 0 || best.d2 > best.lim2) return null
+    return { node: best.node, t: best.t }
   }
 
   /**
@@ -3444,6 +3616,57 @@ export class TreeScene {
    * 为什么 _syncCullChunks 每帧都要跑: visible 可能被 LOD/线框/选中在"帧与帧之间"
    * 改掉(来自 UI 事件), 每帧同步一次是最省心的收敛手段(成本是几十次布尔赋值)。
    */
+  /**
+   * 彩带布料: 固定 1/60 步长推进, 再把质点回写到挂件几何的 position/normal。
+   *
+   * 为什么要累积器而不是直接拿帧 dt: Verlet 的位置更新是 dt² 量级的, 帧间隔一变
+   * (掉帧/切标签页) 布的振幅就跟着跳; 固定步长 + 最多补 3 步, 画面稳定且不会因为
+   * 一次长卡顿把布"甩飞"。暂停 (playing=false) 时不推进, 与树叶风场定格的行为一致。
+   *
+   * 风场参数从共享 uniforms 读, 所以调"风力/风向"滑杆时彩带和树梢同时改变,
+   * 不需要重建几何 (彩带的位置本来就每帧在变)。
+   */
+  _tickCloth(dt) {
+    const data = this.attachmentsCloth
+    if (!data || !data.handles || !data.handles.length) return
+    const mesh = this.attachmentsMesh
+    if (!mesh) return
+    const attrs = mesh.geometry.attributes
+    const posAttr = attrs.position
+    if (!posAttr) return
+    if (!this._clothWind) {
+      this._clothWind = {
+        dir: new THREE.Vector3(1, 0, 0),
+        strength: 0.12, speed: 0.8, gust: 0.5, gustSpeed: 0.16,
+        turbulence: 0.12, enabled: true, time: 0,
+      }
+    }
+    const w = this._clothWind
+    const U = this.uniforms
+    w.dir.set(U.uWindDir.value.x, 0, U.uWindDir.value.y)
+    if (w.dir.lengthSq() < 1e-8) w.dir.set(1, 0, 0)
+    w.dir.normalize()
+    w.strength = U.uWindStrength.value
+    w.speed = U.uWindSpeed.value
+    w.gust = U.uGust.value
+    w.gustSpeed = U.uGustSpeed.value
+    w.turbulence = U.uTurbulence.value
+    w.enabled = U.uWindEnabled.value > 0.5
+    w.time = U.uTime.value
+
+    const STEP = 1 / 60
+    this._clothAcc = Math.min(this._clothAcc + dt, 0.2)
+    let steps = 0
+    while (this._clothAcc >= STEP && steps < 3) {
+      for (const h of data.handles) stepCloth(h.cloth, STEP, w)
+      this._clothAcc -= STEP
+      steps++
+    }
+    if (!steps) return
+    const nrmAttr = attrs.normal
+    for (const h of data.handles) writeCloth(h, posAttr, nrmAttr)
+  }
+
   tick() {
     if (this.disposed) return
     this._raf = requestAnimationFrame(this._loop)
@@ -3456,6 +3679,8 @@ export class TreeScene {
     this.lastTime = nowSec
     if (this.playing) {
       this.uniforms.uTime.value += dt * (this.windTimeScale || 1)
+      // 彩带布料: 只在播放时推进, 暂停后彩带定格 (与树叶一致)
+      this._tickCloth(dt * (this.windTimeScale || 1))
     }
     if (this.growthAuto && this.growthValue < 1) {
       this.growthValue = Math.min(1, this.growthValue + dt * this.growthSpeed)
@@ -3563,6 +3788,11 @@ export class TreeScene {
     if (this._onForcePointerDown && this.renderer) {
       this.renderer.domElement.removeEventListener('pointerdown', this._onForcePointerDown)
       this._onForcePointerDown = null
+    }
+    /* ---- 手工挂件点选: 与力场点选同一套生命周期 ---- */
+    if (this._onAttachmentPointerDown && this.renderer) {
+      this.renderer.domElement.removeEventListener('pointerdown', this._onAttachmentPointerDown)
+      this._onAttachmentPointerDown = null
     }
     if (this.forceControls) {
       this.forceControls.detach()

@@ -19,6 +19,8 @@
       hint="竹节数量：同时驱动实体几何鼓包与树皮环的密度，改它会重建几何" />
     <SliderRow label="竹节凸起" v-model="B.nodeBulge" :min="0" :max="0.6" :step="0.01"
       hint="实体几何的节部鼓包强度（半径倍率）：0 = 只有贴图环，0.2 = 默认的真实凸起" />
+    <SliderRow label="竹节分布" v-model="B.nodeCurve" :min="1" :max="1.8" :step="0.01"
+      hint="1 = 等距；越大越「上密下疏」（真实竹子：基部节间长、梢部节间短）" />
     <SliderRow label="侧枝起点" v-model="B.branchStart" :min="0.05" :max="0.95" :step="0.01"
       hint="竿的下段光竿、上段才出侧枝——竹林最容易被认出的剪影" />
     <SliderRow label="每竿侧枝数" v-model="B.twigs" :min="0" :max="6" :step="1" />
@@ -27,12 +29,18 @@
     <SliderRow label="竹叶长度 (m)" v-model="B.leafSize" :min="0.05" :max="0.6" :step="0.01" unit="m" />
     <SliderRow label="竹叶宽长比" v-model="B.leafWidth" :min="0.04" :max="0.4" :step="0.01" />
     <SliderRow label="竹叶下垂" v-model="B.leafDroop" :min="0" :max="1" :step="0.01" />
+    <SliderRow label="竹笋数量" v-model="B.shoots" :min="0" :max="10" :step="1" unit="根"
+      hint="在竿基旁边破土的笋（独立几何：一层层鞘 + 尖上小苞叶）" />
+    <SliderRow label="竹笋高度 (m)" v-model="B.shootHeight" :min="0.2" :max="1.6" :step="0.05" unit="m"
+      hint="单根竹笋的高度（米），实际会在此基础上做 ±25% 随机" />
     <p class="muted" style="margin: 0">
       竹子和其它树种结构不同：这里是"一块低矮根盘 + 一丛近乎平行的细竿 + 上段侧枝"，不是"主干 + 逐层分枝"。
       竿数/竹高/竿径/节数/根盘离散等由 <code>core/bamboo.js</code> 在生成前展开成通用结构，
       所以风场、LOD、节点树、导出都照常可用。
       <br />竹节是<b>实体几何</b>：每竿沿长度分 8 段/节，节处整圈鼓包 + 一道窄凸脊（半径调制），
-      再叠一层贴图的暗色节环；把「竹节凸起」拖到 0 就退回纯贴图效果。
+      再叠一层贴图的暗色节环；节心与贴图环用同一套 t 映射（<code>pow(t, 分布)</code>）写 UV，
+      所以逐节对齐、并且越靠竿顶节越密。把「竹节凸起」拖到 0 就退回纯贴图效果。
+      <br />鸟巢 / 槲寄生 / 彩带已拆到顶部的「附属物」页签，<b>所有树种通用</b>；这里只保留竹笋。
     </p>
   </Section>
 </template>

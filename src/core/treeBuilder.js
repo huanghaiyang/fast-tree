@@ -30,6 +30,7 @@ import { createForceField } from './forceField.js'
 import { applyBambooParams } from './bamboo.js'
 import { createBarkSkeleton, addBarkBranch, finalizeBarkSkeleton, enforceChildBranchRadii } from './barkSkeleton.js'
 import { buildBarkSkin } from './barkSkin.js'
+import { buildAttachments } from './attachments.js'
 import { buildSpeedtreeBark } from './speedtreeBark.js'
 import { resolveDamageConfig, breakBranchFrames, buildFractureGeometry } from './branchDamage.js'
 import { buildLeafTemplate, buildLeafCardTemplate, pushLeafInstance } from './leaf.js'
@@ -2110,6 +2111,12 @@ export function buildTree(params, options = {}) {
   // spread = 水平方向的最大跨度 (X/Z 中较大者, 树皮与树叶取并集)。
   const maxXZ = Math.max(bInfo.size.x, bInfo.size.z, lInfo ? Math.max(lInfo.size.x, lInfo.size.z) : 0)
 
+  /* ---- 挂件: 竹笋 / 鸟巢 / 槲寄生 / 彩带 ---- */
+  // 单独一个几何而不是并进 barkGeometry: 挂件要纯色, 不该被竹节贴图染色,
+  // 也不该参与蒙皮的"单连通"拓扑验收 (见 attachments.js 文件头)。
+  const attach = buildAttachments(barkSkeleton, P, P.seed)
+  const attachmentsGeometry = attach.geometry
+
   return {
     barkGeometry,
     // "真正被用来生成"的参数树 (竹子会在这里被 applyBambooParams 展开过)。
@@ -2118,6 +2125,11 @@ export function buildTree(params, options = {}) {
     effectiveParams: P,
     leafGeometry,
     flowerGeometry,
+    attachmentsGeometry,
+    // 彩带布料句柄: { handles: [{ cloth, base, quads }], wind }。
+    // 只给场景层"逐帧步进 + 回写顶点"用, 不进任何统计/序列化 (构建结果仍是纯几何)。
+    attachmentsCloth: attach.cloth,
+    attachmentsStats: attach.stats,
     nodes,
     groups,
     // 扭曲句柄引导线: {trunk: [x,y,z,...], branches: {1: [...], ...}} 扁平 xyz 数组,
@@ -2140,6 +2152,10 @@ export function buildTree(params, options = {}) {
       barkTriangles: barkGeometry.index ? barkGeometry.index.count / 3 : 0,
       leafTriangles: leafGeometry && leafGeometry.index ? leafGeometry.index.count / 3 : 0,
       barkVertices: barkGeometry.attributes.position ? barkGeometry.attributes.position.count : 0,
+      // 挂件几何 (竹笋/鸟巢/槲寄生/彩带): 独立网格, 但"全模三角面"要算进来,
+      // 否则 HUD 数字比导出/GLB 少一截
+      attachmentsTriangles: attachmentsGeometry && attachmentsGeometry.index ? attachmentsGeometry.index.count / 3 : 0,
+      attachmentsVertices: attachmentsGeometry ? attachmentsGeometry.attributes.position.count : 0,
       leafVertices: leafGeometry ? leafGeometry.attributes.position.count : 0,
     flowers: flowerCount,
     flowerTriangles: flowerGeometry && flowerGeometry.index ? flowerGeometry.index.count / 3 : 0,

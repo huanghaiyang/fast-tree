@@ -30,7 +30,7 @@
  *       所以任何在模块顶层读 `state` 的代码, 拿到的都是 oak/成熟/夏季 这套初始值。
  */
 import { reactive, computed } from 'vue'
-import { defaultParams, cloneParams, normalizeParams, mergeParams } from '../core/params.js'
+import { defaultParams, cloneParams, normalizeParams, mergeParams, defaultAttachmentItem } from '../core/params.js'
 // 预设与树种: applyPreset 负责"树种×阶段×季节"的展开, autoGenerate 负责"种子 -> 一棵完整的树"
 import { autoGenerate, autoWind, applyPreset, randomSeed, presetById, archetypeName } from '../core/presets.js'
 import { SPECIES, GROWTH_STAGES, SEASONS } from '../core/species.js'
@@ -83,6 +83,12 @@ export const state = reactive({
   activeTab: 'auto',        // 当前参数标签页 (属性搜索跳转会改它)
   // 空间引导力: 当前在视口/面板里选中的对象 id ('' = 未选中)
   activeForceId: '',
+  // 手工挂件: 当前在附属物面板里选中的实例 id / 点选摆放模式 / 待添加的类型
+  // attachmentPicking = true 时, 视口里下一次左键点击枝条就会在该处放一件挂件。
+  activeAttachmentId: '',
+  attachmentPicking: false,
+  attachmentPickMode: 'new', // 'new' = 点选后新增一件; 'move' = 把当前选中件挪到点击处
+  attachmentType: 'nest',
   archetype: 'oak',
   autoType: null,      // 强制树种 (null = 随机)
   timeScale: 1,
@@ -465,6 +471,71 @@ export function redo() {
  *   3) 想"重建并重新取景"用 `rebuildVersion++`; 只想重新取景用 `frameVersion++`;
  *      换了全新一棵树 (要重播生长动画) 才用 `regrowToken++`。三者语义不能混。
  */
+
+/* ---------------- 手工挂件 (params.attachments.items) ----------------
+ * 与空间引导力不同, 这里**要**记 undo: 挂件是"加一件/删一件"的离散编辑,
+ * 用户点错一下就想退回上一步; 数量滑杆属于连续参数, 那条通路沿用旧行为。
+ * 视口点选 -> addAttachmentAt(); 面板列表 -> setActiveAttachment / update / remove。
+ */
+
+/**
+ * 在视口点选的宿主位置放一件挂件, 并选中它。
+ * @param {number} node 骨架分支下标 (由 sceneManager 反解)
+ * @param {number} t 沿枝位置 0..1
+ * @param {string} type 'nest' | 'mistletoe' | 'ribbon'
+ * @returns {object|null} 新实例 (失败返回 null)
+ */
+export function addAttachmentAt(node, t, type = state.attachmentType) {
+  const A = state.params.attachments
+  if (!A) return null
+  if (!Array.isArray(A.items)) A.items = []
+  pushUndo()
+  const item = defaultAttachmentItem(type, A.items.length, node, t)
+  A.items.push(item)
+  state.activeAttachmentId = item.id
+  return item
+}
+
+/** 删除指定挂件 (点选/列表删除共用), 选中项移到相邻一件 */
+export function removeAttachment(id) {
+  const A = state.params.attachments
+  const list = A && Array.isArray(A.items) ? A.items : []
+  const i = list.findIndex((it) => it.id === id)
+  if (i < 0) return false
+  pushUndo()
+  list.splice(i, 1)
+  const next = list[Math.min(i, list.length - 1)]
+  state.activeAttachmentId = next ? next.id : ''
+  return true
+}
+
+/** 清空所有手工挂件 (随机散布的数量滑杆不受影响) */
+export function clearAttachments() {
+  const A = state.params.attachments
+  if (!A || !Array.isArray(A.items) || !A.items.length) return false
+  pushUndo()
+  A.items.length = 0
+  state.activeAttachmentId = ''
+  return true
+}
+
+/** 把当前选中的挂件挪到视口点选的新位置 (保留类型/尺寸, 只换宿主) */
+export function moveAttachmentAt(node, t) {
+  const A = state.params.attachments
+  const list = A && Array.isArray(A.items) ? A.items : []
+  const it = list.find((x) => x.id === state.activeAttachmentId)
+  if (!it) return false
+  pushUndo()
+  it.node = Number.isFinite(Number(node)) ? Math.round(Number(node)) : it.node
+  it.t = Math.min(1, Math.max(0, Number.isFinite(Number(t)) ? Number(t) : it.t))
+  return true
+}
+
+/** 切换点选摆放模式 (true = 视口下一次左键点枝条即落一件) */
+export function setAttachmentPicking(v, mode = 'new') {
+  state.attachmentPicking = !!v
+  if (v) state.attachmentPickMode = mode === 'move' ? 'move' : 'new'
+}
 
 /**
  * 直接设置随机种子 (不触发 undo 记录, 由调用方决定是否需要)。

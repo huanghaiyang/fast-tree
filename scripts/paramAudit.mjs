@@ -236,10 +236,13 @@ export const CONDITIONS = {
 // 所以审计每个子参数前先把开关打开, 否则永远比不出几何差异。
 // 'bamboo.enabled' 本身不设条件 —— 它就是要被扰动的开关。
 for (const k of ['culms', 'height', 'culmRadius', 'baseHeight', 'rootSpread', 'rootScatter',
-  'rootStagger', 'tilt', 'nodeCount', 'nodeBulge',
-  'branchStart', 'twigs', 'twigLength', 'leafPerTwig', 'leafSize', 'leafWidth', 'leafDroop']) {
+  'rootStagger', 'tilt', 'nodeCount', 'nodeBulge', 'nodeCurve',
+  'branchStart', 'twigs', 'twigLength', 'leafPerTwig', 'leafSize', 'leafWidth', 'leafDroop',
+  'shoots', 'shootHeight']) {
   CONDITIONS['bamboo.' + k] = { 'bamboo.enabled': true }
 }
+// 附属物 (鸟巢/槲寄生/彩带) 对所有树种通用, 不需要 bamboo.enabled 前置
+// (只有 bamboo.shoots / shootHeight 属于竹子, 条件见上面的循环)。
 // 果实子参数只有在"启用果实 + 指定挂果层级"时才有效果
 // 注意: fruit.enabled 不加条件 (它本身就是要被扰动的开关);
 // 探针小树只有 L1/L2, 挂果层级必须落在有效层级上, 否则怎么改都看不到效果
@@ -264,6 +267,12 @@ const FORCE_PROBE = [{
 }]
 CONDITIONS['forces.enabled'] = { 'forces.items': FORCE_PROBE }
 CONDITIONS['forces.items'] = { 'forces.enabled': true }
+
+// 手工挂件列表默认是空的: 扰动"空数组 -> 空数组"永远看不出差别, 直接塞一件探针挂件。
+// node 给 -1 (未指定宿主) 是故意为之: core/attachments.js 会回落到第一根可挂枝,
+// 这条兜底路径本身也因此被审计覆盖。
+const ATTACHMENT_PROBE = [{ id: 'att-probe', type: 'nest', node: -1, t: 0.5, size: 1 }]
+CONDITIONS['attachments.items'] = {}
 
 /** 需要 canvas/ImageLoader, Node 下无法判定 -> 在浏览器审计页里验证 */
 export const DOM_DEPENDENT = new Set([
@@ -333,11 +342,15 @@ function geometrySignature(params) {
       .join(',')
     : 'none'
   const fl = r.flowerGeometry
+  // 挂件 (竹笋/鸟巢/槲寄生/彩带) 是独立几何: 不把它算进签名,
+  // attachments.* 与 bamboo.shoots 会被误报成"失效参数"。
+  const at = r.attachmentsGeometry
   return [
     g.attributes.position.count,
     attrs(g),
     l ? l.attributes.position.count + '|' + attrs(l) : 'noleaf',
     fl ? fl.attributes.position.count + '|' + attrs(fl) : 'noflower',
+    at ? at.attributes.position.count + '|' + attrs(at) : 'noshoot',
     r.stats.branches,
     r.stats.leaves,
     r.stats.flowers,
@@ -359,6 +372,7 @@ const SPECIAL_PERTURB = {
   'roots.count': [11],
   'bark.pipeline': ['skin'],
   'forces.items': [FORCE_PROBE],   // 空数组扰动无效, 直接塞一个探针力场
+  'attachments.items': [ATTACHMENT_PROBE], // 同上: 手工挂件列表默认空
   'oldTree.deadChance': [1],       // 概率型开关: 0.6 在探针小树上不保证真的断
 }
 

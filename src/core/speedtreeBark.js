@@ -196,14 +196,16 @@ function ringModifier(branch, f, angle) {
   }
   // 竹节 (实体几何): 与 barkSkin.ringModifier 同一套公式, 两条几何管线都要支持,
   // 否则默认走 speedtree 管线时"竹节凸起"参数看上去完全没反应 (踩过)。
-  // 相位对齐贴图: 节心在 t = (k+0.5)/count。
+  // 相位对齐贴图: 贴图暗环在 pow(t,curve)*count = 整数处 (见 barkSkin 里的推导),
+  // 所以节心取 gp*count 的整数倍, 不能带 -0.5 偏移。
   const nb = r.nodeBands
   if (nb && nb.count > 0) {
-    const phase = (((f.t * nb.count - 0.5) % 1) + 1) % 1
+    const gp = Math.pow(clamp01(f.t), nb.curve || 1)
+    const phase = ((gp * nb.count) % 1 + 1) % 1
     const dNode = Math.min(phase, 1 - phase) / nb.count
     const w = Math.max(1e-6, nb.width)
     if (nb.bulge) mod *= 1 + nb.bulge * Math.exp(-Math.pow(dNode / w, 2))
-    if (nb.ridge) mod *= 1 + nb.ridge * Math.exp(-Math.pow(dNode / (w * 0.42), 2))
+    if (nb.ridge) mod *= 1 + nb.ridge * Math.exp(-Math.pow(dNode / (w * 0.55), 2))
   }
   const bf = r.baseFlare || 0
   if (bf > 0) {
@@ -294,6 +296,11 @@ export function buildSpeedtreeBark(skeleton, opts = {}) {
       const isVirtual = i < virtualCount
       const rr = isVirtual ? f.radius : Math.max(0.0005, f.radius * ringModifier(branch, f, 0))
       const wind = wind0 + (wind1 - wind0) * Math.pow(clamp01(f.t), windCurve)
+      // v 坐标: 默认弧长(米); 有 nodeBands.span 时改用 pow(t,curve)×span,
+      // 让竹节贴图环与几何节心逐节对齐 (领口虚拟帧不参与, 用弧长)
+      const nbSpan = r.nodeBands && r.nodeBands.span ? r.nodeBands.span : 0
+      const nbCurve = (r.nodeBands && r.nodeBands.curve) || 1
+      const vCoord = (nbSpan > 0 && !isVirtual) ? Math.pow(clamp01(f.t), nbCurve) * nbSpan : arc * uvScaleV
       const tt = clamp01(f.t)
       const cr = color.r + (color2.r - color.r) * smooth01(tt)
       const cg = color.g + (color2.g - color.g) * smooth01(tt)
@@ -318,7 +325,7 @@ export function buildSpeedtreeBark(skeleton, opts = {}) {
         nx /= nl; ny /= nl; nz /= nl
         acc.vertex(
           px, py, pz, nx, ny, nz,
-          (j / M) * uMeters, arc * uvScaleV,
+          (j / M) * uMeters, vCoord,
           cr, cg, cb, wind, phase,
           origin.x, origin.y, origin.z, grow[0], grow[1], slot,
         )

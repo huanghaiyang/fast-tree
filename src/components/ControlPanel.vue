@@ -11,6 +11,7 @@
   <LeafPanel v-else-if="activeTab === 'leaf'" />
   <FlowerPanel v-else-if="activeTab === 'flower'" />
   <FruitPanel v-else-if="activeTab === 'fruit'" />
+  <AttachmentsPanel v-else-if="activeTab === 'attachments'" />
   <WindPanel v-else-if="activeTab === 'wind'" />
   <ForcesPanel v-else-if="activeTab === 'forces'" />
   <MaterialPanel v-else-if="activeTab === 'material'" />
@@ -30,6 +31,7 @@ import BranchPanel from './panels/BranchPanel.vue'
 import LeafPanel from './panels/LeafPanel.vue'
 import FlowerPanel from './panels/FlowerPanel.vue'
 import FruitPanel from './panels/FruitPanel.vue'
+import AttachmentsPanel from './AttachmentsPanel.vue'
 import WindPanel from './panels/WindPanel.vue'
 import ForcesPanel from './panels/ForcesPanel.vue'
 import MaterialPanel from './panels/MaterialPanel.vue'
@@ -43,7 +45,8 @@ const tabs = [
   { id: 'branch', name: '树枝', icon: '🌿' },
   { id: 'leaf', name: '树叶', icon: '🍃' },
   { id: 'flower', name: '花朵', icon: '🌸' },
-    { id: 'fruit', name: '果实', icon: '🌰' },
+  { id: 'fruit', name: '果实', icon: '🌰' },
+  { id: 'attachments', name: '附属物', icon: '🪺' },
   { id: 'wind', name: '风/生长', icon: '💨' },
   { id: 'forces', name: '引导力', icon: '🧲' },
   { id: 'material', name: '材质', icon: '🎨' },

@@ -523,6 +523,7 @@ export function defaultParams() {
       tilt: 7.0,           // 竹竿外倾角 (度, 离竖直方向)
       nodeCount: 14,       // 每竿竹节数 (同时驱动实体几何鼓包与树皮环的密度)
       nodeBulge: 0.2,      // 竹节几何凸起强度 (半径倍率): 0 = 只有贴图环, 0.2 = 真实鼓包
+      nodeCurve: 1.3,      // 竹节分布曲线: >1 = 上密下疏 (真实竹子), 1 = 等距
       branchStart: 0.42,   // 侧枝起始高度比例 (0 = 从地面, 1 = 只在竿顶)
       twigs: 5,            // 每竿侧枝数
       twigLength: 0.9,     // 侧枝长度 (米)
@@ -530,6 +531,28 @@ export function defaultParams() {
       leafSize: 0.3,       // 竹叶长度 (米)
       leafWidth: 0.16,     // 竹叶宽/长比 (竹子是细长披针叶)
       leafDroop: 0.55,     // 竹叶下垂 0..1
+      shoots: 4,           // 竹笋数量 (每根竿旁冒出来, 0 = 没有)
+      shootHeight: 0.85,   // 竹笋高度 (米)
+    },
+
+    /* 附属物 (挂件): 鸟巢 / 槲寄生 / 彩带 —— 独立网格 + 独立材质 (见 core/attachments.js)。
+     * 为什么单开一组且对所有树种可用: 挂件是"挂在骨架上的装饰", 不参与蒙皮拓扑校验,
+     * 也不吃树皮/叶片贴图; 改这些值只需要重建挂件几何。 */
+    attachments: {
+      enabled: true,
+      nest: 1,             // 鸟巢数量 (0 = 关闭)
+      mistletoe: 2,        // 槲寄生团数量 (0 = 关闭)
+      ribbons: 3,          // 彩带条数 (0 = 关闭)
+      ribbonColor: '#c81f1f', // 彩带颜色
+      /* 手工摆放的挂件实例 (视口点选宿主后追加到这里)。
+       * 为什么和上面的数量并存而不是取代: 数量是"快速要一批随机散布"的旧通路,
+       * items 是"精确指定挂在第几根枝、枝上哪个位置"的新通路; 两者叠加生成,
+       * 退回随机散布只需把 items 清空, 不用改数量滑杆。
+       * 每项: { id, type: 'nest'|'mistletoe'|'ribbon', node, t: 0..1, size }
+       *   node = 骨架 branches 的下标 (与 branchEdits 同一套"同 seed 下稳定"的约定)
+       *   t    = 沿该枝的归一化位置 (0 = 枝基, 1 = 枝梢)
+       *   size = 尺寸倍率 (1 = 默认大小); 彩带颜色统一跟随 ribbonColor */
+      items: [],
     },
 
     // 单枝手工编辑: 以骨架分支下标为 key (同一 seed/结构下稳定)
@@ -917,6 +940,61 @@ export function mergeParams(base, patch) {
   return out
 }
 
+/** 手工摆放挂件时可选的类型 (与 core/attachments.js 的三段构建一一对应) */
+export const ATTACHMENT_TYPES = ['nest', 'mistletoe', 'ribbon']
+
+/**
+ * 新建一个手工挂件实例。
+ * node/t 由视口点选反解得到 (见 sceneManager._pickAttachmentAt); 默认 -1 表示
+ * "还没指定宿主", 生成时回落到第一根可挂的枝 —— 手写参数 JSON 或审计探针
+ * 都可能不带 node, 留这个兜底比"静默不生成"更容易发现问题。
+ * @param {string} type 'nest' | 'mistletoe' | 'ribbon'
+ * @param {number} index 在 items 里的下标 (只用于生成可读 id)
+ * @param {number} node 骨架分支下标 (-1 = 未指定)
+ * @param {number} t 沿枝位置 0..1
+ * @returns {object} 挂件实例
+ */
+export function defaultAttachmentItem(type = 'nest', index = 0, node = -1, t = 0.5) {
+  return {
+    id: `att-${Date.now().toString(36)}-${index}`,
+    type: ATTACHMENT_TYPES.includes(type) ? type : 'nest',
+    node: Number.isFinite(Number(node)) ? Math.round(Number(node)) : -1,
+    t: Math.min(1, Math.max(0, Number.isFinite(Number(t)) ? Number(t) : 0.5)),
+    size: 1,
+  }
+}
+
+/**
+ * 清洗手工挂件列表 (导入旧 JSON / 撤销快照 / 审计扰动都可能传脏值)。
+ * 上限 32 条: 挂件是逐件几何, 数量再多就失去"手工摆放"的意义, 也避免参数 JSON 失控。
+ */
+function normalizeAttachments(a) {
+  const o = a && typeof a === 'object' ? a : {}
+  const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d)
+  const list = Array.isArray(o.items) ? o.items : []
+  const items = list
+    .filter((it) => it && typeof it === 'object')
+    .slice(0, 32)
+    .map((it, i) => {
+      const type = ATTACHMENT_TYPES.includes(it.type) ? it.type : 'nest'
+      return {
+        id: typeof it.id === 'string' && it.id ? it.id : `att-${i + 1}`,
+        type,
+        node: Math.round(num(it.node, -1)),
+        t: Math.min(1, Math.max(0, num(it.t, 0.5))),
+        size: Math.min(4, Math.max(0.2, num(it.size, 1))),
+      }
+    })
+  return {
+    enabled: o.enabled !== false,
+    nest: Math.max(0, Math.round(num(o.nest, 1))),
+    mistletoe: Math.max(0, Math.round(num(o.mistletoe, 2))),
+    ribbons: Math.max(0, Math.round(num(o.ribbons, 3))),
+    ribbonColor: typeof o.ribbonColor === 'string' && o.ribbonColor ? o.ribbonColor : '#c81f1f',
+    items,
+  }
+}
+
 /**
  * 保证结构完整 (导入旧版本 JSON 时用)。
  *
@@ -938,6 +1016,8 @@ export function normalizeParams(p) {
   out.seed = Number.isFinite(out.seed) ? out.seed : 1
   // 空间引导力: 旧存档没有这个键, 统一补齐成 { enabled, items[] } 并清洗脏值。
   out.forces = normalizeForces(out.forces)
+  // 附属物: 旧存档没有 items, 统一补齐并清洗; 有 items 时顺手夹住脏坐标。
+  out.attachments = normalizeAttachments(out.attachments)
   if (!Array.isArray(out.branches.level)) out.branches.level = []
   while (out.branches.level.length < MAX_LEVELS) out.branches.level.push(defaultLevel(out.branches.level.length))
   out.branches.level = out.branches.level.slice(0, MAX_LEVELS)
@@ -957,7 +1037,7 @@ export function normalizeParams(p) {
  * 放错组的代价: 把纯 uniform 参数放进 geometry 会导致拖滑杆时反复重建几何 (卡顿);
  * 反之把几何参数放进 material 则会出现"改了没反应"的 bug。 */
 // 影响几何拓扑/顶点数据的键 (seed 改变会整体换个体, 所以也在几何组)
-const GEOMETRY_KEYS = ['seed', 'auto', 'trunk', 'roots', 'buttress', 'aerialRoots', 'epiphyte', 'bamboo', 'oldTree', 'branches', 'leaves', 'flower', 'fruit', 'lod', 'ao', 'branchEdits', 'forces']
+const GEOMETRY_KEYS = ['seed', 'auto', 'trunk', 'roots', 'buttress', 'aerialRoots', 'epiphyte', 'bamboo', 'attachments', 'oldTree', 'branches', 'leaves', 'flower', 'fruit', 'lod', 'ao', 'branchEdits', 'forces']
 // 只影响材质/着色器/合批实例的键 (落叶/粒子等是"另一个几何体", 重建代价低, 归到材质组)
 const MATERIAL_KEYS = ['bark', 'leafMat', 'custom', 'particles', 'fall', 'litter', 'flowerFall', 'flowerLitter']
 // 只进顶点着色器 uniform 的键

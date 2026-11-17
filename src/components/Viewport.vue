@@ -89,6 +89,8 @@ import TwistGizmo from './TwistGizmo.vue'
 import {
   state, sceneApi, totalTriangles, setNodeModel, selectionSignature, setImpostorPreview,
   clearSelection as clearSelectionAction, toggleNodePanel,
+  addAttachmentAt,
+  moveAttachmentAt,
 } from '../store/treeStore.js'
 
 const host = ref(null)
@@ -366,6 +368,14 @@ async function mountScene(opts = {}) {
       // 视口点选力场 -> 同步面板下拉框与变换轴
       if (id && state.activeForceId !== id) state.activeForceId = id
     },
+    onAttachmentPick: ({ node, t }) => {
+      // 附属物面板的"点选摆放": 在命中的枝条位置追加一件手工挂件。
+      // 单次生效 (放完立即退出点选): 否则用户想挪视角时随手一点就会多一件。
+      if (!state.attachmentPicking) return
+      if (state.attachmentPickMode === 'move') moveAttachmentAt(node, t)
+      else addAttachmentAt(node, t, state.attachmentType)
+      state.attachmentPicking = false
+    },
   }, {
     renderer: backend.renderer,
     isNodeRenderer: backend.isNodeRenderer,
@@ -387,6 +397,7 @@ async function mountScene(opts = {}) {
   sceneApi.setBranchTransformGizmo = (opts) => { if (scene) scene.setBranchTransformGizmo(opts) }
   sceneApi.setForceTransformGizmo = (opts) => { if (scene) scene.setForceTransformGizmo(opts) }
   sceneApi.setForcePicking = (v) => { if (scene) scene.setForcePicking(!!v) }
+  sceneApi.setAttachmentPicking = (v) => { if (scene) scene.setAttachmentPicking(!!v) }
   sceneApi.updateForceGizmos = () => { if (scene) scene.updateForceGizmos(state.params.forces) }
   sceneApi.makeImpostor = (opts) => (scene ? scene.makeImpostor(opts) : null)
   sceneApi.setImpostorModel = (res) => { if (scene) scene.setImpostorPreview(res) }

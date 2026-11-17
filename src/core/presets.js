@@ -127,6 +127,9 @@ export function preserveUserBits(next, prev) {
   if (prev.growth) next.growth = deepCopy(prev.growth)
   // LOD 是"看这台机器的性能", 与树无关, 整组保留
   if (prev.lod) next.lod = deepCopy(prev.lod)
+  // 附属物挂件 (数量 + 手工摆放的 items) 是装饰偏好, 与树形无关:
+  // 换季节/阶段时不该把用户逐件点选出来的挂件清空 (非竹种不渲染, 留着也不会多出东西)。
+  if (prev.attachments) next.attachments = deepCopy(prev.attachments)
   // ② 树皮/树叶: 只保"用户自己上传的贴图"与"贴图怎么用"的选择;
   //    颜色/粗糙度/花纹这些属于形态基因, 交给新预设重新覆盖 (否则换树种看不出变化)
   if (prev.bark) {

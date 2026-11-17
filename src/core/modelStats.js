@@ -26,7 +26,8 @@
  */
 export function modelTriangleCount(stats = {}) {
   const s = stats || {}
-  const n = (s.barkTriangles || 0) + (s.leafTriangles || 0) + (s.flowerTriangles || 0)
+  const n = (s.barkTriangles || 0) + (s.leafTriangles || 0) + (s.flowerTriangles || 0) +
+    (s.attachmentsTriangles || 0)
   return Math.max(0, Math.round(n))
 }
 
@@ -44,6 +45,7 @@ export function modelTriangleCount(stats = {}) {
  */
 export function modelVertexCount(stats = {}) {
   const s = stats || {}
-  const n = (s.barkVertices || 0) + (s.leafVertices || 0) + (s.flowerVertices || 0)
+  const n = (s.barkVertices || 0) + (s.leafVertices || 0) + (s.flowerVertices || 0) +
+    (s.attachmentsVertices || 0)
   return Math.max(0, Math.round(n))
 }

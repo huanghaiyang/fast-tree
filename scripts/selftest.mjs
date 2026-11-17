@@ -1720,8 +1720,9 @@ console.log('\n[29] 面数统计')
   p.flower.enabled = true
   p.flower.count = 12
   const r = buildTree(p)
-  check('建筑统计: 开花的树全模面数 = 树皮+叶+花', modelTriangleCount(r.stats) ===
-    Math.round(r.stats.barkTriangles + r.stats.leafTriangles + r.stats.flowerTriangles) &&
+  check('建筑统计: 开花的树全模面数 = 树皮+叶+花+挂件', modelTriangleCount(r.stats) ===
+    Math.round(r.stats.barkTriangles + r.stats.leafTriangles + r.stats.flowerTriangles +
+      (r.stats.attachmentsTriangles || 0)) &&
     r.stats.flowerTriangles > 0)
 }
 
@@ -2463,6 +2464,138 @@ console.log('\n[38] 断枝破损 (Broken Branch)')
       banyanR.stats.damage.brokenBranches > 0 && banyanR.stats.damage.triangles > 0,
       JSON.stringify(banyanR.stats.damage))
   }
+}
+
+/* 39. 手工挂件: 自定义摆放 (items[]) */
+console.log('\n[39] 手工挂件 (自定义摆放)')
+{
+  const legacy = normalizeParams({ seed: 3 })
+  check('旧存档自动补齐 attachments.items',
+    Array.isArray(legacy.attachments.items) && legacy.attachments.items.length === 0 &&
+    legacy.attachments.enabled === true, JSON.stringify(legacy.attachments))
+
+  // 脏值: 未知类型 -> nest; t/size 夹到范围; 非对象项被丢弃
+  const dirty = normalizeParams({
+    attachments: {
+      enabled: 1, nest: -2, mistletoe: 'x', ribbons: 99, ribbonColor: '',
+      items: [
+        { type: 'nope', node: 'a', t: 2, size: 99 },
+        { type: 'ribbon', node: 5, t: -1, size: 0.01 },
+        null,
+      ],
+    },
+  })
+  const dl = dirty.attachments.items
+  check('挂件脏数据被清洗 (类型/t/size 夹取, 非对象项丢弃)',
+    dl.length === 2 && dl[0].type === 'nest' && dl[0].t === 1 && dl[0].size === 4 &&
+    dl[1].type === 'ribbon' && dl[1].t === 0 && dl[1].size === 0.2,
+    JSON.stringify(dl))
+  check('挂件数量上限 32 条',
+    normalizeParams({ attachments: { items: Array.from({ length: 40 }, () => ({ type: 'nest' })) } })
+      .attachments.items.length === 32)
+
+  // 逐件生成: node 失效回落到第一根可挂枝, 不能整批消失
+  const base = composeTree('bamboo', 'mature', 'summer', 20240607)
+  const r0 = buildTree(base)
+  const p = cloneParams(base)
+  p.attachments.items = [
+    { id: 'a', type: 'nest', node: 5, t: 0.5, size: 1 },
+    { id: 'b', type: 'ribbon', node: 3, t: 0.8, size: 1 },
+    { id: 'c', type: 'mistletoe', node: 9999, t: 0.3, size: 1 },
+  ]
+  const r1 = buildTree(p)
+  check('手工挂件逐件生成 (node 越界回落, 类型计数正确)',
+    r1.attachmentsStats.custom === 3 &&
+    r1.attachmentsStats.nests === r0.attachmentsStats.nests + 1 &&
+    r1.attachmentsStats.ribbons === r0.attachmentsStats.ribbons + 1 &&
+    r1.attachmentsStats.mistletoes === r0.attachmentsStats.mistletoes + 1 &&
+    r1.stats.attachmentsTriangles > r0.stats.attachmentsTriangles,
+    JSON.stringify(r1.attachmentsStats))
+
+  // 顺序保证: 手工挂件排在随机散布之后, 所以随机散布的顶点前缀逐字节不变
+  const pa = r0.attachmentsGeometry.attributes.position.array
+  const pb = r1.attachmentsGeometry.attributes.position.array
+  let prefixSame = pb.length > pa.length
+  for (let i = 0; i < pa.length; i++) {
+    if (Math.abs(pa[i] - pb[i]) > 1e-9) { prefixSame = false; break }
+  }
+  check('手工挂件只追加几何 (随机散布结果不被重洗)',
+    prefixSame, `随机 ${pa.length / 3} 顶点 / 合计 ${pb.length / 3} 顶点`)
+
+  // 附属物对所有树种通用: 非竹树种也生成鸟巢/槲寄生/彩带, 但竹笋仍为 0
+  const oakP = composeTree('oak', 'mature', 'summer', 20240607)
+  const oakR = buildTree(oakP)
+  check('非竹树种也生成附属物 (鸟巢1/槲寄生2/彩带3, 无竹笋)',
+    oakR.attachmentsStats.shoots === 0 &&
+    oakR.attachmentsStats.nests === 1 &&
+    oakR.attachmentsStats.mistletoes === 2 &&
+    oakR.attachmentsStats.ribbons === 3 &&
+    oakR.stats.attachmentsTriangles > 0,
+    JSON.stringify(oakR.attachmentsStats))
+
+  // 非竹树种的手工摆件同样按 node/t 逐件生成
+  const oakManual = cloneParams(oakP)
+  oakManual.attachments.items = [{ id: 'oak-a', type: 'nest', node: 3, t: 0.5, size: 1 }]
+  const oakR2 = buildTree(oakManual)
+  check('非竹树种支持手工挂件 (node 有效, 三角面增加)',
+    oakR2.attachmentsStats.custom === 1 &&
+    oakR2.attachmentsStats.nests === oakR.attachmentsStats.nests + 1 &&
+    oakR2.stats.attachmentsTriangles > oakR.stats.attachmentsTriangles,
+    JSON.stringify(oakR2.attachmentsStats))
+
+  // 小树 (只展开 L1, 没有 L2+) 时宿主枝回落到任意可挂枝, 不能整批消失
+  const smallP = composeTree('oak', 'seedling', 'summer', 20240607)
+  smallP.branches.levels = 1
+  const smallR = buildTree(smallP)
+  check('没有 L2+ 枝条时宿主回落到 L1/主干 (挂件不消失)',
+    smallR.attachmentsStats.nests === 1 && smallR.attachmentsStats.ribbons === 3 &&
+    smallR.stats.attachmentsTriangles > 0,
+    JSON.stringify(smallR.attachmentsStats))
+
+  /* ---- 彩带布料 (cloth.js) ---- */
+  // 每条彩带对应一个布料句柄, 否则运行时不知道要逐帧推哪块布
+  check('每根彩带都有布料句柄',
+    oakR.attachmentsCloth && oakR.attachmentsCloth.handles.length === oakR.attachmentsStats.ribbons,
+    `handles=${oakR.attachmentsCloth ? oakR.attachmentsCloth.handles.length : 0} ribbons=${oakR.attachmentsStats.ribbons}`)
+
+  // 预解算必须收敛: 早期一版约束写错 (改成整体位移) 位置指数发散到 1e32 才发现。
+  // 判据用"离挂点的最远距离不超过布长的 1.3 倍 + 0.3 m" (风吹歪会超过布长一点)。
+  let clothOk = true
+  let worst = 0
+  for (const h of oakR.attachmentsCloth.handles) {
+    const c = h.cloth
+    const lim = c.length * 1.3 + 0.3
+    for (let i = 0; i < c.n; i++) {
+      const d = Math.hypot(
+        c.p[i * 3] - c.origin.x,
+        c.p[i * 3 + 1] - c.origin.y,
+        c.p[i * 3 + 2] - c.origin.z)
+      if (d > worst) worst = d
+      if (!(d <= lim)) clothOk = false
+    }
+  }
+  check('布料预解算收敛 (质点不飞出挂点)',
+    clothOk, `最远质点 ${worst.toFixed(3)} m`)
+
+  // 同一 seed 两次构建逐字节一致: Verlet 迭代没有 Math.random, 步数固定
+  const oakR3 = buildTree(cloneParams(oakP))
+  const cA = oakR.attachmentsCloth.handles.map((h) => Array.from(h.cloth.p))
+  const cB = oakR3.attachmentsCloth.handles.map((h) => Array.from(h.cloth.p))
+  let clothSame = cA.length === cB.length
+  for (let k = 0; k < cA.length && clothSame; k++) {
+    for (let i = 0; i < cA[k].length; i++) {
+      if (Math.abs(cA[k][i] - cB[k][i]) > 1e-9) { clothSame = false; break }
+    }
+  }
+  check('布料结果确定 (同 seed 两次构建一致)', clothSame, `${cA.length} 块布`)
+
+  // 彩带三角面 = 每格 2 个三角形, 与布料网格一致 (否则几何和模拟对不上)
+  check('彩带几何与布料网格一一对应',
+    (() => {
+      const h = oakR2.attachmentsCloth.handles[0]
+      return !!h && h.quads.length === h.cloth.cols * h.cloth.rows * 6
+    })(),
+    '每块布 cols×rows 格 → 每格 6 顶点 / 2 三角面')
 }
 
 /* 汇总 */
