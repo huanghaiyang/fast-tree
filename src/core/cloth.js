@@ -34,8 +34,8 @@ function pid(cols, r, c) {
  * 建一块彩带布料。
  *
  * @param {object} o
- * @param {number} o.cols 横向格数 (建议 4)
- * @param {number} o.rows 纵向格数 (建议 14)
+ * @param {number} o.cols 横向格数 (建议 5)
+ * @param {number} o.rows 纵向格数 (建议 16)
  * @param {number} o.width 布宽 (米)
  * @param {number} o.length 布长 (米)
  * @param {THREE.Vector3} o.origin 顶边中点 (挂在枝条下方的位置)
@@ -44,6 +44,8 @@ function pid(cols, r, c) {
  * @param {THREE.Vector3} o.branchAxis 宿主枝的轴向 (碰撞胶囊的轴)
  * @param {number} o.branchRadius 宿主枝半径 (碰撞胶囊半径)
  * @param {object} o.rng makeRng 子流
+ * @param {number} [o.softness] 0..1 柔软度 (0 = 硬挺, 1 = 软塌); 见下面的映射说明
+ * @param {boolean} [o.skipShear] 是否扔掉剪切约束 (不给就按柔软度自动决定)
  */
 export function createRibbonCloth(o) {
   const cols = Math.max(1, o.cols)
@@ -52,6 +54,15 @@ export function createRibbonCloth(o) {
   const width = o.width
   const length = o.length
   const phase = o.rng.range(0, Math.PI * 2)
+  const soft = o.softness === undefined ? 0.5 : Math.max(0, Math.min(1, o.softness))
+  // 柔软度不是"调一个系数"就能出来的, 这里映射到三个真实自由度:
+  //   ① 剪切约束 (布面抗折的关键): 硬挺的绸带保留它, 软塌的缎带扔掉 —— 扔掉才能沿着
+  //      宽度方向折起来 (实测保留时整条只能整体倾斜, 折不出褶皱);
+  //   ② 松弛迭代轮数: 轮数越多约束被满足得越彻底 = 越硬; 2 轮时布会明显"松"下来;
+  //   ③ 吃风的增益: 同样风场下软布摆幅更大 (0.4x ~ 1.6x, 柔软度 0.5 时正好 1x)。
+  const skipShear = o.skipShear === undefined ? soft > 0.45 : o.skipShear
+  const iterations = Math.max(2, Math.round(2 + 3 * (1 - soft)))
+  const windGain = 1 + (soft - 0.5) * 1.2
 
   const p = new Float32Array(n * 3)
   const prev = new Float32Array(n * 3)
@@ -132,7 +143,10 @@ export function createRibbonCloth(o) {
     phase,
     // 累积时间: 构建时的预解算与运行时动画共用一条时间轴, 相位不跳变
     time: 0,
-    iterations: 4,
+    iterations,
+    softness: soft,
+    windGain,
+    skipShear,
   }
 }
 
@@ -152,7 +166,7 @@ export function stepCloth(cloth, dt, wind) {
   // 否则彩带会被吹成水平的一条(实测 60 倍时 dx≈0.22 m, 布被吹平了), 20 倍刚好"垂着飘"。
   const windX = wind && wind.enabled ? wind.dir.x : 0
   const windZ = wind && wind.enabled ? wind.dir.z : 0
-  const amp = wind && wind.enabled ? (wind.strength || 0.15) * 20 : 0
+  const amp = wind && wind.enabled ? (wind.strength || 0.15) * 20 * (cloth.windGain || 1) : 0
   const time = wind ? wind.time : 0
   const speed = wind ? wind.speed || 0.8 : 1
   const gustW = wind ? wind.gust === undefined ? 0.5 : wind.gust : 0

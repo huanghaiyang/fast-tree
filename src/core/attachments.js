@@ -167,60 +167,241 @@ function addTube(geo, pts, radius, color, sides = 4) {
 }
 
 /**
- * 鸟巢: 碗形 + 两圈交叉的巢枝。
- * 只做"看得懂的剪影": 外圈 11 根沿碗壁斜上的枝条 + 内圈 7 根, 再压一圈碗底线。
+ * 鸟巢: 一只"编出来的碗", 不是一圈支棱着的蜘蛛腿。
+ *
+ * 旧版只有 11 根外圈 + 7 根内圈的细管, 中间是空的 —— 远看像一把散开的树枝,
+ * 很容易被当成"糊上去的枝条"。真实巢的辨识度来自三件事, 这里都补上:
+ *   ① 实体碗壁 (外壁 + 内壁 + 巢口一圈厚度): 先给出"碗"的剪影, 再谈编织;
+ *   ② 巢口不齐: 每个方位的口沿高度/半径各自随机 (真巢都是歪的), 否则像个杯子;
+ *   ③ 表面缠着 30+ 根交叉的巢枝 (粗细分三档、颜色四种褐): 编织感是靠这些短线堆出来的。
+ * 内壁压暗、巢底收口, 从上方俯视才是"一个能装蛋的坑"。
+ *
+ * 三角面: 约 1.2k (碗 400 + 巢枝 800), 一棵树 1 个巢, 可以接受。
  */
 function addNest(geo, pos, scale, rng) {
-  const c1 = new THREE.Color(0.34, 0.26, 0.17)
-  const c2 = new THREE.Color(0.24, 0.18, 0.12)
-  const outer = 11
-  const rOuter = scale
-  const rInner = scale * 0.62
-  const bowlH = scale * 0.62
-  for (let i = 0; i < outer; i++) {
-    const a = (i / outer) * Math.PI * 2 + rng.range(-0.12, 0.12)
-    const r = rOuter * rng.range(0.92, 1.06)
-    const p0 = pos.clone().add(new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r))
-    const p1 = pos.clone().add(new THREE.Vector3(Math.cos(a) * r * 0.86, bowlH * 0.55, Math.sin(a) * r * 0.86))
-    const p2 = pos.clone().add(new THREE.Vector3(Math.cos(a + 0.16) * r * 0.74, bowlH, Math.sin(a + 0.16) * r * 0.74))
-    addTube(geo, [p0, p1, p2], scale * 0.05, i % 2 ? c1 : c2, 4)
+  const SEG_A = 12          // 周向段数
+  const SEG_V = 7           // 纵向段数
+  const R = scale
+  const H = scale * 0.62
+  // 颜色: 外壁棕、内壁接近黑褐 (从上方看就是个暗坑)、巢口红褐。
+  // 之前内壁用 0.11 的褐在强光下仍然发亮, 整只巢看着像陶碗 —— 这里把内壁压到 0.06 一档。
+  const wallCol = new THREE.Color(0.24, 0.17, 0.10)
+  const wallCol2 = new THREE.Color(0.16, 0.11, 0.07)
+  const innerCol = new THREE.Color(0.06, 0.045, 0.028)
+  const rimCol = new THREE.Color(0.20, 0.14, 0.085)
+  const twigCols = [
+    new THREE.Color(0.27, 0.19, 0.11),
+    new THREE.Color(0.20, 0.14, 0.08),
+    new THREE.Color(0.14, 0.10, 0.06),
+    new THREE.Color(0.31, 0.23, 0.13),
+  ]
+  // 每个方位的口沿高度/半径扰动 (先算好, 保证同一 seed 可复现)
+  const rimR = []
+  const rimY = []
+  for (let i = 0; i < SEG_A; i++) {
+    rimR.push(R * rng.range(0.94, 1.07))
+    rimY.push(H * rng.range(0.86, 1.04))
   }
-  for (let i = 0; i < 7; i++) {
-    const a = (i / 7) * Math.PI * 2 + rng.range(-0.2, 0.2)
-    const r = rInner * rng.range(0.9, 1.1)
-    const p0 = pos.clone().add(new THREE.Vector3(Math.cos(a) * r, bowlH * 0.2, Math.sin(a) * r))
-    const p1 = pos.clone().add(new THREE.Vector3(Math.cos(a + 0.5) * r * 0.9, bowlH * 0.9, Math.sin(a + 0.5) * r * 0.9))
-    addTube(geo, [p0, p1], scale * 0.045, c2, 4)
+  // 碗壁外形: t=0 是巢底 (半径 0.5R), t=1 是巢口 (1.0R); 中段鼓一点
+  const wallR = (t, i) => rimR[i] * (0.5 + 0.5 * Math.pow(Math.min(1, t), 0.75))
+  const wallY = (t, i) => rimY[i] * Math.min(1, t)
+
+  const ringAt = (t, mul, col, jitter) => {
+    const ring = []
+    for (let i = 0; i < SEG_A; i++) {
+      const a = (i / SEG_A) * Math.PI * 2
+      const r = wallR(t, i) * mul * (jitter ? 1 + rng.range(-jitter, jitter) : 1)
+      const y = wallY(t, i)
+      const c = col.clone()
+      if (jitter) c.multiplyScalar(1 + rng.range(-0.08, 0.08))
+      ring.push(geo.vertex(pos.clone().add(new THREE.Vector3(Math.cos(a) * r, y, Math.sin(a) * r)), c))
+    }
+    return ring
   }
-  // 碗底: 一圈短枝连成底面 (否则从上方看是空的)
-  for (let i = 0; i < 5; i++) {
-    const a = (i / 5) * Math.PI * 2
-    const r = rInner * 0.55
-    const p0 = pos.clone().add(new THREE.Vector3(Math.cos(a) * r, bowlH * 0.12, Math.sin(a) * r))
-    const p1 = pos.clone().add(new THREE.Vector3(Math.cos(a + 1.2) * r, bowlH * 0.12, Math.sin(a + 1.2) * r))
-    addTube(geo, [p0, p1], scale * 0.04, c2, 3)
+
+  // ① 外壁 (从巢底到巢口)
+  const outRings = []
+  for (let v = 0; v <= SEG_V; v++) {
+    const t = v / SEG_V
+    outRings.push(ringAt(t, 1, wallCol.clone().lerp(wallCol2, 1 - t), v > 0 && v < SEG_V ? 0.05 : 0))
+  }
+  for (let v = 0; v < SEG_V; v++) geo.bridge(outRings[v], outRings[v + 1])
+
+  // ② 巢口厚度: 外壁口沿 -> 内壁口沿 (内壁略低、略内收)
+  const rimOuter = outRings[SEG_V]
+  const rimInner = ringAt(1, 0.86, rimCol, 0.04)
+  geo.bridge(rimOuter, rimInner)
+
+  // ③ 内壁 (从口沿斜着收进巢底), 颜色压暗
+  const inRings = [rimInner]
+  for (let v = SEG_V - 1; v >= 1; v--) {
+    const t = v / SEG_V
+    inRings.push(ringAt(t * 0.96, 0.8, innerCol, 0.03))
+  }
+  for (let v = 0; v < inRings.length - 1; v++) geo.bridge(inRings[v], inRings[v + 1])
+  // ④ 巢底: 内壁最后一圈收口到中心点 (从上方看是个坑, 不是个洞)
+  const floorY = wallY(0.9, 0) * 0.55
+  const floorC = geo.vertex(pos.clone().add(new THREE.Vector3(0, floorY, 0)), innerCol)
+  const lastIn = inRings[inRings.length - 1]
+  for (let i = 0; i < SEG_A; i++) geo.tri(lastIn[i], floorC, lastIn[(i + 1) % SEG_A])
+
+  // ⑤ 巢枝: 贴着碗壁的短弧, 交叉缠绕 (数量少/太粗会变成"几根棍子", 要 46 根细的铺满)
+  const strands = 46
+  for (let s = 0; s < strands; s++) {
+    const a0 = rng.range(0, Math.PI * 2)
+    const t0 = rng.range(0.04, 0.82)
+    const t1 = Math.min(1.02, t0 + rng.range(0.22, 0.5))
+    const da = rng.range(-1.4, 1.4)
+    const thick = scale * rng.range(0.014, 0.024)
+    const outer = rng.range(1.0, 1.05)
+    const pts = []
+    const segs = 4
+    for (let k = 0; k <= segs; k++) {
+      const kk = k / segs
+      const t = mix(t0, t1, kk)
+      const idxF = ((a0 + da * kk) / (Math.PI * 2)) * SEG_A
+      // 角度可以是负的 (da 有负值): 取模要先加一圈, 否则 rimR[-1] 是 undefined -> NaN 顶点
+      const idxWrap = ((idxF % SEG_A) + SEG_A) % SEG_A
+      const i0 = Math.floor(idxWrap) % SEG_A
+      const i1 = (i0 + 1) % SEG_A
+      const fr = idxWrap - Math.floor(idxWrap)
+      const rim = mix(rimR[i0], rimR[i1], fr)
+      const rr = rim * (0.5 + 0.5 * Math.pow(Math.min(1, t), 0.75)) * outer
+      const yy = mix(rimY[i0], rimY[i1], fr) * Math.min(1, t) + rng.range(-0.02, 0.02) * scale
+      pts.push(pos.clone().add(new THREE.Vector3(Math.cos(a0 + da * kk) * rr, yy, Math.sin(a0 + da * kk) * rr)))
+    }
+    addTube(geo, pts, thick, twigCols[s % twigCols.length], 4)
+  }
+
+  // ⑤b 巢口的"箍": 两圈横着绕满的巢枝 (鸟巢口沿总有一圈横向缠绕的枝, 少了会显得像陶罐)
+  for (const t of [0.88, 1.0]) {
+    const pts = []
+    const prof = 0.5 + 0.5 * Math.pow(Math.min(1, t), 0.75)
+    for (let i = 0; i <= SEG_A; i++) {
+      const idx = i % SEG_A
+      const a = (i / SEG_A) * Math.PI * 2
+      const rr = rimR[idx] * prof * 1.01
+      const yy = rimY[idx] * t + rng.range(-0.015, 0.015) * scale
+      pts.push(pos.clone().add(new THREE.Vector3(Math.cos(a) * rr, yy, Math.sin(a) * rr)))
+    }
+    addTube(geo, pts, scale * 0.018, twigCols[(t > 0.9 ? 3 : 1)], 3)
+  }
+
+  // ⑥ 巢口外的"毛边": 6 根从口沿探出去的巢枝 (剪影不齐才像真巢)
+  for (let i = 0; i < 6; i++) {
+    const a = rng.range(0, Math.PI * 2)
+    const rr = rimR[Math.floor((a / (Math.PI * 2)) * SEG_A) % SEG_A]
+    const y0 = rimY[Math.floor((a / (Math.PI * 2)) * SEG_A) % SEG_A]
+    const p0 = pos.clone().add(new THREE.Vector3(Math.cos(a) * rr * 0.98, y0 * 0.96, Math.sin(a) * rr * 0.98))
+    const p1 = pos.clone().add(new THREE.Vector3(
+      Math.cos(a) * rr * rng.range(1.12, 1.3),
+      y0 * rng.range(1.0, 1.16),
+      Math.sin(a) * rr * rng.range(1.12, 1.3)))
+    addTube(geo, [p0, p1], scale * rng.range(0.016, 0.026), twigCols[(i + 2) % twigCols.length], 4)
   }
 }
 
-/** 槲寄生: 一簇叶团 (5 个压扁的小球拼成的"团", 不是一颗整球) + 几颗白色浆果 */
-function addMistletoe(geo, pos, scale, rng) {
-  const leaf = new THREE.Color(0.26, 0.40, 0.17)
-  const leaf2 = new THREE.Color(0.19, 0.32, 0.12)
-  const berry = new THREE.Color(0.90, 0.91, 0.80)
-  // 主团 + 4 个偏移的小团: 单一整球一眼就是"绿气球", 拼团才有叶簇的轮廓
-  const blobs = 5
-  for (let i = 0; i < blobs; i++) {
-    const a = rng.range(0, Math.PI * 2)
-    const dist = i === 0 ? 0 : scale * rng.range(0.35, 0.62)
-    const rr = i === 0 ? scale * 0.72 : scale * rng.range(0.36, 0.5)
-    const bp = pos.clone().add(new THREE.Vector3(Math.cos(a) * dist, rng.range(-0.25, 0.3) * scale, Math.sin(a) * dist))
-    addSphere(geo, bp, rr, i % 2 ? leaf2 : leaf, 0.72)
-  }
-  for (let b = 0; b < 3; b++) {
-    const a = rng.range(0, Math.PI * 2)
-    const el = rng.range(-0.3, 0.7)
-    const bp = pos.clone().add(new THREE.Vector3(Math.cos(a) * scale * 0.7 * Math.cos(el), Math.sin(el) * scale * 0.55, Math.sin(a) * scale * 0.7 * Math.cos(el)))
-    addSphere(geo, bp, scale * 0.14, berry)
+/**
+ * 槲寄生的叶片: 一片沿中肋微微下折的披针形叶 (4 个三角形)。
+ *
+ * 为什么不做成"扁球团": 旧版是 5 个压扁球拼的绿团, 近看就是绿色气球。
+ * 槲寄生的辨识特征是"成对的肥厚对生叶 + 珍珠色浆果", 叶片必须是一片一片的。
+ * 只用 2 个三角形会变成菱形/三角形色块 (图上像一片绿刀片), 所以沿中肋加一排
+ * 肩点, 左半/右半各 2 个三角形, 轮廓才是叶子的形状。
+ */
+function addLeaf(geo, base, dir, upHint, len, wid, color) {
+  const d = dir.clone().normalize()
+  let up = upHint.clone()
+  up.addScaledVector(d, -up.dot(d))
+  if (up.lengthSq() < 1e-8) up.set(0, 1, 0)
+  up.normalize()
+  const side = new THREE.Vector3().crossVectors(d, up).normalize()
+  const nrm = new THREE.Vector3().crossVectors(side, d).normalize()
+  // 叶尖略上翘、两边中段沿法向下折 (只折叠, 不改变叶缘位置)
+  const tip = base.clone().addScaledVector(d, len).addScaledVector(up, len * 0.16)
+  const sL = base.clone().addScaledVector(d, len * 0.34).addScaledVector(side, wid).addScaledVector(nrm, -len * 0.1)
+  const sR = base.clone().addScaledVector(d, len * 0.34).addScaledVector(side, -wid).addScaledVector(nrm, -len * 0.1)
+  const tL = base.clone().addScaledVector(d, len * 0.74).addScaledVector(side, wid * 0.7).addScaledVector(nrm, -len * 0.07)
+  const tR = base.clone().addScaledVector(d, len * 0.74).addScaledVector(side, -wid * 0.7).addScaledVector(nrm, -len * 0.07)
+  const vb = geo.vertex(base, color)
+  const vSL = geo.vertex(sL, color)
+  const vSR = geo.vertex(sR, color)
+  const vTL = geo.vertex(tL, color)
+  const vTR = geo.vertex(tR, color)
+  const vt = geo.vertex(tip, color)
+  geo.tri(vb, vSL, vTL)
+  geo.tri(vb, vTL, vt)
+  geo.tri(vb, vt, vTR)
+  geo.tri(vb, vTR, vSR)
+}
+
+/**
+ * 槲寄生: 一小丛木质的梢 + 对生的肥厚叶片 + 珍珠色浆果。
+ *
+ * 旧版是"一个主球 + 4 个偏移球 + 3 颗浆果", 远看绿团、近看气球。
+ * 现在按植物的真实结构搭:
+ *   ① 着生点一小段木质短枝 (它本来就长在宿主的伤口上);
+ *   ② 3~5 根梢向外上方伸出, 每根 2 段、末端继续分叉;
+ *   ③ 每根梢上 4~5 片对生叶 (沿梢两侧交替, 越靠梢尖越小);
+ *   ④ 叶腋挂着 2~4 颗乳白浆果 —— 浆果是槲寄生最显眼的标志, 不能省。
+ */
+ function addMistletoe(geo, pos, scale, rng) {
+  const stemCol = new THREE.Color(0.30, 0.25, 0.14)
+  const berryCol = new THREE.Color(0.91, 0.90, 0.79)
+  const leafCols = [
+    new THREE.Color(0.17, 0.30, 0.10),
+    new THREE.Color(0.13, 0.24, 0.07),
+    new THREE.Color(0.21, 0.34, 0.12),
+  ]
+  // ① 着生短枝: 沿世界水平方向贴出去一点, 让叶丛不是"浮在空中"
+  const anchorA = rng.range(0, Math.PI * 2)
+  const anchor = new THREE.Vector3(Math.cos(anchorA), -0.25, Math.sin(anchorA)).normalize()
+  const p0 = pos.clone()
+  const p1 = pos.clone().addScaledVector(anchor, scale * 0.35)
+  addTube(geo, [p0, p1], scale * 0.055, stemCol, 3)
+
+  const shoots = 4 + (rng.range(0, 1) > 0.45 ? 1 : 0)
+  const aBase = rng.range(0, Math.PI * 2)
+  for (let s = 0; s < shoots; s++) {
+    const a = aBase + (s / shoots) * Math.PI * 2 * rng.range(0.7, 1.1)
+    const el = rng.range(0.1, 0.62)          // 向外上方
+    const len = scale * rng.range(0.85, 1.25)
+    const dir = new THREE.Vector3(Math.cos(a) * Math.cos(el), Math.sin(el), Math.sin(a) * Math.cos(el)).normalize()
+    // 两段: 有一点点弯, 才不像一根根牙签
+    const mid = p1.clone().addScaledVector(dir, len * 0.5)
+      .add(new THREE.Vector3(rng.range(-0.05, 0.05) * scale, rng.range(0.02, 0.1) * scale, rng.range(-0.05, 0.05) * scale))
+    const tip = mid.clone().addScaledVector(dir, len * 0.5)
+      .add(new THREE.Vector3(0, rng.range(-0.06, 0.04) * scale, 0))
+    addTube(geo, [p1, mid, tip], scale * 0.042, stemCol, 3)
+
+    // ③ 对生叶: 沿梢两侧交替, 靠梢尖变小。
+    //    朝向不能只往侧外: 纯侧向的叶片在这个距离上几乎是"刀片" (只剩一条边),
+    //    所以给足向上的分量, 让叶面朝着斜上方打开。
+    const leaves = 6
+    const side = new THREE.Vector3().crossVectors(dir, UP)
+    if (side.lengthSq() < 1e-6) side.set(1, 0, 0)
+    side.normalize()
+    for (let k = 0; k < leaves; k++) {
+      const kk = (k + 1) / (leaves + 1)
+      const at = p1.clone().lerp(tip, kk)
+      const sgn = k % 2 ? 1 : -1
+      const ldir = dir.clone().multiplyScalar(0.45)
+        .addScaledVector(side, sgn * rng.range(0.5, 0.75))
+        .add(new THREE.Vector3(0, rng.range(0.25, 0.5), 0))
+        .normalize()
+      const lw = scale * rng.range(0.18, 0.23) * (1 - 0.22 * kk)
+      const ll = scale * rng.range(0.30, 0.40) * (1 - 0.16 * kk)
+      addLeaf(geo, at, ldir, UP, ll, lw, leafCols[(k + s) % leafCols.length])
+    }
+
+    // ④ 浆果: 叶腋 2~3 颗 (槲寄生标志)。旧版单颗直径接近 1/4 团, 像乒乓球, 这里缩到 1/2
+    const berries = 2 + (rng.range(0, 1) > 0.45 ? 1 : 0)
+    for (let b = 0; b < berries; b++) {
+      const at = p1.clone().lerp(tip, rng.range(0.35, 0.85))
+      const bd = side.clone().multiplyScalar(rng.range(-1, 1))
+        .add(new THREE.Vector3(0, -1, 0)).normalize()
+      addSphere(geo, at.clone().addScaledVector(bd, scale * 0.1), scale * rng.range(0.05, 0.07), berryCol, 1)
+    }
   }
 }
 
@@ -254,7 +435,7 @@ function addSphere(geo, pos, r, color, squashY = 1) {
  *
  * @param {object} ctx { wind, handles } —— 同一棵树上所有彩带共享风场与句柄表
  */
-function addRibbon(geo, top, f, length, width, color, rng, ctx) {
+function addRibbon(geo, top, f, length, width, color, rng, ctx, softness) {
   const COL = 5
   const ROW = 16
   const axis = f && f.dir && f.dir.lengthSq() > 1e-8 ? f.dir.clone().normalize() : UP.clone()
@@ -276,8 +457,8 @@ function addRibbon(geo, top, f, length, width, color, rng, ctx) {
     branchAxis: axis,
     branchRadius: Math.max(0.008, (f && f.radius) || 0.01),
     rng,
-    // 彩带是窄条: 去掉剪切约束才扭得动 (见 cloth.js)
-    skipShear: true,
+    // 柔软度 (0 硬挺 / 1 软塌): 由 cloth.js 映射成"是否保留剪切约束 + 松弛轮数 + 吃风增益"
+    softness,
   })
   // 预解算 1.5 秒: 打开页面看到的就是"已经挂了一阵子"的样子, 不是刚开始掉下来的布
   settleCloth(cloth, 90, ctx.wind)
@@ -377,8 +558,8 @@ function attachRef(f, type, scale, rng) {
   const prefer = type === 'nest' ? UP : DOWN
   const dir = perpDir(f.dir, prefer, rng)
   let off
-  if (type === 'nest') off = Math.max(0.05, f.radius + 0.29 * scale * 0.55)
-  else if (type === 'mistletoe') off = Math.max(f.radius * 1.4, f.radius + 0.18 * scale * 0.5)
+  if (type === 'nest') off = Math.max(0.05, f.radius + 0.5 * scale)
+  else if (type === 'mistletoe') off = Math.max(f.radius * 1.4, f.radius + 0.35 * scale)
   else off = Math.max(0.04, f.radius + 0.02)
   return f.pos.clone().addScaledVector(dir, off)
 }
@@ -387,9 +568,10 @@ function attachRef(f, type, scale, rng) {
  * 按手工实例 (params.attachments.items[i]) 在骨架上放一件挂件。
  * node 失效时回落到第一根可挂枝: 改竿数/竹高会重排分支下标, 挂件不该因此
  * 整批消失 (消失比"挪到别处"更难察觉, 也更容易被误当成参数失效)。
+ * @param {object} ribbonDef { color, length, softness } —— 全局彩带默认值, 实例没填时用它
  * @returns {string|null} 实际生成的类型 ('nest'|'mistletoe'|'ribbon')
  */
-function addManualItem(geo, item, branches, hostBranches, ribbonCol, rng, ctx) {
+function addManualItem(geo, item, branches, hostBranches, ribbonDef, rng, ctx) {
   let b = branches[item.node]
   if (!b || !b.frames || b.frames.length < 2) b = hostBranches[0]
   if (!b) return null
@@ -402,11 +584,17 @@ function addManualItem(geo, item, branches, hostBranches, ribbonCol, rng, ctx) {
   }
   if (item.type === 'ribbon') {
     const top = attachRef(f, 'ribbon', size, rng)
-    addRibbon(geo, top, f, 0.75 * size, 0.072 * size, ribbonCol, rng, ctx)
+    // 逐条覆盖: 颜色/长度/柔软度都存在实例上, 没填就跟随全局滑杆
+    const col = new THREE.Color(item.color || ribbonDef.color)
+    const len = Math.max(0.1, (Number(item.length) || ribbonDef.length) * size)
+    const soft = item.softness === undefined || item.softness === null
+      ? ribbonDef.softness
+      : Math.min(1, Math.max(0, Number(item.softness)))
+    addRibbon(geo, top, f, len, Math.max(0.02, len * 0.105), col, rng, ctx, soft)
     return 'ribbon'
   }
-  const pos = attachRef(f, 'nest', size, rng)
-  addNest(geo, pos, 0.29 * size, rng)
+  const pos = attachRef(f, 'nest', size * 0.15, rng)
+  addNest(geo, pos, 0.15 * size, rng)
   return 'nest'
 }
 
@@ -494,7 +682,9 @@ export function buildAttachments(skeleton, params, seed = 1) {
   for (let i = 0; i < nestN; i++) {
     const hit = pickFrame(0.35, 0.8)
     if (!hit) break
-    const scale = rng.range(0.24, 0.34)
+    // 半径 0.11~0.16 m (直径 22~32 cm): 这才是树上的巢。之前的 0.24~0.34 做出了
+    // 直径 60cm 的"陶盆", 在幼树上比树冠还显眼。
+    const scale = rng.range(0.11, 0.16)
     const pos = attachRef(hit.f, 'nest', scale, rng)
     addNest(geo, pos, scale, rng)
     stats.nests++
@@ -512,11 +702,15 @@ export function buildAttachments(skeleton, params, seed = 1) {
 
   const ribN = Math.max(0, Math.round(A.ribbons === undefined ? 3 : A.ribbons))
   const ribbonCol = new THREE.Color(A.ribbonColor || '#c81f1f')
+  // 随机彩带也按全局长度/柔软度来, 长度再乘一点随机 (否则一排布条长短一模一样, 很假)
+  const ribbonLen = Math.max(0.15, A.ribbonLength === undefined ? 0.75 : Number(A.ribbonLength) || 0.75)
+  const ribbonSoft = Math.min(1, Math.max(0, A.ribbonSoftness === undefined ? 0.55 : Number(A.ribbonSoftness)))
   for (let i = 0; i < ribN; i++) {
     const hit = pickFrame(0.25, 0.7)
     if (!hit) break
     const top = attachRef(hit.f, 'ribbon', 1, rng)
-    addRibbon(geo, top, hit.f, rng.range(0.5, 1.0), rng.range(0.06, 0.085), ribbonCol, rng, ctx)
+    const len = ribbonLen * rng.range(0.82, 1.18)
+    addRibbon(geo, top, hit.f, len, len * rng.range(0.085, 0.115), ribbonCol, rng, ctx, ribbonSoft)
     stats.ribbons++
   }
 
@@ -524,8 +718,9 @@ export function buildAttachments(skeleton, params, seed = 1) {
   // 顺序放在随机散布之后: rng 的调用次数不会因为"加了/删了手工挂件"而改变,
   // 已有的随机挂件位置保持稳定 (否则每点一次视口, 整丛挂件都会重新洗牌)。
   const items = Array.isArray(A.items) ? A.items : []
+  const ribbonDef = { color: A.ribbonColor || '#c81f1f', length: ribbonLen, softness: ribbonSoft }
   for (const item of items) {
-    const type = addManualItem(geo, item, branches, hostBranches, ribbonCol, rng, ctx)
+    const type = addManualItem(geo, item, branches, hostBranches, ribbonDef, rng, ctx)
     if (!type) continue
     stats.custom++
     if (type === 'nest') stats.nests++

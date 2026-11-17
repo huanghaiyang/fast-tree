@@ -4,12 +4,16 @@
     <ToggleRow label="启用附属物（鸟巢 / 槲寄生 / 彩带）" v-model="A.enabled"
       hint="总开关：关掉后鸟巢/槲寄生/彩带全部不生成（竹笋在「种子 → 竹子特有参数」里单独控制）" />
     <SliderRow label="鸟巢数量" v-model="A.nest" :min="0" :max="3" :step="1" unit="个"
-      hint="碗形巢：两圈交叉巢枝 + 碗底，随机挂在 L2+ 枝条分叉附近；所有树种通用" />
+      hint="编织碗形巢：实体碗壁 + 内壁 + 巢口一圈厚度，表面缠 30+ 根交叉巢枝；所有树种通用" />
     <SliderRow label="槲寄生数量" v-model="A.mistletoe" :min="0" :max="4" :step="1" unit="团"
-      hint="球形叶团 + 白色浆果，挂在枝条下方" />
+      hint="木质梢 + 对生肥厚叶 + 珍珠色浆果；挂在枝条下方" />
     <SliderRow label="彩带数量" v-model="A.ribbons" :min="0" :max="6" :step="1" unit="条"
-      hint="单层布片（双面渲染），沿重力下垂并正弦摆动，从枝条垂下" />
+      hint="布料彩带（Verlet 质点网格），顶边钉在枝上，重力 + 风逐帧求解，下垂/扭转是算出来的" />
     <ColorRow label="彩带颜色" v-model="A.ribbonColor" />
+    <SliderRow label="彩带长度" v-model="A.ribbonLength" :min="0.15" :max="2" :step="0.01" unit="m"
+      hint="随机散布的彩带会在此基础上 ±18% 抖动；手工件可在下方逐条覆盖" />
+    <SliderRow label="彩带柔软度" v-model="A.ribbonSoftness" :min="0" :max="1" :step="0.01"
+      hint="0 = 硬挺绸带（保留剪切约束、松弛轮数多、吃风少）；1 = 软塌缎带（能沿宽度折起来、摆幅更大）" />
 
     <p class="muted" style="margin: 6px 0 2px">
       上面的数量是"随机散布"；下面这一组是<b>逐件手工摆放</b>：点「＋ 点选摆放」后在视口里点一根树干或枝条，
@@ -45,6 +49,13 @@
         hint="沿宿主枝条的位置：0 = 枝基（靠近主干），1 = 枝梢；拖动时树形暂停重建，松手统一刷新" />
       <SliderRow label="挂件尺寸" v-model="active.size" :min="0.2" :max="2.5" :step="0.05"
         hint="相对默认尺寸的倍率 (1 = 默认)；鸟巢/槲寄生/彩带共用这一个倍率" />
+      <template v-if="active.type === 'ribbon'">
+        <ColorRow label="彩带颜色（本条）" v-model="active.color" />
+        <SliderRow label="彩带长度（本条）" v-model="active.length" :min="0.15" :max="2.5" :step="0.01" unit="m"
+          hint="只影响这一条彩带，单位是米（还与上面的「挂件尺寸」相乘）" />
+        <SliderRow label="彩带柔软度（本条）" v-model="active.softness" :min="0" :max="1" :step="0.01"
+          hint="只影响这一条彩带：硬挺（剪切约束保留）/ 软塌（能折起来、摆幅大）；拖动时暂停重建，松手刷新" />
+      </template>
       <p class="muted" style="margin: 2px 0 4px">
         宿主：第 {{ active.node + 1 }} 根枝 · 位置 {{ Math.round((active.t || 0) * 100) }}%
       </p>
@@ -83,9 +94,9 @@ const active = computed(() => items.value.find((it) => it.id === state.activeAtt
 
 const TYPE_LABEL = { nest: '鸟巢', mistletoe: '槲寄生', ribbon: '彩带' }
 const typeOptions = [
-  { value: 'nest', label: '鸟巢 (碗形巢枝)' },
-  { value: 'mistletoe', label: '槲寄生 (叶团 + 浆果)' },
-  { value: 'ribbon', label: '彩带 (下垂布片)' },
+  { value: 'nest', label: '鸟巢 (编织碗形)' },
+  { value: 'mistletoe', label: '槲寄生 (叶+浆果)' },
+  { value: 'ribbon', label: '彩带 (布料下垂)' },
 ]
 
 /** 切换类型算一次可撤销编辑 (类型决定几何形态, 属于离散改动) */
@@ -93,6 +104,16 @@ function changeType(v) {
   if (!active.value || active.value.type === v) return
   pushUndo()
   active.value.type = v
+  // 旧存档/别处新建的实例可能没有彩带三个字段: 切到彩带时补上, 滑杆才有抓手
+  if (v === 'ribbon') {
+    if (!active.value.color) active.value.color = A.value.ribbonColor || '#c81f1f'
+    if (!Number.isFinite(Number(active.value.length)) || !active.value.length) {
+      active.value.length = A.value.ribbonLength || 0.75
+    }
+    if (active.value.softness === undefined || active.value.softness === null) {
+      active.value.softness = A.value.ribbonSoftness === undefined ? 0.55 : A.value.ribbonSoftness
+    }
+  }
 }
 
 /** 开/关点选摆放模式; 视口层监听窗口 Escape 时也会自己退出 */

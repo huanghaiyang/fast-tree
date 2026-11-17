@@ -543,15 +543,19 @@ export function defaultParams() {
       nest: 1,             // 鸟巢数量 (0 = 关闭)
       mistletoe: 2,        // 槲寄生团数量 (0 = 关闭)
       ribbons: 3,          // 彩带条数 (0 = 关闭)
-      ribbonColor: '#c81f1f', // 彩带颜色
+      ribbonColor: '#c81f1f', // 彩带颜色 (随机散布的默认色; 手工件可逐条覆盖)
+      ribbonLength: 0.75,  // 彩带长度 (米) —— 随机散布会在此基础上 ±18% 抖动
+      ribbonSoftness: 0.55, // 彩带柔软度 0..1 (0 = 硬挺绸带 / 1 = 软塌缎带, 见 cloth.js)
       /* 手工摆放的挂件实例 (视口点选宿主后追加到这里)。
        * 为什么和上面的数量并存而不是取代: 数量是"快速要一批随机散布"的旧通路,
        * items 是"精确指定挂在第几根枝、枝上哪个位置"的新通路; 两者叠加生成,
        * 退回随机散布只需把 items 清空, 不用改数量滑杆。
-       * 每项: { id, type: 'nest'|'mistletoe'|'ribbon', node, t: 0..1, size }
+       * 每项: { id, type: 'nest'|'mistletoe'|'ribbon', node, t: 0..1, size,
+       *         color, length, softness }
        *   node = 骨架 branches 的下标 (与 branchEdits 同一套"同 seed 下稳定"的约定)
        *   t    = 沿该枝的归一化位置 (0 = 枝基, 1 = 枝梢)
-       *   size = 尺寸倍率 (1 = 默认大小); 彩带颜色统一跟随 ribbonColor */
+       *   size = 尺寸倍率 (1 = 默认大小)
+       *   color/length/softness = 只对 ribbon 生效的逐条覆盖 (空/0 = 跟随全局滑杆) */
       items: [],
     },
 
@@ -961,6 +965,10 @@ export function defaultAttachmentItem(type = 'nest', index = 0, node = -1, t = 0
     node: Number.isFinite(Number(node)) ? Math.round(Number(node)) : -1,
     t: Math.min(1, Math.max(0, Number.isFinite(Number(t)) ? Number(t) : 0.5)),
     size: 1,
+    // 彩带的逐条参数: 新建时就写成默认值 (而不是留空), 面板滑杆才有可拖动的起点
+    color: '#c81f1f',
+    length: 0.75,
+    softness: 0.55,
   }
 }
 
@@ -983,6 +991,10 @@ function normalizeAttachments(a) {
         node: Math.round(num(it.node, -1)),
         t: Math.min(1, Math.max(0, num(it.t, 0.5))),
         size: Math.min(4, Math.max(0.2, num(it.size, 1))),
+        // 彩带逐条参数 (旧存档没有 -> 给默认值; 长度 0.1~2.5 m, 柔软度 0..1)
+        color: typeof it.color === 'string' && it.color ? it.color : '#c81f1f',
+        length: Math.min(2.5, Math.max(0.1, num(it.length, 0.75))),
+        softness: Math.min(1, Math.max(0, num(it.softness, 0.55))),
       }
     })
   return {
@@ -991,6 +1003,8 @@ function normalizeAttachments(a) {
     mistletoe: Math.max(0, Math.round(num(o.mistletoe, 2))),
     ribbons: Math.max(0, Math.round(num(o.ribbons, 3))),
     ribbonColor: typeof o.ribbonColor === 'string' && o.ribbonColor ? o.ribbonColor : '#c81f1f',
+    ribbonLength: Math.min(2.5, Math.max(0.1, num(o.ribbonLength, 0.75))),
+    ribbonSoftness: Math.min(1, Math.max(0, num(o.ribbonSoftness, 0.55))),
     items,
   }
 }

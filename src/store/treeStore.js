@@ -491,6 +491,12 @@ export function addAttachmentAt(node, t, type = state.attachmentType) {
   if (!Array.isArray(A.items)) A.items = []
   pushUndo()
   const item = defaultAttachmentItem(type, A.items.length, node, t)
+  // 新建彩带时把全局颜色/长度/柔软度抄进来: 逐条参数默认等于"当前全局", 之后各调各的
+  if (type === 'ribbon') {
+    item.color = A.ribbonColor || '#c81f1f'
+    item.length = Number.isFinite(Number(A.ribbonLength)) && A.ribbonLength ? Number(A.ribbonLength) : 0.75
+    item.softness = Number.isFinite(Number(A.ribbonSoftness)) ? Number(A.ribbonSoftness) : 0.55
+  }
   A.items.push(item)
   state.activeAttachmentId = item.id
   return item

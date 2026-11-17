@@ -2596,6 +2596,48 @@ console.log('\n[39] 手工挂件 (自定义摆放)')
       return !!h && h.quads.length === h.cloth.cols * h.cloth.rows * 6
     })(),
     '每块布 cols×rows 格 → 每格 6 顶点 / 2 三角面')
+
+  /* ---- 彩带逐条参数 (颜色 / 长度 / 柔软度) ---- */
+  const ribItem = (color) => ({
+    id: 'r1', type: 'ribbon', node: 3, t: 0.6, size: 1, color, length: 1.5, softness: 1,
+  })
+  const ribP = cloneParams(oakP)
+  ribP.attachments.items = [ribItem('#2f8f9f')]
+  const ribR = buildTree(ribP)
+  const lastHandle = (r) => r.attachmentsCloth.handles[r.attachmentsCloth.handles.length - 1]
+  const hRib = lastHandle(ribR)
+  // 长度: 逐条覆盖必须压过全局 ribbonLength (0.75), 否则面板改了长度树不变
+  check('彩带逐条长度生效 (布料长度 = 本条长度)',
+    Math.abs(hRib.cloth.length - 1.5) < 1e-6, `len=${hRib.cloth.length}`)
+  // 柔软度: 1 = 软塌 -> 2 轮松弛 + 丢掉剪切约束; 0 = 硬挺 -> 5 轮 + 保留剪切
+  check('彩带柔软度映射 (1 = 软塌, 0 = 硬挺)',
+    hRib.cloth.iterations === 2 && hRib.cloth.skipShear === true,
+    `${hRib.cloth.iterations} 轮 / skipShear=${hRib.cloth.skipShear}`)
+  const stiffP = cloneParams(oakP)
+  stiffP.attachments.items = [{ ...ribItem('#c81f1f'), length: 0.5, softness: 0 }]
+  const stiffR = buildTree(stiffP)
+  const hStiff = lastHandle(stiffR)
+  check('硬挺彩带保留剪切约束 (松弛 5 轮)',
+    hStiff.cloth.iterations === 5 && hStiff.cloth.skipShear === false &&
+    Math.abs(hStiff.cloth.length - 0.5) < 1e-6,
+    `${hStiff.cloth.iterations} 轮 / skipShear=${hStiff.cloth.skipShear} / len=${hStiff.cloth.length}`)
+  // 颜色: 逐条色必须写进顶点色块 (同一 seed / 同一位置, 只有 color 不同)
+  const tealP = cloneParams(oakP)
+  tealP.attachments.items = [ribItem('#2f8f9f')]
+  const tealR = buildTree(tealP)
+  const redP = cloneParams(oakP)
+  redP.attachments.items = [ribItem('#c81f1f')]
+  const redR = buildTree(redP)
+  const tealH = lastHandle(tealR)
+  const tealCol = tealR.attachmentsGeometry.attributes.color.array
+  const redCol = redR.attachmentsGeometry.attributes.color.array
+  const BLOCK = tealH.cloth.cols * tealH.cloth.rows * 6 * 3
+  let diff = 0
+  for (let i = 0; i < BLOCK; i++) {
+    if (Math.abs(tealCol[tealH.base * 3 + i] - redCol[tealH.base * 3 + i]) > 1e-4) diff++
+  }
+  check('彩带逐条颜色生效 (顶点色块随本条颜色变化)',
+    diff > BLOCK * 0.8, `${diff}/${BLOCK} 个分量不同`)
 }
 
 /* 汇总 */
