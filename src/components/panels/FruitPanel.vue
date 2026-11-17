@@ -46,6 +46,7 @@ const typeOptions = [
   { value: 'nut', label: '🥜 坚果' },
   { value: 'berry', label: '🫐 浆果' },
   { value: 'cone', label: '🌲 球果' },
+  { value: 'apple', label: '🍎 苹果 (扁球 + 萼洼)' },
 ]
 </script>
 

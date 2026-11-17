@@ -485,6 +485,222 @@ export const SPECIES = [
     }),
   },
   {
+    /* 苹果 (Malus domestica) —— 参考: 果园实拍 + 园艺/科普资料
+     *   - 栽培条件 3~5 m; **短主干**: 嫁接口以上 0.9~1.2 m 就分叉, 主干只占全高 1/4
+     *   - 低分叉 2~4 主枝, 开张后转平伸 (pitch ≈ 40°)
+     *   - 冠幅 ≈ 树高 (扁圆冠); node 实测 (seed 20240607, 大树) 高 4.86 m / 冠 4.89 m
+     *   - 结果在冠内 2~3 年生短果枝上, 成串挂着, 从冠面/冠缘能看到
+     *   - 叶椭圆/卵圆 4.5~10 cm, 圆钝锯齿, 深绿偏黄
+     *   - 伞房花序 5 朵, 花白色带粉; 果略扁球形, 径 5 cm+, 两端凹陷, 皮红/黄
+     * 与樱花的差别: 樱花干细、伞形冠、花先叶后; 苹果矮干大圆冠、花叶同放、且有果。 */
+    id: 'apple', name: '苹果', icon: '🍎',
+    desc: '短主干低分叉、圆形浓密树冠: 春白花、夏秋红果',
+    evergreen: false,
+    variation: {
+      height: 0.26, radius: 0.24, curve: 0.3, lean: 0.1, gnarl: 0.36,
+      crown: 0.75, count: 0.26, leaf: 0.22, fork: 0.2, trunkShare: 0.1,
+    },
+    seasonal: {
+      spring: {
+        // 苹果花是"白中带粉", 不能用樱花的纯粉: 基色偏白、只在花心/蕾尖带粉
+        name: '春 (花)', palette: ['#f1dfe7', '#faf2f5', '#ecd3de'],
+        tipPalette: ['#fff6f9', '#f5dfe8'], colorVariance: 0.14, translucency: 0.72,
+        leafDensity: 1.06, desc: '满树白花: 花叶同放, 白中带粉',
+      },
+      autumn: {
+        // 苹果秋叶不是红叶树: 黄绿转黄, 比枫树的橙黄暗一档
+        palette: ['#8f9b2f', '#b3b53c', '#7c8a28'], tipPalette: ['#d6c452'],
+        leafDensity: 0.9, colorVariance: 0.2,
+      },
+      winter: { leafDensity: 0.02 },
+    },
+    patch: () => ({
+      trunk: {
+        height: 3.7, baseRadius: 0.24, taper: 0.15, radiusCurve: 1.4,
+        segments: 12, radialSegments: 12, curve: 0.24, curveVariance: 0.35,
+        lean: 0.04, leanDirection: 20, twist: 0.08, gnarl: 0.35,
+        flare: 1.0, flareHeight: 0.14, knots: 3, knotSize: 0.22, squash: 1.0,
+        // 0.27: 主干只占全高 1/4 —— 再高就成了"行道树", 苹果最典型的就是矮干大冠
+        fork: { enabled: true, count: 3, height: 0.27, angle: 40, spread: 1.0, radiusScale: 0.52, lengthScale: 1.12, taper: 0.3, curve: 0.32, gravity: 0.05 },
+      },
+      roots: { enabled: false, count: 6, length: 0.18, lengthVariance: 0.3, radiusRatio: 0.4, spread: 1.0, pitch: 96, segments: 6, radialSegments: 6, curve: 0.6, sink: 0.16 },
+      branches: {
+        levels: 4, apicalDominance: 0.3, phototropism: 0.05, gravityScale: 1.12,
+        lengthScale: 1.0, radiusScale: 1.0, startSpread: 0,
+        level: levels(
+          {
+            count: 4, pitch: 60, pitchVariance: 12, lengthRatio: 0.62, lengthVariance: 0.16,
+            radiusRatio: 0.46, radiusVariance: 0.12, startT: 0.26, endT: 0.95, startJitter: 0.04,
+            taper: 0.32, radiusCurve: 1.25, curve: 0.4, curveVariance: 0.4, gravity: 0.1,
+            twist: 0.2, upBias: 0.12, phyllotaxis: 137.5, spread: 0.5,
+            segments: 10, radialSegments: 7, windGain: 0.5,
+          },
+          {
+            count: 4, pitch: 52, pitchVariance: 14, lengthRatio: 0.6, lengthVariance: 0.2,
+            radiusRatio: 0.46, radiusVariance: 0.12, startT: 0.3, endT: 1.0, startJitter: 0.05,
+            taper: 0.36, radiusCurve: 1.2, curve: 0.42, curveVariance: 0.42, gravity: -0.04,
+            upBias: 0.06, spread: 0.58, segments: 8, radialSegments: 5, windGain: 0.7,
+          },
+          {
+            count: 4, pitch: 46, pitchVariance: 16, lengthRatio: 0.55, lengthVariance: 0.22,
+            radiusRatio: 0.46, startT: 0.3, endT: 1.0, startJitter: 0.06,
+            taper: 0.4, curve: 0.4, gravity: -0.1, upBias: 0.04, spread: 0.66,
+            segments: 6, radialSegments: 4, windGain: 0.9,
+          },
+          {
+            count: 3, pitch: 42, pitchVariance: 18, lengthRatio: 0.5, lengthVariance: 0.24,
+            radiusRatio: 0.5, startT: 0.34, endT: 1.0, startJitter: 0.07,
+            taper: 0.44, curve: 0.38, gravity: -0.14, spread: 0.74,
+            segments: 4, radialSegments: 3, windGain: 1.0,
+          },
+        ),
+      },
+      leaves: {
+        enabled: true, levels: [false, false, true, true, true],
+        // clusterCount 3 + 小叶: 苹果冠内叶片是"成簇密铺"的, perBranch 给太大反而稀疏
+        perBranch: 18, clusterCount: 3, clusterRadius: 0.03, clusterSpread: 0.02,
+        // 0.14: 苹果叶 4.5~10 cm, 但树冠要"浓密"就得多而小 —— 关键原因: 叶片是卡片,
+        // 用 0.3 m 的大卡时 20 cm 的苹果会被叶卡整片盖住 (实测开叶完全看不到果),
+        // 缩到 0.14 并用 perBranch 18 补密度 (叶果尺寸比 ≈ 1.3, 接近实拍 1:1)。
+        size: 0.14, sizeVariance: 0.26, width: 0.62, shape: 'oval', segments: 5,
+        // endT 0.85: 枝条末梢那一小段刻意"留空"不长叶 —— 苹果的果挂在梢头/叶下层,
+        // 末梢留空后果实才能从叶簇外侧露出来 (实测 endT=1 时全树只在叶缝里偶尔见到果)。
+        curl: 0.14, fold: 0.24, startT: 0.04, endT: 0.85,
+        pitch: -22, pitchVariance: 30, droop: 0.24, rollVariance: 180, faceUp: 0.52,
+        twist: 0.18, color: '#4d802c', colorTip: '#8ab84e', colorVariance: 0.2, petiole: 0.07,
+        // 苹果叶是卵圆, 少量 lance/birch 让叶簇不是"复制粘贴"
+        shapeMix: [{ shape: 'oval', weight: 6 }, { shape: 'lance', weight: 1 }, { shape: 'birch', weight: 1 }],
+      },
+      bark: {
+        color: '#6b5a4b', color2: '#8d7a64', roughness: 0.9, metalness: 0.0,
+        uvScaleU: 1.0, uvScaleV: 0.55, bump: 1.1, normalScale: 1.0,
+        // 苹果老皮是"纵裂 + 片状剥落", 用 rough 而不是 banyan 那种裂沟
+        procedural: { enabled: true, style: 'rough', scale: 1.1, contrast: 0.5 },
+      },
+      fruit: {
+        enabled: true, type: 'apple',
+        // L1/L2 主枝挂果 (不是最深的两层梢): 叶片只长在 L3~L5 的梢上, L1/L2 枝条本身是"光枝",
+        // 挂在这上面的苹果周围没有叶卡, 从任何角度都能直接看到 —— 这是唯一能同时满足
+        // "冠浓密"和"果子看得见"的组合 (挂 L3/L4 时果全被叶簇吃掉, 实测两轮)。
+        levels: [true, true, false, false, false],
+        perBranch: 4, clusterCount: 1, clusterRadius: 0.03,
+        // 0.2 是刻意放大的 (真实苹果 8 cm): 果实与树皮共用深色贴图, albedo 被压暗一档,
+        // 加上卡片叶偏大, 按真值挂果在 5 m 树冠里只有几像素, 认不出是苹果 (实拍对比确认)。
+        size: 0.2, sizeVariance: 0.16, droop: 0.4,
+        // 苹果皮用偏橙的红: 树皮贴图会吃掉色相, 纯正红最后会偏暗紫
+        color: '#ff8a5c', capColor: '#6f4a2c', colorVariance: 0.16,
+        // maxCount 260: 果实按**枝条遍历顺序**生成并受 maxCount 截断, 上限给小了会出现
+        // "前几根枝挂满、其余全空"的怪相 (实测 110 时全树只有左侧一团红)。
+        maxCount: 260, chance: 0.45, radial: 10,
+      },
+      leafMat: { roughness: 0.68, metalness: 0.0, translucency: 0.45, emissive: 0.02 },
+    }),
+  },
+  {
+    /* 海棠 (西府海棠 / 观赏海棠 Malus spectabilis 系)。参考要点 (北京园林绿化局 + 植物志 + 实拍):
+     *   - 落叶**小乔木** 2.5~5 m, 树姿**直立**: 主干定干高 (1.4~1.8 m), 之后 3~4 条主枝近垂直上举
+     *     (pitch 34~40°), 冠是"竖长卵圆 / V 形", 不是苹果那种扁圆 —— 这是两者最大的形态差别
+     *   - 小枝粗壮、老枝红褐, 树皮灰褐光滑
+     *   - 叶椭圆至长椭圆, 细锯齿, 深绿有光泽
+     *   - 花 4~7 朵簇生: 蕾期胭脂红、开后粉白, 繁密到"满树只见花"
+     *   - 果小球形 (1~1.5 cm), 黄绿转紫红, 挂到深秋/落叶后
+     * 与樱花的差别: 樱花矮壮多曲枝、平展伞形冠、粉白单薄; 海棠高挑直立、竖长冠、花更艳, 且**有果**。 */
+    id: 'crabapple', name: '海棠', icon: '🌺',
+    desc: '直立小乔木: 竖长冠、春满树粉花、秋挂小球果',
+    evergreen: false,
+    variation: {
+      height: 0.24, radius: 0.2, curve: 0.3, lean: 0.08, gnarl: 0.3,
+      crown: 0.78, count: 0.2, leaf: 0.2, fork: 0.16, trunkShare: 0.12,
+    },
+    seasonal: {
+      spring: {
+        // 蕾红开后粉白: 基色取偏艳的粉 (比樱花深一档), 尖端才发白
+        name: '春 (花)', palette: ['#e0557f', '#ef9cb5', '#f7c6d6'],
+        tipPalette: ['#fbe9f0', '#f6c8d8'], colorVariance: 0.13, translucency: 0.74,
+        leafDensity: 1.08, desc: '满树粉花: 蕾期胭脂红、开后粉白',
+      },
+      summer: { palette: ['#3c6a26', '#6f9c41'], leafDensity: 0.96 },
+      autumn: {
+        // 海棠秋叶偏橙红 (比苹果黄绿明显), 但不到枫树那么艳
+        palette: ['#a9551d', '#cf8a2c', '#8e4a1a'], tipPalette: ['#e3ab45'],
+        leafDensity: 0.86, colorVariance: 0.22,
+      },
+      winter: { leafDensity: 0.02 },
+    },
+    patch: () => ({
+      trunk: {
+        height: 2.6, baseRadius: 0.12, taper: 0.12, radiusCurve: 1.3,
+        segments: 10, radialSegments: 10, curve: 0.3, curveVariance: 0.35,
+        lean: 0.04, leanDirection: 15, twist: 0.1, gnarl: 0.3,
+        flare: 0.8, flareHeight: 0.16, knots: 2, knotSize: 0.2, squash: 1.0,
+        // 0.38 + 26°: 定干高 (1.1 m 左右) 且主枝上举 —— "树姿直立"就靠这两个数
+        fork: { enabled: true, count: 3, height: 0.38, angle: 26, spread: 0.55, radiusScale: 0.58, lengthScale: 1.15, taper: 0.28, curve: 0.35, gravity: -0.03 },
+      },
+      roots: { enabled: false, count: 5, length: 0.16 },
+      branches: {
+        levels: 4, apicalDominance: 0.5, phototropism: 0.12, gravityScale: 1.05,
+        lengthScale: 1.0, radiusScale: 1.0, startSpread: 0,
+        level: levels(
+          {
+            count: 4, pitch: 40, pitchVariance: 10, lengthRatio: 0.5, lengthVariance: 0.16,
+            radiusRatio: 0.42, radiusVariance: 0.12, startT: 0.32, endT: 1.0, startJitter: 0.04,
+            taper: 0.3, radiusCurve: 1.2, curve: 0.35, curveVariance: 0.35, gravity: -0.02,
+            twist: 0.16, upBias: 0.2, phyllotaxis: 137.5, spread: 0.42,
+            segments: 9, radialSegments: 6, windGain: 0.5,
+          },
+          {
+            count: 5, pitch: 36, pitchVariance: 12, lengthRatio: 0.58, lengthVariance: 0.2,
+            radiusRatio: 0.46, radiusVariance: 0.12, startT: 0.3, endT: 1.0, startJitter: 0.05,
+            taper: 0.34, radiusCurve: 1.15, curve: 0.36, curveVariance: 0.38, gravity: -0.06,
+            upBias: 0.16, spread: 0.4, segments: 7, radialSegments: 5, windGain: 0.7,
+          },
+          {
+            count: 4, pitch: 34, pitchVariance: 14, lengthRatio: 0.55, lengthVariance: 0.22,
+            radiusRatio: 0.46, startT: 0.3, endT: 1.0, startJitter: 0.06,
+            taper: 0.38, curve: 0.38, gravity: -0.1, upBias: 0.1, spread: 0.46,
+            segments: 5, radialSegments: 4, windGain: 0.9,
+          },
+          {
+            count: 3, pitch: 32, pitchVariance: 16, lengthRatio: 0.5, lengthVariance: 0.24,
+            radiusRatio: 0.5, startT: 0.34, endT: 1.0, startJitter: 0.07,
+            taper: 0.42, curve: 0.36, gravity: -0.14, spread: 0.55,
+            segments: 4, radialSegments: 3, windGain: 1.0,
+          },
+        ),
+      },
+      leaves: {
+        enabled: true, levels: [false, false, true, true, true],
+        perBranch: 18, clusterCount: 2, clusterRadius: 0.03, clusterSpread: 0.02,
+        // 0.2: 海棠叶 5~8 cm; 卡片叶再小冠就散成扫帚形 (实测 0.14 时冠幅只剩 1.9 m)
+        size: 0.2, sizeVariance: 0.24, width: 0.46, shape: 'oval', segments: 5,
+        curl: 0.12, fold: 0.2, startT: 0, endT: 1.0,
+        pitch: -20, pitchVariance: 28, droop: 0.22, rollVariance: 180, faceUp: 0.55,
+        twist: 0.16, color: '#3f6b28', colorTip: '#7ba546', colorVariance: 0.18, petiole: 0.06,
+        shapeMix: [{ shape: 'oval', weight: 5 }, { shape: 'lance', weight: 2 }, { shape: 'birch', weight: 1 }],
+      },
+      bark: {
+        color: '#5d4a40', color2: '#8a6f5e', roughness: 0.82, metalness: 0.0,
+        uvScaleU: 1.0, uvScaleV: 0.5, bump: 0.9, normalScale: 0.85,
+        // 海棠小枝树皮灰褐光滑, 不用 rough 的大裂沟
+        procedural: { enabled: true, style: 'smooth', scale: 1.0, contrast: 0.32 },
+      },
+      fruit: {
+        // 海棠果: 小球形 1~1.5 cm, 紫红, 挂到深秋 —— 用 berry 而不是 apple,
+        // 因为海棠果没有明显萼洼/大果柄, 用扁球反而像"小苹果"
+        enabled: true, type: 'berry',
+        levels: [true, true, true, false, false],
+        perBranch: 6, clusterCount: 2, clusterRadius: 0.04,
+        // 0.05: 海棠果真值 1~1.5 cm, 但和苹果一样要过"卡片叶比果大 10 倍"这一关 (见苹果段注释),
+        // 抬到 10 cm 才能在开叶时从冠面上看出成串红点 (同苹果, 卡片叶尺度逼的)。
+        size: 0.1, sizeVariance: 0.2, droop: 0.5,
+        color: '#ff5a3c', capColor: '#5f3a26', colorVariance: 0.2,
+        maxCount: 220, chance: 0.5, radial: 8,
+      },
+      // 海棠叶有光泽: roughness 比苹果低, 加一点自发光模拟蜡质层
+      leafMat: { roughness: 0.5, metalness: 0.0, translucency: 0.55, emissive: 0.03 },
+    }),
+  },
+  {
     /* 灌木: 没有"主枝"概念 —— trunk 只有 1.6m 且 taper 0.35, 在 16% 高度就分叉;
      * 各层 startT 从 0.0 (基部) 起分枝, 所以看起来是丛生而不是单干。 */
     id: 'shrub', name: '灌木', icon: '🪴',

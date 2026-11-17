@@ -34,7 +34,7 @@ import { buildAttachments } from './attachments.js'
 import { buildSpeedtreeBark } from './speedtreeBark.js'
 import { resolveDamageConfig, breakBranchFrames, buildFractureGeometry } from './branchDamage.js'
 import { buildLeafTemplate, buildLeafCardTemplate, pushLeafInstance } from './leaf.js'
-import { buildFruitTemplate, pushFruitInstance } from './fruit.js'
+import { buildFruitTemplate, pushFruitInstance, fruitViewportGain } from './fruit.js'
 import { growSpaceColonization } from './spaceColonization.js'
 import { buildOcclusionGrid, bakeOcclusion, bakeOcclusionByRanges } from './ambientOcclusion.js'
 import {
@@ -1665,7 +1665,8 @@ export function buildTree(params, options = {}) {
         const surface = fr.pos.clone().addScaledVector(radial, Math.max(0.004, fr.radius) * 0.9)
         const scale = Math.max(0.01, F.size * rng.vary(F.sizeVariance))
         // 纵向拉伸 1.25: 橡果这类果实通常比宽略高, 纯等比会显得像珠子。
-        const scaleY = scale * 1.25
+        // 苹果相反 —— 真苹果是**略扁**的 (横径 > 纵径), 所以苹果给 0.92。
+        const scaleY = scale * (F.type === 'apple' ? 0.92 : 1.25)
         // 果柄方向: 从果实指向枝条 (主要朝上, 略沿枝轴) -> 果实自然垂在枝下
         // droop 越大, 果柄越贴向枝条走向 (斜挂), ×0.35 是避免完全贴平的系数。
         const stemDir = UP.clone().lerp(fr.dir, F.droop * 0.35 * rng.range(0.5, 1.3)).normalize()
@@ -1922,8 +1923,16 @@ export function buildTree(params, options = {}) {
     }
   }
   // 果实 + 断口一起并进树皮几何 (共用树皮材质); 失败时 (null) 丢弃附加件并保留树皮。
+  // 记下果实在合并后几何里的**顶点区间**: 果实永远是 extraGeos[0] (断口排在它后面),
+  // 合并不给 groups 也不重排顶点, 所以起点 = 合并前树皮的顶点数, 长度 = 果实顶点数。
+  // 这段区间稍后要单独做视口补光 (见 fruitViewportGain 的注释)。
+  let fruitVertexRange = null
   const extraGeos = []
-  if (fruitAcc.vertexCount > 0) extraGeos.push(fruitAcc.build())
+  if (fruitAcc.vertexCount > 0) {
+    const geo = fruitAcc.build()
+    fruitVertexRange = { start: barkGeometry.attributes.position.count, count: geo.attributes.position.count }
+    extraGeos.push(geo)
+  }
   if (damageAcc.vertexCount > 0) extraGeos.push(damageAcc.build())
   if (extraGeos.length) {
     // 第二个参数 false = 不生成 groups: 整块树皮+果实+断口共用同一个材质槽 (一件材质画完)。
@@ -1939,6 +1948,8 @@ export function buildTree(params, options = {}) {
       barkGeometry = combined
     } else {
       // 合并失败 (属性布局不一致等): 只丢弃附加几何, 保住树皮主几何。
+      // 果实没进树皮 -> 之前记的顶点区间作废 (否则补光会写进树枝顶点)。
+      fruitVertexRange = null
       for (const g of extraGeos) g.dispose()
     }
   }
@@ -2096,6 +2107,21 @@ export function buildTree(params, options = {}) {
     aoStats.enabled = true
     aoStats.threshold = b.threshold
     aoStats.affected = (b.affected || 0) + (l ? l.affected : 0) + (f ? f.affected : 0)
+  }
+
+  /* ---- 果实视口补光: 只抬果实那一段顶点色, 见 fruitViewportGain 注释 ---- */
+  // 放在 AO 之后 (AO 会把果实一起压暗), 且必须放在 finalizeNodes 之前 —— 两者都只改
+  // 顶点缓冲, 顺序无所谓, 但这里只碰 color 属性, 与节点改写互不干扰。
+  if (fruitVertexRange) {
+    const gain = fruitViewportGain((P.fruit && P.fruit.type) || 'acorn')
+    const colors = barkGeometry.attributes.color
+    const total = barkGeometry.attributes.position.count
+    if (gain !== 1 && colors && fruitVertexRange.start + fruitVertexRange.count <= total) {
+      const arr = colors.array
+      const end = (fruitVertexRange.start + fruitVertexRange.count) * 3
+      for (let i = fruitVertexRange.start * 3; i < end; i++) arr[i] *= gain
+      colors.needsUpdate = true
+    }
   }
 
   // 节点表: 此时顶点里存的还是 slot, finalizeNodes 会就地把 aNodeId 改写成最终 node id,

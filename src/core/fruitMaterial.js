@@ -22,6 +22,7 @@
  */
 import * as THREE from 'three'
 import { makeRng } from './rng.js'
+import { fruitViewportGain } from './fruit.js'
 import {
   makeNormalTextureFromPixels,
   makeRoughnessTextureFromTexture,
@@ -58,6 +59,7 @@ function makeCanvas(w, h) {
  *   - cone  松果：更多、更小的鳞片 + 更强的横向波纹；
  *   - berry 浆果：小而密的凹坑；
  *   - acorn / nut 橡果：少量凸起 + 壳斗帽的纵向棱线。
+ *   - apple 苹果：极细的皮孔 + **纵向条纹**, 不要横纹 —— 球面上出现横纹会像了一层网格布。
  *
  * 随机源为 `makeRng(seed, 'fruit-export-height')`：同一 seed 图案可复现，
  * 所以导出预览与正式导出看到的是同一张果皮。
@@ -76,13 +78,14 @@ function makeDetailPixels(fruit, seed) {
 
   const type = fruit.type || 'acorn'
   // 高频小凸起/凹坑: 法线贴图能看到明确的果皮细节
-  // 数量按类型区分: 松果鳞片最多 (5200), 浆果其次 (3200), 橡果/坚果 (3800)
-  const count = type === 'cone' ? 5200 : type === 'berry' ? 3200 : 3800
+  // 数量按类型区分: 松果鳞片最多 (5200), 浆果其次 (3200), 苹果最少 (2200, 皮很光滑),
+  // 橡果/坚果 (3800)
+  const count = type === 'cone' ? 5200 : type === 'berry' ? 3200 : type === 'apple' ? 2200 : 3800
   for (let i = 0; i < count; i++) {
     const x = rng.range(0, SIZE)
     const y = rng.range(0, SIZE)
-    // 半径: 松果鳞片更大 (上限 8px), 其余 5px; 下限 0.8px 防止小到被 mipmap 抹平
-    const r = rng.range(0.8, type === 'cone' ? 8 : 5)
+    // 半径: 松果鳞片更大 (上限 8px), 其余 5px; 苹果再收到 3.5px (皮孔只是针尖大的点)
+    const r = rng.range(0.8, type === 'cone' ? 8 : type === 'apple' ? 3.5 : 5)
     // 一半画暗坑 (40..100)、一半画亮凸 (170..235): 两极分化 -> 高度梯度更强, 法线更明显
     const v = rng.chance(0.5) ? rng.range(40, 100) : rng.range(170, 235)
     // globalAlpha 随机 0.35..0.9: 斑点深浅不一, 避免看起来像规则点阵
@@ -96,15 +99,31 @@ function makeDetailPixels(fruit, seed) {
   // 松果鳞片 / 橡果帽的交叉纹理
   // step = 横纹的行距 (像素): 松果 46 更密, 其它 74 更疏; 线宽同理 (5 / 3)。
   // x += 8 是采样步长, 配合 sin(x*0.025)*9 让每条横线轻微起伏, 避免机械的直线感。
-  ctx.globalAlpha = 0.55
-  ctx.strokeStyle = '#3c3c3c'
-  ctx.lineWidth = type === 'cone' ? 5 : 3
-  const step = type === 'cone' ? 46 : 74
-  for (let y = 20; y < SIZE; y += step) {
-    ctx.beginPath()
-    // y+20 起画: 避开贴图上边缘, 否则平铺时顶部会出现半条线
-    for (let x = 0; x <= SIZE; x += 8) ctx.lineTo(x, y + Math.sin(x * 0.025) * 9)
-    ctx.stroke()
+  // 苹果**没有横纹**: 球面加横纹会读成"纱布/网套", 改成下面单独的纵向条纹。
+  if (type !== 'apple') {
+    ctx.globalAlpha = 0.55
+    ctx.strokeStyle = '#3c3c3c'
+    ctx.lineWidth = type === 'cone' ? 5 : 3
+    const step = type === 'cone' ? 46 : 74
+    for (let y = 20; y < SIZE; y += step) {
+      ctx.beginPath()
+      // y+20 起画: 避开贴图上边缘, 否则平铺时顶部会出现半条线
+      for (let x = 0; x <= SIZE; x += 8) ctx.lineTo(x, y + Math.sin(x * 0.025) * 9)
+      ctx.stroke()
+    }
+  }
+  if (type === 'apple') {
+    // 苹果皮条纹: 沿"经线"方向的细竖线 (向阳面红霞那种). UV 的 u 是绕圆周、v 是母线,
+    // 所以贴图竖线在果实上就是经线; 间距 9px + 正弦 2.5px 摆动, 避免像规整的格子。
+    // 强度只有 0.18, 叠在红色顶点色上只是"颜色略深一点的条纹", 不是画上去的线。
+    ctx.globalAlpha = 0.18
+    ctx.strokeStyle = '#4a4a4a'
+    ctx.lineWidth = 2
+    for (let x = 0; x < SIZE; x += 9) {
+      ctx.beginPath()
+      for (let y = 0; y <= SIZE; y += 6) ctx.lineTo(x + Math.sin(y * 0.02 + x * 0.05) * 2.5, y)
+      ctx.stroke()
+    }
   }
   if (type === 'acorn' || type === 'nut') {
     // 帽沿的纵向棱
@@ -273,11 +292,17 @@ export function createFruitExportMaterial(fruit = {}, seed = 1) {
   const roughnessMap = map ? makeRoughnessTextureFromTexture(map, SIZE, SIZE, 0.68) : null
   // 5) alpha：高度场二值化成的"沟槽蒙版"（已按导出朝向翻转）
   const alphaDataUrl = detail ? makeAlphaMaskDataUrl(detail) : null
+  // 视口补光系数的倒数 (非苹果 = 1, 行为与以前完全一致)
+  const exportTint = 1 / fruitViewportGain(fruit.type || 'acorn')
   const mat = new THREE.MeshStandardMaterial({
     map,
     normalMap,
     roughnessMap,
-    color: 0xffffff,   // 必须纯白：果实颜色来自 COLOR_0，不能在这里再染一次
+    // 默认必须纯白: 果实颜色来自 COLOR_0, 不能在这里再染一次。
+    // 例外: 视口为了抵掉深色树皮贴图, 把果实那段顶点色乘了 FRUIT_VIEWPORT_GAIN
+    // (见 fruit.js), 导出时用 1/gain 把这段 HDR 顶点色还原成 0..1 的常规 albedo,
+    // 否则 GLB 里苹果会被压成一片纯白。
+    color: new THREE.Color(exportTint, exportTint, exportTint),
     roughness: 0.68,
     metalness: 0,
     vertexColors: true,

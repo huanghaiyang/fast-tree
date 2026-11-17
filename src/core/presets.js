@@ -196,6 +196,8 @@ const LEAF_PALETTES = {
   willow: ['#7cab41', '#b6d878'],
   pine: ['#4e8b46', '#87c26c'],
   sakura: ['#edaac4', '#f9dde6'],
+  apple: ['#4d802c', '#8ab84e'],
+  crabapple: ['#3f6b28', '#7ba546'],
   shrub: ['#5a9243', '#96c463'],
   dead: ['#7d7d6a', '#a3a38c'],
   banyan: ['#3f6b2b', '#79a84c'],
@@ -212,9 +214,10 @@ const LEAF_PALETTES = {
  *     seedling / sapling / young / mature / ancient, 权重对应 5 个值
  *   - 季节:    由 SEASONS 派生 id, 顺序固定为 spring / summer / autumn / winter
  * 这些权重直接决定"点随机生成 10 次会看到什么", 改它们等于改产品的默认观感。 */
-const ARCHETYPE_IDS = ['oak', 'maple', 'pine', 'birch', 'willow', 'sakura', 'shrub', 'dead', 'banyan', 'bamboo']
-// 竹子权重 0.05: 结构很特别, 随机生成时应该偶尔出现而不是像橡树那么常见
-const ARCHETYPE_WEIGHTS = [0.15, 0.12, 0.13, 0.12, 0.09, 0.09, 0.09, 0.08, 0.08, 0.05]
+const ARCHETYPE_IDS = ['oak', 'maple', 'pine', 'birch', 'willow', 'sakura', 'apple', 'crabapple', 'shrub', 'dead', 'banyan', 'bamboo']
+// 苹果/海棠各 0.06~0.07: 它们是"果木/观花小乔木", 应该像樱花一样常见但不该盖过橡树与松树;
+// 为了腾出这份权重, 每个老树种的权重都下调了一点点 (总和仍 = 1.00)
+const ARCHETYPE_WEIGHTS = [0.13, 0.10, 0.11, 0.10, 0.08, 0.08, 0.07, 0.06, 0.08, 0.07, 0.07, 0.05]
 // 随机时"大树/小树"更常见, 树苗与古树是少数
 const STAGE_IDS = GROWTH_STAGES.map((s) => s.id)
 const STAGE_WEIGHTS = [0.1, 0.16, 0.24, 0.36, 0.14]

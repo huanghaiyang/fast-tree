@@ -490,7 +490,7 @@ export function defaultParams() {
     // ---------------- 果实 ----------------
     fruit: {
       enabled: false,
-      type: 'acorn',       // acorn | berry | cone | nut
+      type: 'acorn',       // acorn | berry | cone | nut | apple
       levels: [false, false, false, true, false], // 挂在哪些层级
       perBranch: 2,        // 每条枝条上的果实簇数量
       clusterCount: 2,     // 每簇果实数量 (参考图: 橡果 2~3 个一簇)
